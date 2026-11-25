@@ -67,3 +67,8 @@ Existing MIT Loot Treadmill source (Noah Lincke), pinned 4852b34ac82c86c3093192f
 ## R9 (0.7.8) pearlescent experiment
 
 Independent optional pearlescent rarity weight, 0.1–10x with 0.1 steps, based on the MIT Loot Treadmill field mapping and baseline-relative weights at https://github.com/noahlincke/bl4-loot-treadmill/tree/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill . Unique reflected identity required; ambiguous/missing fields refuse activation. Existing solo-world controller, restoration and R8 settings retained. No new reward or save writes. Native availability and actual gameplay unverified. 287 mocked regressions passed locally.
+
+
+## R10 (0.7.9) local gravity experiment
+
+Independent 0.5–1.5x baseline-relative local CharacterMovement.GravityScale control, default off, existing ownership and restoration guards. Community evidence: Apache-2.0 Apex Movement by Kevin-hDev, pinned heavier_fall.py https://github.com/kevin-hDev/Mods-Borderlands-4/blob/897c99eef4cd6d91637816d101456d59f4fb920f/apex_movement/apex_movement/heavier_fall.py reports changed jump timing and height. No shared jump definition writes or upstream code copied. Lower gravity can change jump height and airborne time; not an exact height multiplier. Actual gameplay unverified. Existing progression and rarity controls unchanged. 300 local mock tests pass.
