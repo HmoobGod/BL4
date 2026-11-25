@@ -53,9 +53,20 @@ class NativeAPI:
     def add(self, key, pawn, delta):
         result = self.library.AddModifierToGbxAttribute(
             self.pointer(ATTRIBUTES[key], self.kind), pawn, self.postadd, delta, True, self.failure)
-        # SDK return tuple = return value followed by out params. Do not guess a layout.
-        if type(result) is not tuple or len(result) != 2 or result[1] != self.success:
-            raise ValueError('native result ambiguous; restart required')
+        # Community runtime trials: opaque return handle, resolved attribute out
+        # parameter, then action outcome. SDK binding emits these in that order.
+        if type(result) is not tuple or len(result) != 3:
+            raise ValueError('native result shape ambiguous; restart required')
+        handle, definition, outcome = result
+        if type(outcome) is not type(self.success) or outcome != self.success:
+            raise ValueError('native outcome ambiguous; restart required')
+        if (str(getattr(getattr(handle, '_type', None), 'Name', '')) != 'GbxAttributeModifierHandle'
+                or not isinstance(definition, self.pointer)
+                or str(definition._name).casefold() != ATTRIBUTES[key].casefold()
+                or definition._type is None or identity(definition._type) != identity(self.kind)
+                or identity(definition) <= 0):
+            raise ValueError('native returned identity ambiguous; restart required')
+        # Do not retain or remove the opaque handle, and never write to the definition.
 
 
 class Trial:
@@ -70,16 +81,16 @@ class Trial:
         self.status = 'unused'
         self.owner = None
 
-    def _context(self):
+    def _context(self, *, restoring=False):
         c = self.controller
         pc, pawn, state, eligible = c.context()
-        if not eligible or self.consent() is not True or c.fault or c.stop_pending is not None:
+        if not eligible or c.fault or (not restoring and (self.consent() is not True or c.stop_pending is not None)):
             raise ValueError('eligible explicit offline session required')
         return (pc, pawn, state), gear_equipment_signature(pawn)
 
-    def _same(self):
+    def _same(self, *, restoring=False):
         c = self.controller
-        objects, stamp = self._context()
+        objects, stamp = self._context(restoring=restoring)
         if c.thread() != self.thread or stamp != self.stamp:
             raise ValueError('thread or equipment changed')
         if any(ref() is None or identity(ref()) != token or identity(obj) != token
@@ -122,14 +133,14 @@ class Trial:
         if self.status != 'active':
             return False
         try:
-            pawn = self._same()
+            pawn = self._same(restoring=True)
             if self.api.read(self.key, pawn) != self.target:
                 raise ValueError('unexpected attribute drift')
             if not self.controller.log('NATIVE TRIAL inverse ' + self.key + ': ' + repr(-self.delta)):
                 raise ValueError('report unavailable')
             self.status = 'uncertain'
-            self.api.add(self.key, self._same(), -self.delta)
-            if self.api.read(self.key, self._same()) != 1.0:
+            self.api.add(self.key, self._same(restoring=True), -self.delta)
+            if self.api.read(self.key, self._same(restoring=True)) != 1.0:
                 raise ValueError('inverse readback mismatch')
             self.status = 'cancelled'  # net effect observed, not native handle cleanup
             return True
