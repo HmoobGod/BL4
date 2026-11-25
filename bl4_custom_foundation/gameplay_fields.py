@@ -173,6 +173,29 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'repair_duration': lambda p, s: pair(p.HealthState.RepairKitDuration)}
 
 
+def gear_equipment_signature(pawn):
+    """Read equipped-slot handles and replication tokens; no retained native views.
+    Historical OakCharacter slot schema. A matching snapshot is not lifetime proof.
+    """
+    slots = pawn.EquippedInventorySlots.items
+    if not 1 <= len(slots) <= 64:
+        raise ValueError('equipped slot snapshot unavailable')
+    result = []
+    for i in range(len(slots)):
+        slot = slots[i]
+        stamp = (slot.SourceItemHandle.Handle, slot.ReplicationID, slot.ReplicationKey)
+        if any(type(v) is not int or not -(2**31) <= v < 2**31 for v in stamp):
+            raise ValueError('invalid equipped slot identity')
+        result.append(stamp)
+    return tuple(result)
+
+
+def physical_token(token):
+    """Compare the actual field location, not Gear's extra identity evidence."""
+    owner, name, kind = token
+    return (owner[0] if isinstance(owner, tuple) else owner, name, kind)
+
+
 def gear_luck(pc):
     """Resolve only the controller's Gear category; never retain array views."""
     if pc is None or 'Default__' in pc._path_name():

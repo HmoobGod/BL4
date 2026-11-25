@@ -1,7 +1,7 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
-from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity
+from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, gear_equipment_signature, physical_token
 
 
 from .ground_speed import floor_target
@@ -31,7 +31,10 @@ class Controller:
         pc, pawn, state, eligible = self.context()
         if not eligible:
             raise ValueError('eligible authoritative one-player session required')
+        gear_stamp = gear_equipment_signature(pawn) if key == 'gear_luck' else None
         _, tokens, baseline = read_fields(key, pawn, state, pc)
+        if gear_stamp is not None and gear_equipment_signature(pawn) != gear_stamp:
+            raise ValueError('equipped slot snapshot changed during capture')
         if key in RARITY_KEYS and any(v <= 0 for v in baseline):
             raise ValueError('positive rarity baseline required before activation')
         if key == 'legendary_weight' and baseline != (1.,):
@@ -39,15 +42,16 @@ class Controller:
         # A modified value/base pair may reflect buffs or another writer; do not adopt it.
         if len(baseline) == 2 and baseline[0] != baseline[1]:
             raise ValueError('Value/BaseValue differ; baseline uncertain')
-        taken = {t for record in self.records.values() for t in record['tokens']}
-        if taken.intersection(tokens):
+        taken = {physical_token(t) for record in self.records.values() for t in record['tokens']}
+        if taken.intersection(physical_token(t) for t in tokens):
             raise ValueError('field already owned by another feature')
         return dict(key=key, pc=self.weak_pointer(pc), pawn=self.weak_pointer(pawn),
                     state=self.weak_pointer(state), pc_id=identity(pc), pawn_id=identity(pawn),
                     state_id=identity(state), tokens=tokens, baseline=baseline,
-                    expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
+                    expected=baseline, owned=[{v} for v in baseline], thread=self.thread(),
+                    gear_stamp=gear_stamp)
 
-    def resolve(self, record, *, observed=None):
+    def resolve(self, record, *, observed=None, allow_gear_reset=False):
         if self.thread() != record['thread']:
             raise ValueError('wrong game hook thread')
         pc, pawn, state, eligible = self.context() if observed is None else observed
@@ -62,9 +66,17 @@ class Controller:
         # never write a pawn-owned field to a replacement pawn or stale object.
         if record['key'] not in RARITY_KEYS and not same_pawn:
             raise ValueError('original pawn no longer identifiable')
+        gear_stamp = gear_equipment_signature(pawn) if record['key'] == 'gear_luck' else None
         fields, tokens, values = read_fields(record['key'], pawn, state, pc)
+        if gear_stamp is not None and gear_equipment_signature(pawn) != gear_stamp:
+            raise ValueError('equipped slot snapshot changed during resolution')
         if tokens != record['tokens']:
             raise ValueError('reflected field identity changed')
+        if gear_stamp != record['gear_stamp']:
+            # A gear change can legitimately recompute the category. Never impose
+            # the previous loadout's baseline on a changed loadout.
+            if not allow_gear_reset or values != record['baseline']:
+                raise ValueError('equipped slot snapshot changed; native restoration unverified')
         return fields, values, eligible and same_pawn
 
     def write_one(self, record, index, value, *, applying):
@@ -86,7 +98,12 @@ class Controller:
         if record is None:
             return True
         try:
-            _, values, _ = self.resolve(record)
+            _, values, _ = self.resolve(record, allow_gear_reset=True)
+            if key == 'gear_luck' and values == record['baseline']:
+                # Same verified category storage already at baseline. No write.
+                del self.records[key]
+                self.log('BASELINE OBSERVED gear_luck; no restoration write (' + reason + ')')
+                return True
             if any(v not in allowed for v, allowed in zip(values, record['owned'], strict=True)):
                 raise ValueError('unexpected foreign value; refused to overwrite')
             for i, base in enumerate(record['baseline']):

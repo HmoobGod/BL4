@@ -325,7 +325,7 @@ def draw():
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
         if key == 'gear_luck':
-            ui.text_wrapped('SOURCE EXPERIMENT: positive Gear contribution only; actual loot effects unverified. Restore before changing gear or travel.')
+            ui.text_wrapped('SOURCE EXPERIMENT: positive Gear contribution only; actual loot effects unverified. Restore before changing gear or travel. Gear-slot changes stop the experiment; native cleanup after changes is unverified.')
         if key == 'gravity':
             ui.text_wrapped('EXPERIMENTAL: lower gravity can increase jump height and airborne time. Not a direct jump-height multiplier. Test on a backup character; restore while grounded.')
         if auto_master.value is True:
@@ -1209,6 +1209,8 @@ def auto_tick():
         _auto_next = now + .25
         _auto_ground = None
         if _auto_owned and _controller is not None and _controller.records:
+            if 'gear_luck' in _controller.records:
+                _auto_blocked = 'Gear luck session permission lost; toggle master to retry'
             _controller.restore_all('persistent permission removed')
         if not (_controller is not None and _controller.records):
             _auto_owned = False
@@ -1228,7 +1230,10 @@ def auto_tick():
         if observed is None or not observed[3]:
             _auto_status = 'Waiting for eligible local solo session (R2 checks)'
             _auto_ground = None
+            gear_was_active = 'gear_luck' in _controller.records
             _controller.restore_all('persistent session no longer eligible')
+            if gear_was_active:
+                _auto_blocked = 'Gear luck session changed; toggle master to retry'
             if _controller.fault:
                 _auto_blocked = 'Restoration fault; exit game'
             else:
