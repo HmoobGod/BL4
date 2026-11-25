@@ -23,12 +23,13 @@ FEATURES = {
     'healing_received': ('Healing received multiplier', .5, 5.),
     'rare_weight': ('Rare rarity weight', .1, 10.),
     'epic_weight': ('Epic rarity weight', .1, 10.),
+    'pearlescent_weight': ('Pearlescent rarity weight', .1, 10.),
     'repair_duration': ('Repair-kit healing duration multiplier', .5, 5.),
 }
 
 
 ZERO_RARITY_KEYS = frozenset(('common_weight', 'uncommon_weight'))
-RARITY_KEYS = ZERO_RARITY_KEYS | frozenset(('legendary_weight', 'rare_weight', 'epic_weight'))
+RARITY_KEYS = ZERO_RARITY_KEYS | frozenset(('legendary_weight', 'rare_weight', 'epic_weight', 'pearlescent_weight'))
 
 def identity(obj):
     token = obj._get_address()
@@ -129,6 +130,20 @@ def epic(pawn, state):
     return (next(iter(candidates.values())),)
 
 
+def pearlescent(pawn, state):
+    # Community source lists both names; reject distinct objects, never guess.
+    candidates = {}
+    for name in ('PearlescentModifier', 'PearlModifier'):
+        modifier = getattr(state.RarityState, name, None)
+        if modifier is not None:
+            token = identity(modifier)
+            if token not in candidates:
+                candidates[token] = scalar(modifier, 'Value')
+    if len(candidates) != 1:
+        raise ValueError('unique pearlescent rarity field unavailable')
+    return (next(iter(candidates.values())),)
+
+
 RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
@@ -143,6 +158,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'healing_received': lambda p, s: pair(p.DamageState.HealingReceivedMultiplier),
            'rare_weight': lambda p, s: (scalar(s.RarityState.RareModifier, 'Value'),),
            'epic_weight': epic,
+           'pearlescent_weight': pearlescent,
            'repair_duration': lambda p, s: pair(p.HealthState.RepairKitDuration)}
 
 

@@ -14,7 +14,7 @@ class Expansion(unittest.TestCase):
             setattr(self.p.ElementalDamageModifiers,n,A(1.))
         self.p.HealthState.RepairKitDuration = A(8.)
         self.r.RareModifier = A(1.); self.r.VeryRareModifier = A(1.)
-        self.r.CommonModifier = A(1.); self.r.UncommonModifier = A(1.)
+        self.r.CommonModifier = A(1.); self.r.UncommonModifier = A(1.); self.r.PearlescentModifier = A(1.)
         self.b.jump.MaxWalkSpeed = 600.
         self.b.jump.MinAnalogWalkSpeed = 0.
         self.b.jump.bIsSprinting = False
@@ -66,7 +66,7 @@ class Expansion(unittest.TestCase):
             if k in DAMAGE_HOLD: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,2.)
-        self.assertEqual(len(self.m._controller.records),16)
+        self.assertEqual(len(self.m._controller.records),17)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):
