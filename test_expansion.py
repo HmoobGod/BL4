@@ -29,10 +29,10 @@ class Expansion(unittest.TestCase):
         self.b.activate(key,1.); self.assertEqual((attr.Value,attr.BaseValue),(base,)*2)
     def test_outgoing_hold(self): self.b.activate('damage',2.); self.assertEqual(self.p.DamageCauserData.DamageDealtMultiplier.writes,[]); self.assertIn('feature HOLD',self.b.report())
     def test_incoming_experimental(self): self.pair_cycle('damage_taken',self.p.DamageState.DamageTakenMultiplier, multiplier=.5)
-    def test_shock_hold(self): self.b.activate('shock_damage',2.); self.assertEqual(self.p.ElementalDamageModifiers.ShockModifier.writes,[]); self.assertIn('feature HOLD',self.b.report())
-    def test_corrosive_hold(self): self.b.activate('corrosive_damage',2.); self.assertEqual(self.p.ElementalDamageModifiers.CorrosiveModifier.writes,[]); self.assertIn('feature HOLD',self.b.report())
-    def test_cryo_hold(self): self.b.activate('cryo_damage',2.); self.assertEqual(self.p.ElementalDamageModifiers.CryoModifier.writes,[]); self.assertIn('feature HOLD',self.b.report())
-    def test_radiation_hold(self): self.b.activate('radiation_damage',2.); self.assertEqual(self.p.ElementalDamageModifiers.RadiationModifier.writes,[]); self.assertIn('feature HOLD',self.b.report())
+    def test_shock_experimental(self): self.pair_cycle('shock_damage',self.p.ElementalDamageModifiers.ShockModifier)
+    def test_corrosive_experimental(self): self.pair_cycle('corrosive_damage',self.p.ElementalDamageModifiers.CorrosiveModifier)
+    def test_cryo_experimental(self): self.pair_cycle('cryo_damage',self.p.ElementalDamageModifiers.CryoModifier)
+    def test_radiation_experimental(self): self.pair_cycle('radiation_damage',self.p.ElementalDamageModifiers.RadiationModifier)
     def test_healing(self): self.pair_cycle('healing_received',self.p.DamageState.HealingReceivedMultiplier)
     def test_duration(self): self.pair_cycle('repair_duration',self.p.HealthState.RepairKitDuration,8.,.5)
     def ground(self, value):
@@ -65,7 +65,7 @@ class Expansion(unittest.TestCase):
             if k in DAMAGE_HOLD: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,2.)
-        self.assertEqual(len(self.m._controller.records),10)
+        self.assertEqual(len(self.m._controller.records),14)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):

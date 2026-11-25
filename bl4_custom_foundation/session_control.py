@@ -6,9 +6,8 @@ from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, 
 
 from .ground_speed import floor_target
 
-# R6: isolated fire experiment via the existing reflected pawn pair.
-DAMAGE_HOLD = frozenset(('damage', 'shock_damage',
-                        'corrosive_damage', 'cryo_damage', 'radiation_damage'))
+# R7: explicit elemental-only experiments; general damage remains HOLD.
+DAMAGE_HOLD = frozenset(('damage',))
 
 class Controller:
     def __init__(self, context, weak_pointer, report, thread):
