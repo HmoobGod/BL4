@@ -32,6 +32,8 @@ class Controller:
         if not eligible:
             raise ValueError('eligible authoritative one-player session required')
         _, tokens, baseline = read_fields(key, pawn, state)
+        if key in RARITY_KEYS and any(v <= 0 for v in baseline):
+            raise ValueError('positive rarity baseline required before activation')
         if key == 'legendary_weight' and baseline != (1.,):
             raise ValueError('legendary baseline must be exactly 1.0')
         # A modified value/base pair may reflect buffs or another writer; do not adopt it.

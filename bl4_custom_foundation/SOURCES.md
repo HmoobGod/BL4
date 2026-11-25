@@ -57,3 +57,8 @@ No upstream code added. Re-admits the existing pinned MIT Squ1ggs local pawn Fir
 ## Experimental R7 (0.7.6)
 
 Four existing MIT Squ1ggs reflected pawn elemental pairs are admitted by explicit individual opt-in: shock, corrosive, cryo and radiation. Fire retained. All new flags default off; no general damage, XP or automation admission. Actual hit effects unverified. 246 mocked regressions passed locally; no native game execution.
+
+
+## R8 (0.7.7) rarity experiment
+
+Existing MIT Loot Treadmill source (Noah Lincke), pinned 4852b34ac82c86c3093192fb029edab495fbb63a, maps CommonModifier and UncommonModifier and uses baseline-relative fractional weights. Its profiles.py (blob 9f80f00524ed913a209a5bf837fa0c387be02129) explicitly uses zero for low rarities. https://github.com/noahlincke/bl4-loot-treadmill/blob/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill/profiles.py . Independent adaptation uses existing solo world-session rarity controller; common/uncommon 0–10x, rare/epic/legendary 0.1–10x, step 0.1, optional numeric entry and 1x restoration. New flags default off. Not guaranteed drop probabilities; actual gameplay and numeric binding unverified. XP/cash/Eridium/overall luck remain preview-only. No original community assets or global asset changes, no grants or saves. Local mocked regressions 274/274.

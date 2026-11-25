@@ -14,6 +14,7 @@ class Expansion(unittest.TestCase):
             setattr(self.p.ElementalDamageModifiers,n,A(1.))
         self.p.HealthState.RepairKitDuration = A(8.)
         self.r.RareModifier = A(1.); self.r.VeryRareModifier = A(1.)
+        self.r.CommonModifier = A(1.); self.r.UncommonModifier = A(1.)
         self.b.jump.MaxWalkSpeed = 600.
         self.b.jump.MinAnalogWalkSpeed = 0.
         self.b.jump.bIsSprinting = False
@@ -65,7 +66,7 @@ class Expansion(unittest.TestCase):
             if k in DAMAGE_HOLD: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,2.)
-        self.assertEqual(len(self.m._controller.records),14)
+        self.assertEqual(len(self.m._controller.records),16)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):
@@ -76,8 +77,9 @@ class Expansion(unittest.TestCase):
     def test_zero_rarity_hold(self):
         self.r.RareModifier._values['Value']=0.; self.b.activate('rare_weight',2.)
         self.assertEqual(self.r.RareModifier.writes,[])
-    def test_new_fraction_hold(self):
-        self.b.activate('epic_weight',2.5); self.assertEqual(self.r.VeryRareModifier.writes,[])
+    def test_new_fraction_cycle(self):
+        self.b.activate('epic_weight',2.5); self.assertEqual(self.r.VeryRareModifier.Value,2.5)
+        self.b.activate('epic_weight',1.); self.assertEqual(self.r.VeryRareModifier.Value,1.)
     def test_new_pair_partial_restore(self):
         a=self.p.DamageState.HealingReceivedMultiplier; a.reject='BaseValue'; self.b.activate('healing_received',2.)
         self.assertEqual((a.Value,a.BaseValue),(1.,1.)); self.assertFalse(self.m._controller.fault)
