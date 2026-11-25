@@ -62,3 +62,8 @@ Four existing MIT Squ1ggs reflected pawn elemental pairs are admitted by explici
 ## R8 (0.7.7) rarity experiment
 
 Existing MIT Loot Treadmill source (Noah Lincke), pinned 4852b34ac82c86c3093192fb029edab495fbb63a, maps CommonModifier and UncommonModifier and uses baseline-relative fractional weights. Its profiles.py (blob 9f80f00524ed913a209a5bf837fa0c387be02129) explicitly uses zero for low rarities. https://github.com/noahlincke/bl4-loot-treadmill/blob/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill/profiles.py . Independent adaptation uses existing solo world-session rarity controller; common/uncommon 0–10x, rare/epic/legendary 0.1–10x, step 0.1, optional numeric entry and 1x restoration. New flags default off. Not guaranteed drop probabilities; actual gameplay and numeric binding unverified. XP/cash/Eridium/overall luck remain preview-only. No original community assets or global asset changes, no grants or saves. Local mocked regressions 274/274.
+
+
+## R9 (0.7.8) pearlescent experiment
+
+Independent optional pearlescent rarity weight, 0.1–10x with 0.1 steps, based on the MIT Loot Treadmill field mapping and baseline-relative weights at https://github.com/noahlincke/bl4-loot-treadmill/tree/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill . Unique reflected identity required; ambiguous/missing fields refuse activation. Existing solo-world controller, restoration and R8 settings retained. No new reward or save writes. Native availability and actual gameplay unverified. 287 mocked regressions passed locally.
