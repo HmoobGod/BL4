@@ -7,6 +7,7 @@ import struct
 
 # Distinct owners and meanings; no aliases between features.
 FEATURES = {
+    'gear_luck': ('Gear luck contribution (experimental)', 1., 10.),
     'legendary_weight': ('Legendary rarity weight', .1, 10.),
     'common_weight': ('Common rarity weight', 0., 10.),
     'uncommon_weight': ('Uncommon rarity weight', 0., 10.),
@@ -172,7 +173,39 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'repair_duration': lambda p, s: pair(p.HealthState.RepairKitDuration)}
 
 
-def read_fields(key, pawn, state):
+def gear_luck(pc):
+    """Resolve only the controller's Gear category; never retain array views."""
+    if pc is None or 'Default__' in pc._path_name():
+        raise ValueError('local controller required')
+    categories = pc.LuckCategoryAttributesState.LuckCategories
+    if not 1 <= len(categories) <= 32:
+        raise ValueError('unexpected luck category count')
+    matches = []
+    for i in range(len(categories)):
+        entry = categories[i]
+        definition = entry.Category
+        if definition._name == 'LuckCategory_Gear':
+            matches.append(i)
+    if len(matches) != 1:
+        raise ValueError('unique Gear luck category required')
+    entry = categories[matches[0]]
+    definition = entry.Category
+    if (definition._name != 'LuckCategory_Gear' or definition._type is None
+            or str(definition._type.Name) != 'LuckCategoryDef'
+            or type(definition).__name__ != 'FGbxDefPtr'
+            or int(definition.CategoryType) != 0 or int(definition.ModifierType) != 0):
+        raise ValueError('Gear category must be resolved modifiable ScaleAdd')
+    # Only a positive, unbuffed pair is admitted by Controller.capture.
+    # Scaling the contribution is NOT equivalent to scaling total luck/drop chance.
+    fields = pair(entry.Value)
+    signature = (identity(pc), identity(entry), identity(definition))
+    tokens = tuple(((identity(o), *signature), n, k) for o, n, k, _ in fields)
+    return fields, tokens, tuple(v for _, _, _, v in fields)
+
+
+def read_fields(key, pawn, state, pc=None):
+    if key == 'gear_luck':
+        return gear_luck(pc)
     if key not in RESOLVE:
         raise ValueError('feature HOLD')
     fields = RESOLVE[key](pawn, state)
@@ -187,7 +220,7 @@ def target_values(key, baseline, tokens, selection):
     if type(selection) not in (int, float) or not math.isfinite(selection) or not low <= selection <= high:
         raise ValueError('invalid multiplier')
     # Exact representable native targets, not fuzzy comparisons with foreign writes.
-    if key in RARITY_KEYS and selection != round(selection, 1):
+    if (key in RARITY_KEYS or key == 'gear_luck') and selection != round(selection, 1):
         raise ValueError('rarity weight uses 0.1 increments')
     result = []
     for base, (_, _, kind) in zip(baseline, tokens, strict=True):

@@ -31,7 +31,7 @@ class Controller:
         pc, pawn, state, eligible = self.context()
         if not eligible:
             raise ValueError('eligible authoritative one-player session required')
-        _, tokens, baseline = read_fields(key, pawn, state)
+        _, tokens, baseline = read_fields(key, pawn, state, pc)
         if key in RARITY_KEYS and any(v <= 0 for v in baseline):
             raise ValueError('positive rarity baseline required before activation')
         if key == 'legendary_weight' and baseline != (1.,):
@@ -62,7 +62,7 @@ class Controller:
         # never write a pawn-owned field to a replacement pawn or stale object.
         if record['key'] not in RARITY_KEYS and not same_pawn:
             raise ValueError('original pawn no longer identifiable')
-        fields, tokens, values = read_fields(record['key'], pawn, state)
+        fields, tokens, values = read_fields(record['key'], pawn, state, pc)
         if tokens != record['tokens']:
             raise ValueError('reflected field identity changed')
         return fields, values, eligible and same_pawn

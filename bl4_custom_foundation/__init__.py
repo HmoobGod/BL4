@@ -53,7 +53,7 @@ CATEGORIES = [
         progression_slider('progress_eridium', 'Eridium'),
         progression_slider('progress_enemy_xp', 'Enemy kill XP'),
         progression_slider('progress_mission_xp', 'Mission XP')]),
-    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), progression_slider('overall_loot_luck', 'Overall loot luck'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
+    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), progression_slider('overall_loot_luck', 'Overall loot luck'), SliderOption('gear_luck', 1., 1., 10., step=.1, is_integer=False, display_name='Gear luck contribution (experimental)', description='Scales positive Gear category contribution only; not total luck. 1x restores.'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
     ('inventory', 'Inventory', [slider('capacity', 'Capacity multiplier')]),
     ('movement', 'Movement', [slider('sprint', 'Sprint speed multiplier'), slider('jump', 'Jump velocity multiplier'), SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
@@ -301,7 +301,7 @@ def draw():
             edited, value = ui.checkbox(label, value)
         else:
             edited, value = ui.slider_float(label, value, o.min_value, o.max_value, '%.1fx')
-            if o.identifier in RARITY_KEYS or o.identifier.startswith('progress_') or o.identifier == 'overall_loot_luck':
+            if o.identifier in RARITY_KEYS or o.identifier.startswith('progress_') or o.identifier in ('overall_loot_luck', 'gear_luck'):
                 # Older bindings may omit input_float; slider remains available.
                 numeric = getattr(ui, 'input_float', None)
                 if callable(numeric):
@@ -324,6 +324,8 @@ def draw():
         name = FEATURES[key][0]
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
+        if key == 'gear_luck':
+            ui.text_wrapped('SOURCE EXPERIMENT: positive Gear contribution only; actual loot effects unverified. Restore before changing gear or travel.')
         if key == 'gravity':
             ui.text_wrapped('EXPERIMENTAL: lower gravity can increase jump height and airborne time. Not a direct jump-height multiplier. Test on a backup character; restore while grounded.')
         if auto_master.value is True:
