@@ -72,8 +72,11 @@ class Batch(unittest.TestCase):
         for k,v in [('legendary_weight',4),('jump',2),('repair_cooldown',.5)]:self.activate(k,v)
         self.assertEqual(len(self.m._controller.records),3);self.assertEqual((self.f.weight,self.jump.JumpZVelocity,self.fire.Value,self.cool.Value),(4,1240,1,10));self.assertEqual(self.cool.BaseValue,10)
         self.m.request_stop('test',immediate=True);self.assertEqual((self.f.weight,self.jump.JumpZVelocity,self.fire.Value,self.cool.Value),(1,620,1,20));self.assertEqual(self.fire.BaseValue,1);self.assertEqual(self.cool.BaseValue,20);self.assertFalse(self.m._controller.records)
-    def test_fire_hold(self):
-        self.activate('fire_damage',2);self.activate('fire_damage',3);self.assertEqual(self.fire.writes,[]);self.assertIn('feature HOLD',self.report())
+    def test_fire_experimental_cycle(self):
+        self.activate('fire_damage',2);self.assertEqual((self.fire.Value,self.fire.BaseValue),(2.,2.))
+        self.activate('fire_damage',3);self.assertEqual((self.fire.Value,self.fire.BaseValue),(3.,3.))
+        self.activate('fire_damage',1);self.assertEqual((self.fire.Value,self.fire.BaseValue),(1.,1.))
+        self.assertIn('gameplay unverified',self.report())
     def test_cooldown_baseline(self):self.activate('repair_cooldown',.5);self.assertEqual(self.cool.Value,10);self.activate('repair_cooldown',2);self.assertEqual(self.cool.Value,40)
     def test_jump_restore(self):self.activate('jump',1.5);self.assertEqual(self.jump.JumpZVelocity,930);self.activate('jump',1);self.assertEqual(self.jump.JumpZVelocity,620)
     def test_no_confirmation(self):self.m._offline_confirmed=False;self.activate('legendary_weight',2);self.assertEqual(self.f.writes,[]);self.assertIn('confirm offline',self.report())

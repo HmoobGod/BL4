@@ -9,3 +9,7 @@ Run `python run_regressions.py` with Python 3.11 or later. Tests mock the game a
 ## Provenance
 
 See `bl4_custom_foundation/SOURCES.md` and the accompanying third-party license files for MIT and Apache-2.0 components and modified integrations. No game binaries, original game assets, SDK distributions, user saves or private gameplay reports are included. Third-party licenses apply to their respective components; this repository does not grant additional rights to third-party material.
+
+## Experimental R6 (0.7.5)
+
+Fire-only reflected modifier is available by explicit opt-in; actual hit damage is unverified. Other outgoing damage, XP and automation remain on HOLD. Preserve R5 on main.
