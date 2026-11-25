@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.sdkmod
+*.zip
+*.sav
+*.log
+settings/
+*session_report*.txt
+.env

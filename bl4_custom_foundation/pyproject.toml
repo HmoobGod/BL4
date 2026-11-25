@@ -1,0 +1,11 @@
+[project]
+name = "bl4_custom_foundation"
+version = "0.7.4"
+description = "Experimental R5 R2-compatible persistent session admission."
+authors = [{name = "BL4 Custom Project"}]
+
+[tool.sdkmod]
+name = "BL4 Custom Foundation"
+supported_games = ["BL4"]
+coop_support = "Incompatible"
+auto_enable = true
