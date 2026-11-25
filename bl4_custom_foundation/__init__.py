@@ -10,7 +10,7 @@ from .session_control import Controller, DAMAGE_HOLD
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 
-TITLE = 'BL4 Custom - Community Integration v0.7.5-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.6-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -225,7 +225,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.5-experimental')
+    ui.text('BL4 CUSTOM | v0.7.6-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -271,7 +271,7 @@ def draw():
         if not options:
             ui.text('No supported gameplay controls here; turn off Compact menu to view previews.')
     if _category == 0 and not compact:
-        ui.text_wrapped('Outgoing damage HOLD. Incoming damage reduction is EXPERIMENTAL; actual damage reduction is unverified.')
+        ui.text_wrapped('General damage HOLD. Elemental and incoming damage are EXPERIMENTAL; actual hit effects unverified.')
     if _category == 1 and not compact:
         ui.text_wrapped('HOLD: all six reward hooks are unverified. These sliders only save preview values.')
         ui.text_wrapped(_reward_summary)
@@ -314,8 +314,8 @@ def draw():
         if key not in FEATURES or key in DAMAGE_HOLD:
             continue
         name = FEATURES[key][0]
-        if key == 'fire_damage':
-            ui.text_wrapped('Experimental fire-only modifier; actual hit damage unverified. 1x restores.')
+        if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
+            ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
         if auto_master.value is True:
             option = AUTO_OPTIONS[key]
             changed_auto, selected_auto = ui.checkbox(option.display_name + '##' + option.identifier, option.value is True)
@@ -323,7 +323,7 @@ def draw():
                 set_auto_setting(option, selected_auto)
             ui.text(name + ': ' + persistent_feature_status(key))
             continue
-        if key in ('damage_taken', 'repair_cooldown', 'fire_damage'):
+        if key in ('damage_taken', 'repair_cooldown', 'fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('EXPERIMENTAL: gameplay effect unverified. Test separately on a backup character.')
         if key in ('repair_cooldown', 'damage_taken'):
             ui.text_wrapped('1x restores baseline. ' + ('Lower duration is faster.' if key == 'repair_cooldown' else 'Lower means less damage taken.'))
@@ -439,7 +439,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.5-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.6-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -668,7 +668,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.5-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.6-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -704,7 +704,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v075exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v076exp'
 
 
 def monitor_status():
@@ -738,7 +738,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.5-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.6-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -764,7 +764,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.5-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.6-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -847,7 +847,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v075exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v076exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1300,7 +1300,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.5-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.6-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

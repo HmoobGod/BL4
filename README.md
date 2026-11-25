@@ -13,3 +13,8 @@ See `bl4_custom_foundation/SOURCES.md` and the accompanying third-party license 
 ## Experimental R6 (0.7.5)
 
 Fire-only reflected modifier is available by explicit opt-in; actual hit damage is unverified. Other outgoing damage, XP and automation remain on HOLD. Preserve R5 on main.
+
+
+## Experimental R7 (0.7.6)
+
+Four existing MIT Squ1ggs reflected pawn elemental pairs are admitted by explicit individual opt-in: shock, corrosive, cryo and radiation. Fire retained. All new flags default off; no general damage, XP or automation admission. Actual hit effects unverified. 246 mocked regressions passed locally; no native game execution.

@@ -52,3 +52,8 @@ Existing community-derived field paths and licenses remain unchanged. Direct sou
 
 ## R6 v0.7.5 fire-only opt-in
 No upstream code added. Re-admits the existing pinned MIT Squ1ggs local pawn FireModifier pair as an experiment; see earlier v0.5.3 native field readback and v0.6.3 gameplay limitation. General/other elemental damage remain HOLD. New persistent flag defaults OFF. Runtime effect not independently verified. R5 session and movement paths retained. See R6_DEVELOPMENT.md in source archive.
+
+
+## Experimental R7 (0.7.6)
+
+Four existing MIT Squ1ggs reflected pawn elemental pairs are admitted by explicit individual opt-in: shock, corrosive, cryo and radiation. Fire retained. All new flags default off; no general damage, XP or automation admission. Actual hit effects unverified. 246 mocked regressions passed locally; no native game execution.
