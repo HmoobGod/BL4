@@ -16,13 +16,14 @@ class Expansion(unittest.TestCase):
         self.r.RareModifier = A(1.); self.r.VeryRareModifier = A(1.)
         self.r.CommonModifier = A(1.); self.r.UncommonModifier = A(1.); self.r.PearlescentModifier = A(1.)
         self.b.jump.MaxWalkSpeed = 600.
+        self.b.jump.GravityScale = 1.
         self.b.jump.MinAnalogWalkSpeed = 0.
         self.b.jump.bIsSprinting = False
         self.anim=types.SimpleNamespace(_get_address=lambda:987654)
         self.p.Mesh=types.SimpleNamespace(GetAnimInstance=lambda:self.anim)
         self.b.f.pc.OakCharacter=self.p
         self.b.f.sdk.hooks.Type.POST='anim_post'
-        self.b.jump.Class._properties = lambda: [type('ZFloatProperty',(),{'Name':n,'ArrayDim':1})() for n in ('JumpZVelocity','MaxWalkSpeed','MinAnalogWalkSpeed')]
+        self.b.jump.Class._properties = lambda: [type('ZFloatProperty',(),{'Name':n,'ArrayDim':1})() for n in ('JumpZVelocity','MaxWalkSpeed','MinAnalogWalkSpeed','GravityScale')]
     def pair_cycle(self, key, attr, base=1., multiplier=2.):
         self.b.activate(key,multiplier); self.assertIn(key,self.m._controller.records)
         self.assertEqual((attr.Value,attr.BaseValue),(base*multiplier,)*2)
@@ -65,8 +66,8 @@ class Expansion(unittest.TestCase):
         for k in FEATURES:
             if k in DAMAGE_HOLD: continue
             if k == 'walk_speed': self.ground(2.)
-            else: self.b.activate(k,2.)
-        self.assertEqual(len(self.m._controller.records),17)
+            else: self.b.activate(k,1.2 if k == 'gravity' else 2.)
+        self.assertEqual(len(self.m._controller.records),18)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):

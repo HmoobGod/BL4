@@ -11,6 +11,7 @@ FEATURES = {
     'common_weight': ('Common rarity weight', 0., 10.),
     'uncommon_weight': ('Uncommon rarity weight', 0., 10.),
     'jump': ('Jump velocity multiplier', .5, 5.),
+    'gravity': ('Local gravity multiplier', .5, 1.5),
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
     'damage': ('Damage multiplier', .5, 5.),
@@ -105,6 +106,14 @@ def walk_speed(pawn, state):
         raise ValueError('Apex CharacterMovement identity mismatch')
     return fields
 
+def gravity(pawn, state):
+    # Apex uses the local CharacterMovement component, not a shared jump definition.
+    fields = owned_movement_scalar(pawn, 'GravityScale')
+    if identity(fields[0][0]) != identity(pawn.CharacterMovement):
+        raise ValueError('Apex CharacterMovement identity mismatch')
+    return fields
+
+
 def combat(pawn, state):
     # Verified source: ElementalDamageModifiers.FireModifier is a pawn pair.
     return pair(pawn.ElementalDamageModifiers.FireModifier)
@@ -155,6 +164,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'cryo_damage': lambda p, s: pair(p.ElementalDamageModifiers.CryoModifier),
            'radiation_damage': lambda p, s: pair(p.ElementalDamageModifiers.RadiationModifier),
            'walk_speed': walk_speed,
+           'gravity': gravity,
            'healing_received': lambda p, s: pair(p.DamageState.HealingReceivedMultiplier),
            'rare_weight': lambda p, s: (scalar(s.RarityState.RareModifier, 'Value'),),
            'epic_weight': epic,
