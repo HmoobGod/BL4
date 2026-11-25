@@ -10,7 +10,7 @@ from .session_control import Controller, DAMAGE_HOLD
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 
-TITLE = 'BL4 Custom - Community Integration v0.7.6-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.7-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -29,8 +29,8 @@ def slider(identifier, label, minimum=0.5):
 
 
 def rarity_slider(identifier, label):
-    return SliderOption(identifier, 1.0, 1.0, 10.0, step=1.0, is_integer=False,
-                        display_name=label, description='Manual selection or opt-in persistent gameplay.')
+    return SliderOption(identifier, 1.0, FEATURES[identifier][1], 10.0, step=0.1, is_integer=False,
+                        display_name=label, description='Experimental world-session rarity weight; 1x restores.')
 
 
 def progression_slider(identifier, label):
@@ -53,7 +53,7 @@ CATEGORIES = [
         progression_slider('progress_eridium', 'Eridium'),
         progression_slider('progress_enemy_xp', 'Enemy kill XP'),
         progression_slider('progress_mission_xp', 'Mission XP')]),
-    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), SliderOption('legendary_weight', 1.0, 1.0, 10.0, step=1.0, is_integer=False, display_name='Legendary rarity weight (selected)', description='Manual selection or opt-in persistent gameplay.'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight')]),
+    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), progression_slider('overall_loot_luck', 'Overall loot luck'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)')]),
     ('inventory', 'Inventory', [slider('capacity', 'Capacity multiplier')]),
     ('movement', 'Movement', [slider('sprint', 'Sprint speed multiplier'), slider('jump', 'Jump velocity multiplier'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
@@ -225,7 +225,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.6-experimental')
+    ui.text('BL4 CUSTOM | v0.7.7-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -282,11 +282,11 @@ def draw():
         ui.text_wrapped(_loot_status)
         if ui.button('Read-only rarity check'):
             inspect_loot_readonly()
-        ui.text_wrapped('Rarity weight is not a guaranteed drop probability.')
+        ui.text_wrapped('Rarity weight is not a guaranteed drop probability. 0x common/uncommon is experimental; higher rarities stay positive.')
     if _category == 4 and not compact:
         ui.text_wrapped('Ground speed: select a new 1–3x value (old saved values may be out of range). 1x restores. 2x targets walk floor 1080 / sprint 1656 (reference units/s); not exact speed multiplier.')
     if compact and _category == 2:
-        ui.text('Rarity weight is not guaranteed drop probability.')
+        ui.text('Rarity weight is not guaranteed drop probability; 1x restores.')
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
     if _category == 8:
@@ -300,9 +300,17 @@ def draw():
         if isinstance(o, BoolOption):
             edited, value = ui.checkbox(label, value)
         else:
-            edited, value = ui.slider_float(label, value, o.min_value, o.max_value, '%.0fx' if o.identifier in RARITY_KEYS else '%.1fx')
-            if o.identifier in RARITY_KEYS:
-                value = float(round(value))
+            edited, value = ui.slider_float(label, value, o.min_value, o.max_value, '%.1fx')
+            if o.identifier in RARITY_KEYS or o.identifier.startswith('progress_') or o.identifier == 'overall_loot_luck':
+                # Older bindings may omit input_float; slider remains available.
+                numeric = getattr(ui, 'input_float', None)
+                if callable(numeric):
+                    try:
+                        typed, entered = numeric('Value##numeric_' + o.identifier, value, .1, 1., '%.1f')
+                        if typed and type(entered) in (int, float) and math.isfinite(entered):
+                            edited, value = True, entered
+                    except (TypeError, AttributeError):
+                        pass
         if edited:
             if auto_master.value is True and o.identifier in AUTO_OPTIONS:
                 queue_auto_edit(o, value)
@@ -439,7 +447,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.6-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.7-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -668,7 +676,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.6-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.7-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -704,7 +712,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v076exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v077exp'
 
 
 def monitor_status():
@@ -738,7 +746,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.6-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.7-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -764,7 +772,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.6-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.7-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -847,7 +855,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v076exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v077exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1300,7 +1308,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.6-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.7-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

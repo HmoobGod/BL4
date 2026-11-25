@@ -7,7 +7,9 @@ import struct
 
 # Distinct owners and meanings; no aliases between features.
 FEATURES = {
-    'legendary_weight': ('Legendary rarity weight', 1., 10.),
+    'legendary_weight': ('Legendary rarity weight', .1, 10.),
+    'common_weight': ('Common rarity weight', 0., 10.),
+    'uncommon_weight': ('Uncommon rarity weight', 0., 10.),
     'jump': ('Jump velocity multiplier', .5, 5.),
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
@@ -19,13 +21,14 @@ FEATURES = {
     'radiation_damage': ('Radiation damage multiplier', .5, 5.),
     'walk_speed': ('Ground speed floor (reference multiplier)', 1., 3.),
     'healing_received': ('Healing received multiplier', .5, 5.),
-    'rare_weight': ('Rare rarity weight', 1., 10.),
-    'epic_weight': ('Epic rarity weight', 1., 10.),
+    'rare_weight': ('Rare rarity weight', .1, 10.),
+    'epic_weight': ('Epic rarity weight', .1, 10.),
     'repair_duration': ('Repair-kit healing duration multiplier', .5, 5.),
 }
 
 
-RARITY_KEYS = frozenset(('legendary_weight', 'rare_weight', 'epic_weight'))
+ZERO_RARITY_KEYS = frozenset(('common_weight', 'uncommon_weight'))
+RARITY_KEYS = ZERO_RARITY_KEYS | frozenset(('legendary_weight', 'rare_weight', 'epic_weight'))
 
 def identity(obj):
     token = obj._get_address()
@@ -34,7 +37,7 @@ def identity(obj):
     return token
 
 
-def scalar(owner, name):
+def scalar(owner, name, *, allow_zero=False):
     typ = getattr(owner, '_type', None)
     if typ is None:
         typ = owner.Class
@@ -45,7 +48,7 @@ def scalar(owner, name):
     if kind not in ('ZFloatProperty', 'ZDoubleProperty'):
         raise ValueError('unsupported scalar type: ' + name)
     v = getattr(owner, name)
-    if type(v) not in (int, float) or not math.isfinite(v) or not (0 <= v <= 1e6 if name == 'MinAnalogWalkSpeed' else 0 < v <= 1e6):
+    if type(v) not in (int, float) or not math.isfinite(v) or not (0 <= v <= 1e6 if name == 'MinAnalogWalkSpeed' or allow_zero else 0 < v <= 1e6):
         raise ValueError('invalid/nonpositive baseline or value: ' + name)
     return owner, name, kind, float(v)
 
@@ -127,6 +130,8 @@ def epic(pawn, state):
 
 
 RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
+           'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
+           'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
            'damage': lambda p, s: pair(p.DamageCauserData.DamageDealtMultiplier),
            'damage_taken': lambda p, s: pair(p.DamageState.DamageTakenMultiplier),
@@ -156,14 +161,14 @@ def target_values(key, baseline, tokens, selection):
     if type(selection) not in (int, float) or not math.isfinite(selection) or not low <= selection <= high:
         raise ValueError('invalid multiplier')
     # Exact representable native targets, not fuzzy comparisons with foreign writes.
-    if key in RARITY_KEYS and selection != round(selection):
-        raise ValueError('rarity weight uses whole-number increments')
+    if key in RARITY_KEYS and selection != round(selection, 1):
+        raise ValueError('rarity weight uses 0.1 increments')
     result = []
     for base, (_, _, kind) in zip(baseline, tokens, strict=True):
         v = base * selection
         if kind == 'ZFloatProperty':
             v = struct.unpack('<f', struct.pack('<f', v))[0]
-        if not math.isfinite(v) or not 0 < v <= 1e6:
+        if not math.isfinite(v) or not (0 <= v <= 1e6 if key in ZERO_RARITY_KEYS and selection == 0 else 0 < v <= 1e6):
             raise ValueError('target outside verified scalar bounds')
         result.append(v)
     return tuple(result)

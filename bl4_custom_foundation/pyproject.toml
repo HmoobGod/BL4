@@ -1,7 +1,7 @@
 [project]
 name = "bl4_custom_foundation"
-version = "0.7.6"
-description = "Experimental R7 individual elemental damage; R5 lifecycle preserved."
+version = "0.7.7"
+description = "Experimental R8 decimal rarity weights; R5 lifecycle preserved."
 authors = [{name = "BL4 Custom Project"}]
 
 [tool.sdkmod]
