@@ -13,6 +13,8 @@ FEATURES = {
     'common_weight': ('Common rarity weight', 0., 10.),
     'uncommon_weight': ('Uncommon rarity weight', 0., 10.),
     'jump': ('Jump velocity multiplier', .5, 5.),
+    'dash_speed': ('Dash speed multiplier (experimental)', .5, 3.),
+    'glide_speed': ('Glide speed multiplier (experimental)', .5, 3.),
     'gravity': ('Local gravity multiplier', .5, 1.5),
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
@@ -126,6 +128,20 @@ def gravity(pawn, state):
     return fields
 
 
+def local_move_pair(pawn, field):
+    """Exact local Oak movement component; no jump-goal or shared definition writes."""
+    from .weapon_rates import nested
+    comp = pawn.CharacterMovement
+    if (comp is None or str(comp.Class.Name) != 'OakCharacterMovementComponent'
+            or 'Default__' in comp._path_name() or identity(comp.OakCharacterOwner) != identity(pawn)):
+        raise ValueError('local Oak movement component unavailable')
+    for name in ('CharacterOwner', 'PawnOwner'):
+        owner = getattr(comp, name, None)
+        if owner is not None and identity(owner) != identity(pawn):
+            raise ValueError('movement owner mismatch')
+    return pair(nested(comp, field, 'GbxAttributeFloat'))
+
+
 def combat(pawn, state):
     # Verified source: ElementalDamageModifiers.FireModifier is a pawn pair.
     return pair(pawn.ElementalDamageModifiers.FireModifier)
@@ -219,6 +235,8 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'walk_speed': walk_speed,
            'sprint': walk_speed,
            'gravity': gravity,
+           'dash_speed': lambda p, s: local_move_pair(p, 'DashSpeed'),
+           'glide_speed': lambda p, s: local_move_pair(p, 'GlidingSpeed'),
            'healing_received': lambda p, s: pair(p.DamageState.HealingReceivedMultiplier),
            'rare_weight': lambda p, s: (scalar(s.RarityState.RareModifier, 'Value'),),
            'epic_weight': epic,
