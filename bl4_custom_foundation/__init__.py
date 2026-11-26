@@ -11,7 +11,7 @@ from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 from .inventory_capacity import KEYS as CAPACITY_KEYS
 
-TITLE = 'BL4 Custom - Community Integration v0.7.24-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.25-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -69,7 +69,16 @@ auto_consent = BoolOption('persistent_offline', False, display_name='I use Offli
 MANUAL_ONLY = CAPACITY_KEYS | frozenset(('sprint', 'dash_speed', 'glide_speed', 'fire_rate', 'reload', 'repair_health', 'ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'swap_time', 'weapon_spread', 'weapon_recoil'))
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
-AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values()]
+AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Auto-enable '+label)
+                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'))}
+AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values()]
+# Independent persistent lanes. Isolated manual experiments remain unchanged.
+_automation_leases = {}
+_automation_attempted = set()
+_automation_status = {}
+_automation_next = 0.0
+_automation_busy = False
+_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity'))
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., is_integer=False, display_name='Saved vacuum radius (m)')
@@ -250,7 +259,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.24-experimental')
+    ui.text('BL4 CUSTOM | v0.7.25-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -275,13 +284,18 @@ def draw():
     if not compact or _loot_test_status.startswith(('HOLD', 'FAULT', 'STOP')):
         ui.text_wrapped(_loot_test_status)
     ui.text("Session monitor: " + monitor_status())
-    if health_fault() or (_controller is not None and _controller.fault):
+    if health_fault() or automation_fault() or (_controller is not None and _controller.fault):
         ui.text_wrapped('FAULT LATCHED: exit game immediately; do not play.')
     if _controller is not None:
         ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' ' + str(r.get('selection', '?')) + (' slots' if k in CAPACITY_KEYS else 'x') for k, r in _controller.records.items()) or 'None / vanilla'))
         if any(r.get('overfull_warning') for r in _controller.records.values()):
             ui.text_wrapped('CAPACITY RESTORE HOLD: remove excess items in this offline session, then restore. Do not travel, buy SDUs or exit while over capacity.')
         if _controller.records and not _controller.fault and ui.button('Restore ALL active gameplay values'):
+            pause_auto('F8 restore all')
+            request_stop('F8 restore all', immediate=True)
+    if any(l.record is not None for l in _automation_leases.values()):
+        ui.text_wrapped('Persistent automation armed (native outcomes unverified).')
+        if ui.button('Stop automation / Restore ALL'):
             pause_auto('F8 restore all')
             request_stop('F8 restore all', immediate=True)
     if health_active():
@@ -321,6 +335,12 @@ def draw():
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
     if _category == 5:
+        if auto_master.value is True:
+            ui.text_wrapped('Persistent automation: movement-compatible; vacuum uses saved filters/radius. Reload remains tied to the original weapon. Toggle a stopped lane off/on to rearm.')
+            for kind, option in AUTOMATION_OPTIONS.items():
+                edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
+                if edited: set_auto_setting(option, selected)
+                ui.text(kind+': '+_automation_status.get(kind, 'Waiting / off'))
         ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves nearby for manual pickup; completed moves are not reversed.')
         if not health_active():
             for kind in _vacuum_filters:
@@ -530,7 +550,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.24-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.25-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -760,7 +780,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.24-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.25-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -796,7 +816,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0724exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0725exp'
 
 
 def monitor_status():
@@ -830,7 +850,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.24-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.25-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -856,7 +876,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.24-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.25-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -915,7 +935,7 @@ def health_active():
 
 
 def health_fault():
-    return _health_pulse is not None and _health_pulse.fault
+    return (_health_pulse is not None and _health_pulse.fault) or automation_fault()
 
 
 def stop_health_pulse(reason):
@@ -979,6 +999,7 @@ def request_stop(reason, *, immediate=False):
     global _offline_confirmed, _auto_blocked, _auto_ground
     _offline_confirmed = False
     stop_health_pulse(reason)
+    stop_automation(reason)
     if _auto_owned or auto_master.value is True:
         _auto_blocked = reason + '; toggle master to retry'
         _auto_ground = None
@@ -1005,7 +1026,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0724exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0725exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1027,6 +1048,8 @@ def ensure_ground_hook():
 
 def ground_tick(obj, *_):
     global _ground_anim_id, _ground_seen, _activation_request, _controller, _auto_ground, _auto_blocked
+    if _automation_busy or automation_fault():
+        return
     request = _activation_request
     automatic = _auto_ground is not None and _auto_owned
     queued = request is not None and request[0] in GROUND_KEYS
@@ -1117,6 +1140,8 @@ def ground_tick(obj, *_):
 def monitor_tick(*_):
     global _monitor_thread, _monitor_seen, _offline_confirmed, _activation_request
     global _monitor_registered, _monitor_error
+    if _automation_busy:
+        return  # do not re-enter or change monitor identity during native dispatch
     if not _monitor_registered:
         if not _monitor_candidate:
             return
@@ -1143,11 +1168,12 @@ def monitor_tick(*_):
             permitted = False
         _health_pulse.tick(permitted)
         return
-    if health_fault():
+    if _health_pulse is not None and _health_pulse.fault:
         return
-    if auto_master.value is True or _auto_owned:
+    if auto_master.value is True or _auto_owned or _automation_leases:
         auto_tick()
         report_auto_status_change()
+        automation_tick()
         return
     # No reflection, conflict scans, or report I/O in the inactive camera hook.
     if _activation_request is None and not (_controller is not None and _controller.records):
@@ -1182,7 +1208,7 @@ def monitor_tick(*_):
         hooks = sys.modules['unrealsdk'].hooks
         if not _monitor_registered or hooks.has_hook(_MONITOR_PATH, hooks.Type.POST_UNCONDITIONAL, _MONITOR_ID) is not True:
             raise ValueError('session monitor not registered at execution')
-        if health_fault() or (_controller is not None and _controller.fault):
+        if health_fault() or automation_fault() or (_controller is not None and _controller.fault):
             raise ValueError('fault latched; exit game')
         execute_activation(key, selection)
     except Exception as exc:
@@ -1194,7 +1220,7 @@ def monitor_tick(*_):
 def activate_feature(key, selection):
     global _activation_request
     try:
-        if health_fault() or (_controller is not None and _controller.fault):
+        if health_fault() or automation_fault() or (_controller is not None and _controller.fault):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
@@ -1266,13 +1292,23 @@ def set_auto_setting(option, value):
     except Exception as exc:
         _auto_blocked = 'Settings save failed; toggle master to retry'
         if option is auto_master and value is False:
+            stop_automation('master save failed')
             auto_master.value = False
             _auto_edits.clear()
             _auto_ground = None
             report_live('HOLD: master off in memory; saved settings may still be on, check before restart')
         report_live('HOLD: ' + str(exc)[:120])
         return
+    if option in AUTOMATION_OPTIONS.values():
+        kind = next(k for k,o in AUTOMATION_OPTIONS.items() if o is option)
+        stop_automation_lane(kind, 'automation preference changed')
+        if value is True and not automation_fault():
+            _automation_attempted.discard(kind)
+            _automation_status[kind] = 'Waiting for eligible session'
     if option is auto_master:
+        stop_automation('persistent master changed')
+        if value is True and not automation_fault():
+            _automation_attempted.clear()
         if value is True:
             stop_health_pulse('persistent master enabled')
         _auto_ground = None
@@ -1284,6 +1320,7 @@ def set_auto_setting(option, value):
         if value is True:
             ensure_monitor()
     if option is auto_consent and value is not True:
+        stop_automation("offline consent withdrawn")
         _auto_ground = None
     _auto_next = 0.0  # a committed setting change warrants an immediate reconciliation
 
@@ -1313,6 +1350,7 @@ def flush_auto_edits(force=False):
 
 def pause_auto(reason):
     global _auto_blocked, _auto_ground
+    stop_automation(reason)
     _auto_ground = None
     _auto_edits.clear()
     if auto_master.value is True or _auto_owned:
@@ -1360,6 +1398,10 @@ def auto_tick():
     if _activation_request is not None:
         cancel_activation('persistent mode selected')
     if _controller is not None and (_controller.busy or _controller.fault):
+        return
+    if automation_fault():
+        if _controller is not None and _controller.records:
+            _controller.restore_all("automation fault")
         return
     if not (_controller is not None and _controller.records) and _auto_ground is None and now < _auto_next:
         return  # idle only: no owned values or queued animation to protect
@@ -1423,7 +1465,7 @@ def auto_tick():
         _auto_ground = None
         _auto_owned = False
         _auto_status = ('Waiting for slider edit to save' if _auto_edits else
-                        'Ready; enable a feature and select a non-1x value')
+                        'Ready; automation preferences managed separately' if any(o.value is True for o in AUTOMATION_OPTIONS.values()) else 'Ready; enable a feature and select a non-1x value')
         return
     try:
         if not _auto_owned:
@@ -1484,10 +1526,121 @@ def auto_tick():
             return
         break  # at most one non-animation activation per reconciliation interval
 
+
+def automation_fault():
+    return any(l.fault for l in _automation_leases.values())
+
+
+def stop_automation_lane(kind, reason):
+    lease = _automation_leases.get(kind)
+    if lease is not None:
+        lease.stop(reason)
+        if not lease.fault:
+            _automation_leases.pop(kind, None)
+    _automation_status[kind] = 'Stopped: '+reason
+
+
+def stop_automation(reason):
+    for kind in tuple(_automation_leases):
+        stop_automation_lane(kind, reason)
+
+
+def automation_permitted():
+    if not auto_allowed() or conflicting_mods() or health_active() or automation_fault():
+        return False
+    if _controller is not None and (_controller.fault or _controller.busy or _controller.stop_pending is not None):
+        return False
+    if _controller is not None and _controller.records and not _auto_owned:
+        return False
+    if _controller is not None and not set(_controller.records) <= _AUTOMATION_COMPATIBLE:
+        return False
+    if not set(auto_desired()) <= _AUTOMATION_COMPATIBLE:
+        return False
+    hooks = sys.modules['unrealsdk'].hooks
+    return _monitor_registered and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True
+
+
+def make_automation_lane(kind, session):
+    sdk = sys.modules['unrealsdk']
+    def context():
+        if AUTOMATION_OPTIONS[kind].value is not True or not automation_permitted():
+            raise ValueError('persistent automation permission ended')
+        return current_session(session)
+    if kind == 'vacuum':
+        from .loot_vacuum import Vacuum
+        categories = tuple(k for k,o in VACUUM_PREFS.items() if o.value is True)
+        radius = normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value)
+        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True)
+    from .reload_assist import ReloadAssist, bind, SPECS
+    functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
+    api,fn = bind(functions,loot_bound)
+    return ReloadAssist(context,sdk.unreal.WeakPointer,api,fn,time.monotonic,threading.get_ident,report_live,True,session_mode=True)
+
+
+def automation_tick():
+    """Independent per-lane lifetime, after the existing modifier monitor. No implicit retry after an arm ends."""
+    global _automation_busy, _automation_next
+    if _automation_busy:
+        return
+    if not _automation_leases and not any(o.value is True and k not in _automation_attempted for k,o in AUTOMATION_OPTIONS.items()):
+        return
+    _automation_busy = True
+    try:
+        if not automation_permitted():
+            stop_automation('permission or modifier compatibility ended')
+            return
+        # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
+        for kind in ('vacuum','reload'):
+            if AUTOMATION_OPTIONS[kind].value is not True:
+                stop_automation_lane(kind,'disabled')
+                continue
+            if not automation_permitted():
+                stop_automation('permission ended before next lane')
+                return
+            lease = _automation_leases.get(kind)
+            if lease is not None:
+                lease.tick(True)
+                if lease.fault:
+                    _automation_leases[kind] = lease  # retain late fault even after reentrant stop
+                    request_stop('automation native fault',immediate=False)
+                    return
+                if lease.record is None:
+                    stop_automation_lane(kind,'lease ended; toggle lane to rearm')
+                continue
+            if kind in _automation_attempted or time.monotonic() < _automation_next:
+                continue
+            _automation_next = time.monotonic()+.25
+            try:
+                session = bound_session(sys.modules['unrealsdk'])
+                if not current_session(session)[3]:
+                    continue  # wait for a loaded eligible character, without dispatch
+            except Exception:
+                continue
+            _automation_attempted.add(kind)
+            try:
+                lease = make_automation_lane(kind,session)
+                _automation_leases[kind] = lease
+                begun = lease.begin()
+                if lease.fault:
+                    _automation_leases[kind] = lease
+                    request_stop('automation admission fault', immediate=False)
+                    return
+                if not begun or _automation_leases.get(kind) is not lease or not automation_permitted():
+                    lease.stop('admission ended')
+                    stop_automation_lane(kind,'admission failed; toggle lane to rearm')
+                else:
+                    _automation_status[kind] = 'Armed (gameplay unverified)'
+            except Exception as exc:
+                stop_automation_lane(kind,'admission failed: '+str(exc)[:100])
+    except Exception as exc:
+        stop_automation('preflight failed: '+str(exc)[:100])
+    finally:
+        _automation_busy = False
+
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.24-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.25-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

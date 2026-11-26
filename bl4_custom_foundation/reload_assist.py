@@ -40,9 +40,10 @@ def count(v):
 
 
 class ReloadAssist:
-    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False):
+    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False,session_mode=False):
         self.context,self.weak,self.api,self.fn=context,weak,api,fn
         self.continuous=continuous
+        self.session_mode=session_mode and continuous
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
         self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
@@ -79,11 +80,11 @@ class ReloadAssist:
         try:
             objs,key,_,loaded,_,reserve,state=self.resolve()
             if state!='Active' or not loaded or min(reserve)<=0:raise ValueError('arm with idle loaded gun and reserve ammo')
-            now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),now+30,now+.1)
+            now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),float("inf") if self.session_mode else now+30,now+.1)
             self.previous=loaded;self.empty_seen=False
             self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
-        self.report('EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
+        self.report('EXPERIMENT: session reload armed (max ten requests, original weapon)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
     def stop(self,reason):
         if self.record is not None:
