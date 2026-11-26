@@ -494,7 +494,7 @@ def draw():
                     edited,selected=ui.checkbox(follow.display_name+'##'+follow.identifier,follow.value is True)
                     if edited:set_auto_setting(follow,selected)
             if 'Action skills' in panels:
-                ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each requested addition at 1%, checks readback, and requires rearm on mode change. Native effect unverified.')
+                ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each addition at 1%, and checks readback. Supported named main cooldowns with charge/auxiliary pools use a separate pawn resource API only with Follow OFF; charge and auxiliary pools are not targeted. Rearm on mode changes. Native effect unverified.')
             if 'Action skills' in panels:
                 ui.text_wrapped('Cross-Fire event gate: dedicated adaptive duration only; follow OFF; wait for a new activation after arming. Other skills are not admitted in this mode.')
                 ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct ordinary replacement; changing follow mode requires lane rearm.')
@@ -2046,18 +2046,22 @@ def make_automation_lane(kind, session):
         api = bind(functions,loot_bound)
         return Pulse(context,sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,mode='flesh' if kind=='health' else 'shield',continuous=True,percent=normalize(RECOVERY_RATES[kind],RECOVERY_RATES[kind].value))
     if kind in ('skill_cooldown','skill_duration'):
-        from .skill_pulse import SkillPulse, bind, SPECS, ACTION_NAMES, bind_action_percent, NATIVE_REFILL_NAMES, bind_native_refill
+        from .skill_pulse import SkillPulse, bind, SPECS, ACTION_NAMES, bind_action_percent, NATIVE_REFILL_NAMES, bind_native_refill, DIRECT_NAMES, bind_direct_cooldown
         u=sdk.unreal
         adaptive=adaptive_mode
         if native_mode and not adaptive:raise ValueError('dedicated native refill requires adaptive mode')
-        functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or (adaptive and str(f.Name) in ACTION_NAMES) or (native_mode and str(f.Name) in NATIVE_REFILL_NAMES)]
+        functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or (adaptive and str(f.Name) in ACTION_NAMES) or (native_mode and str(f.Name) in NATIVE_REFILL_NAMES) or (native_mode and kind=='skill_cooldown' and not follow_mode and str(f.Name) in DIRECT_NAMES)]
         ref,api=bind(functions,loot_bound)
         mode=kind.split('_',1)[1]
         extra=bind_action_percent(functions,loot_bound,mode,ref) if adaptive else None
         native=bind_native_refill(functions,loot_bound,mode,ref) if native_mode else None
         if event_mode and (native is None or follow_mode):raise ValueError('Cross-Fire event gate requires dedicated adaptive duration and follow OFF')
         event_class=ensure_crossfire_events() if event_mode else None
-        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,continuous=True,adaptive_api=extra,rate=normalize(SKILL_RATES[kind],SKILL_RATES[kind].value),soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None),follow=follow_mode,native_refill=native,event_class=event_class)
+        direct=None
+        if native_mode and kind=='skill_cooldown' and not follow_mode:
+            try:direct=bind_direct_cooldown(functions,loot_bound)
+            except (ValueError,AttributeError,TypeError):pass  # ordinary dedicated path unchanged
+        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,continuous=True,adaptive_api=extra,rate=normalize(SKILL_RATES[kind],SKILL_RATES[kind].value),soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None),follow=follow_mode,native_refill=native,event_class=event_class,direct_api=direct)
     if kind != 'reload': raise ValueError('unknown automation lane')
     from .reload_assist import ReloadAssist, bind, SPECS
     functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
