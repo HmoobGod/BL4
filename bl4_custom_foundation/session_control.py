@@ -2,7 +2,7 @@
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
 from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal
-from . import weapon_rates, inventory_capacity, shield_rates
+from . import weapon_rates, inventory_capacity, shield_rates, gadget_rates
 
 
 from .ground_speed import floor_target
@@ -37,7 +37,12 @@ class Controller:
         scope = weapon_rates.capture(pawn, key, self.weak_pointer) if key in weapon_rates.WEAPON_KEYS else None
         inv = inventory_capacity.capture(pc, pawn, key, self.weak_pointer) if key in inventory_capacity.KEYS else None
         shield = shield_rates.capture(pawn, key, self.weak_pointer, self.shield_binding()) if key in shield_rates.KEYS else None
-        if shield is not None:
+        gadget = gadget_rates.capture(pawn, self.weak_pointer) if key == gadget_rates.KEY else None
+        if gadget is not None:
+            resolved, active = gadget_rates.resolve(pawn, gadget)
+            if not active: raise ValueError('grenade gadget no longer equipped')
+            _, tokens, baseline = describe_fields(resolved)
+        elif shield is not None:
             resolved, active = shield_rates.resolve(pawn, shield)
             if not active: raise ValueError("shield no longer equipped")
             _, tokens, baseline = describe_fields(resolved)
@@ -64,7 +69,7 @@ class Controller:
         return dict(key=key, pc=self.weak_pointer(pc), pawn=self.weak_pointer(pawn),
                     state=self.weak_pointer(state), pc_id=identity(pc), pawn_id=identity(pawn),
                     state_id=identity(state), tokens=tokens, baseline=baseline,
-                    weapon_scope=scope, inventory_scope=inv, shield_scope=shield, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
+                    weapon_scope=scope, inventory_scope=inv, shield_scope=shield, gadget_scope=gadget, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
 
     def resolve(self, record, *, observed=None):
         if self.thread() != record['thread']:
@@ -84,7 +89,12 @@ class Controller:
         scope = record.get('weapon_scope')
         inv = record.get('inventory_scope')
         shield = record.get('shield_scope')
-        if shield is not None:
+        gadget = record.get('gadget_scope')
+        if gadget is not None:
+            resolved, active = gadget_rates.resolve(pawn, gadget)
+            fields, tokens, values = describe_fields(resolved)
+            eligible = eligible and active
+        elif shield is not None:
             resolved, active = shield_rates.resolve(pawn, shield)
             fields, tokens, values = describe_fields(resolved)
             eligible = eligible and active
@@ -105,6 +115,10 @@ class Controller:
         fields, values, eligible = self.resolve(record)
         if applying and not eligible:
             raise ValueError('session became ineligible')
+        if applying and record.get('gadget_scope') is not None:
+            pc, pawn, state, ok = self.context()
+            if not ok or tuple(identity(o) for o in (pc,pawn,state)) != (record['pc_id'],record['pawn_id'],record['state_id']) or record['gadget_scope'][0]().bIsUsing is not False or self.stop_pending is not None or self.records.get(record['key']) is not record:
+                raise ValueError('grenade gadget busy or activation interrupted')
         if applying and record.get('shield_scope') is not None:
             pc, pawn, state, ok = self.context()
             if not ok or self.stop_pending is not None or self.records.get(record['key']) is not record or tuple(identity(o) for o in (pc,pawn,state)) != (record['pc_id'],record['pawn_id'],record['state_id']):
@@ -206,6 +220,8 @@ class Controller:
             # as an engine reset. Allow the same exact reset during a live update,
             # but never adopt a different value or a replacement object.
             baseline_reset = key in GROUND_KEYS and key in self.records and values == record['baseline']
+            if record.get('gadget_scope') is not None and record['gadget_scope'][0]().bIsUsing is not False:
+                raise ValueError('wait until grenade gadget is idle')
             if not eligible or (values != record['expected'] and not baseline_reset):
                 raise ValueError('session or owned value changed')
             targets = (floor_target(record['baseline'], record['tokens'], selection, ground_sprinting, sprint_only=key == 'sprint')

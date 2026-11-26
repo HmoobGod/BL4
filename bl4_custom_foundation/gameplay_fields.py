@@ -37,6 +37,7 @@ FEATURES = {
     'ammo_regen_delay': ('Existing ammo regeneration delay speed (experimental)', .5, 3.),
     'shield_regen_rate': ('Equipped energy shield recharge rate (experimental)', .5, 3.),
     'shield_regen_delay': ('Equipped energy shield recharge delay speed (experimental)', .5, 3.),
+    'grenade_cooldown': ('Grenade gadget cooldown speed (experimental)', .5, 3.),
     'lifesteal_rate': ('Existing life-steal rate (experimental)', .5, 3.),
     'repair_health': ('Repair-kit healing amount multiplier', .5, 5.),
     'damage_taken': ('Damage taken multiplier', .1, 5.),
@@ -290,7 +291,7 @@ def target_values(key, baseline, tokens, selection):
         raise ValueError('rarity weight uses 0.1 increments')
     result = []
     for base, (_, _, kind) in zip(baseline, tokens, strict=True):
-        v = base / selection if key in ('reload', 'ammo_regen_delay', 'shield_regen_delay') else base * selection
+        v = base / selection if key in ('reload', 'ammo_regen_delay', 'shield_regen_delay', 'grenade_cooldown') else base * selection
         if kind == 'ZFloatProperty':
             v = struct.unpack('<f', struct.pack('<f', v))[0]
         if not math.isfinite(v) or not (0 <= v <= 1e6 if key in ZERO_RARITY_KEYS and selection == 0 else 0 < v <= 1e6):

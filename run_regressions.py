@@ -65,6 +65,10 @@ for cls in (LateVacuum, ConflictIndex):
     for name in cls.__dict__:
         if name.startswith('test_'):
             t=cls(name);unique[t.id()]=t
+from test_gadget_rates_r40 import GadgetCooldown
+for name in GadgetCooldown.__dict__:
+    if name.startswith('test_'):
+        t=GadgetCooldown(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
