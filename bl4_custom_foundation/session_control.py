@@ -1,7 +1,7 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
-from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal
+from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal, slide_scale, slide_active
 from . import weapon_rates, inventory_capacity, shield_rates, gadget_rates
 
 
@@ -54,8 +54,19 @@ class Controller:
             if not active:
                 raise ValueError('weapon no longer active')
             _, tokens, baseline = describe_fields(resolved)
+        elif key == 'slide_speed':
+            if not slide_active(pawn):
+                raise ValueError('exact active slide required')
+            slide_value, _ = slide_scale(pawn)
+            _, tokens, baseline = describe_fields((slide_value,))
         else:
             _, tokens, baseline = read_fields(key, pawn, state)
+        slide_base = None
+        if key == 'slide_speed':
+            slide_value, slide_base = slide_scale(pawn)
+            if describe_fields((slide_value,))[1:] != (tokens, baseline):
+                raise ValueError('slide scale changed during capture')
+            slide_base = describe_fields((slide_base,))[1:]
         if key in RARITY_KEYS and any(v <= 0 for v in baseline):
             raise ValueError('positive rarity baseline required before activation')
         if key == 'legendary_weight' and baseline != (1.,):
@@ -69,7 +80,7 @@ class Controller:
         return dict(key=key, pc=self.weak_pointer(pc), pawn=self.weak_pointer(pawn),
                     state=self.weak_pointer(state), pc_id=identity(pc), pawn_id=identity(pawn),
                     state_id=identity(state), tokens=tokens, baseline=baseline,
-                    weapon_scope=scope, inventory_scope=inv, shield_scope=shield, gadget_scope=gadget, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
+                    weapon_scope=scope, inventory_scope=inv, shield_scope=shield, gadget_scope=gadget, slide_base=slide_base, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
 
     def resolve(self, record, *, observed=None):
         if self.thread() != record['thread']:
@@ -105,6 +116,19 @@ class Controller:
             resolved, active = weapon_rates.resolve(pawn, scope)
             fields, tokens, values = describe_fields(resolved)
             eligible = eligible and active
+        elif record['key'] == 'slide_speed':
+            if eligible:
+                sliding = slide_active(pawn)
+                # Native predicate may synchronously change scope; recheck before reading the write target.
+                pc_now, pawn_now, state_now, ok = self.context()
+                if tuple(identity(o) for o in (pc_now, pawn_now, state_now)) != (record['pc_id'], record['pawn_id'], record['state_id']):
+                    raise ValueError('slide session changed during predicate')
+                eligible = ok and sliding
+                pawn = pawn_now
+            value_field, base_field = slide_scale(pawn)
+            fields, tokens, values = describe_fields((value_field,))
+            if describe_fields((base_field,))[1:] != record['slide_base']:
+                raise ValueError('slide base changed; refused to overwrite')
         else:
             fields, tokens, values = read_fields(record['key'], pawn, state)
         if tokens != record['tokens']:
@@ -115,6 +139,9 @@ class Controller:
         fields, values, eligible = self.resolve(record)
         if applying and not eligible:
             raise ValueError('session became ineligible')
+        if applying and record['key'] == 'slide_speed':
+            if self.stop_pending is not None or self.records.get('slide_speed') is not record:
+                raise ValueError('slide activation interrupted')
         if applying and record.get('gadget_scope') is not None:
             pc, pawn, state, ok = self.context()
             if not ok or tuple(identity(o) for o in (pc,pawn,state)) != (record['pc_id'],record['pawn_id'],record['state_id']) or record['gadget_scope'][0]().bIsUsing is not False or self.stop_pending is not None or self.records.get(record['key']) is not record:
@@ -253,6 +280,8 @@ class Controller:
             _, readback, eligible = self.resolve(record)
             if readback != targets or not eligible:
                 raise ValueError('post-write verification failed')
+            if key == 'slide_speed' and (self.stop_pending is not None or self.records.get(key) is not record):
+                raise ValueError('slide activation interrupted after write')
             if record.get('shield_scope') is not None:
                 shield_rates.validate_readback(record['shield_scope'][0](), key, targets[0])
                 _, checked, still_eligible = self.resolve(record)
@@ -321,6 +350,12 @@ class Controller:
                 try:
                     _, values, eligible = self.resolve(record, observed=observed)
                     if not eligible:
+                        if observed[3] and key == 'slide_speed':
+                            if not self.restore(key, 'slide ended; original restored'):
+                                self.restore_all('slide restoration failed')
+                                return
+                            transitioned.add(key)
+                            continue
                         # Only persistent weapon controls may follow ordinary weapon changes.
                         # resolve already proved the original session/pawn and exact old behavior.
                         if follow_weapon and observed[3] and key in weapon_rates.WEAPON_KEYS:

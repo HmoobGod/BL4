@@ -28,6 +28,7 @@ FEATURES = {
     'ladder_descend': ('Ladder descent speed multiplier (experimental)', .5, 3.),
     'slam_height': ('Ground-slam height scalar (experimental)', .5, 2.),
     'player_ammo_regen': ('Existing player ammo regeneration rate (experimental)', .5, 3.),
+    'slide_speed': ('Active slide speed scale (experimental)', .5, 2.),
     'ground_friction': ('Ground friction multiplier (experimental)', .5, 2.),
     'braking_friction': ('Braking friction factor multiplier (experimental)', .5, 2.),
     'gravity': ('Local gravity multiplier', .5, 1.5),
@@ -171,6 +172,64 @@ def local_move_pair(pawn, field):
     return pair(nested(comp, field, 'GbxAttributeFloat'))
 
 
+# Apex Movement's community-tested local scale consumer. The shared Move_Slide
+# definition is read only; the only writable field is the instance Value.
+SLIDE_PATH = '/Game/PlayerCharacters/_Shared/Tricks/ControlledMoves/Move_Slide.Move_Slide'
+
+
+def slide_component(pawn):
+    comp = pawn.CharacterMovement
+    if (comp is None or str(comp.Class.Name) != 'OakCharacterMovementComponent'
+            or 'Default__' in comp._path_name() or identity(comp.OakCharacterOwner) != identity(pawn)):
+        raise ValueError('local Oak movement component unavailable')
+    for name in ('CharacterOwner', 'PawnOwner'):
+        owner = getattr(comp, name, None)
+        if owner is not None and identity(owner) != identity(pawn):
+            raise ValueError('movement owner mismatch')
+    return comp
+
+
+def slide_scale(pawn):
+    from .weapon_rates import nested
+    attribute = nested(slide_component(pawn), 'MaxGroundSpeedScale', 'GbxAttributeFloat')
+    return scalar(attribute, 'Value'), scalar(attribute, 'BaseValue')
+
+
+def slide_active(pawn):
+    """Positive exact move + native predicate; no crouch/airborne fallback."""
+    from .weapon_rates import nested, prop
+    try:
+        comp = slide_component(pawn)
+        data = nested(comp, 'ControlledMoveReplicationData', 'ControlledMoveReplicationData')
+        descriptor = prop(data._type, 'ControlledMove', 'ZObjectProperty')
+        if str(descriptor.PropertyClass.Name) != 'ControlledMove':
+            return False
+        move = data.ControlledMove
+        if (move is None or move._path_name() != SLIDE_PATH or str(move.Class.Name) != 'OakControlledMove'
+                or move.bSpeedAffectedByMaxGroundSpeedScale is not True):
+            return False
+        f = comp.IsPerformingSpecificControlledMove
+        fn = f.func
+        if fn._path_name() != '/Script/GbxGame.GbxCharacterMovementComponent:IsPerformingSpecificControlledMove' or fn.NumParams != 2:
+            return False
+        props = tuple(fn._properties())
+        if (len(props) != 2 or any(p.ArrayDim != 1 for p in props)
+                or tuple((str(p.Name), type(p).__name__) for p in props) != (('ControlledMove','ZObjectProperty'),('ReturnValue','ZBoolProperty'))
+                or props[0].PropertyClass._path_name() != '/Script/GbxGame.ControlledMove'):
+            return False
+        if f(move) is not True:
+            return False
+        # Fresh replication identity after the read-only native predicate.
+        current_comp = slide_component(pawn)
+        if identity(current_comp) != identity(comp):
+            return False
+        current = nested(current_comp, 'ControlledMoveReplicationData', 'ControlledMoveReplicationData').ControlledMove
+        return (current is not None and identity(current) == identity(move) and current._path_name() == SLIDE_PATH
+                and current.bSpeedAffectedByMaxGroundSpeedScale is True)
+    except Exception:
+        return False
+
+
 def player_ammo_regen(pawn, state):
     from .weapon_rates import nested
     if str(pawn.Class.Name) != 'OakCharacter' or 'Default__' in pawn._path_name():
@@ -271,6 +330,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'walk_speed': walk_speed,
            'sprint': walk_speed,
            'gravity': gravity,
+           'slide_speed': lambda p, s: (slide_scale(p)[0],),
            'ground_friction': lambda p, s: local_friction(p, 'GroundFriction'),
            'braking_friction': lambda p, s: local_friction(p, 'BrakingFrictionFactor'),
            'dash_speed': lambda p, s: local_move_pair(p, 'DashSpeed'),
