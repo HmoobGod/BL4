@@ -21,6 +21,9 @@ PALETTE = (
     ('gear',(.095307,.558341,.111932,1.)), ('gear',(.018500,.337164,.590619,1.)),
     ('gear',(.479320,.056128,.658375,1.)), ('gear',(.309469,1.,.644480,1.)),
 )
+# Indexes correspond to the observed two palettes above. This is a visual
+# filter, not a native item rarity identity. Keep both category signals.
+HIGH_GEAR_COLORS = (PALETTE[8][1], PALETTE[13][1])
 PICKUP = '/Script/GbxGame.InventoryPickup'
 TELEPORT = '/Script/Engine.Actor:K2_TeleportTo'
 LOCATION = '/Script/Engine.Actor:K2_GetActorLocation'
@@ -51,7 +54,7 @@ def body_kind(path):
     return next(iter(matches)) if len(matches)==1 and words.intersection({'pickup','pickups','consumable','consumables'}) else None
 
 
-def classify(actor):
+def classify(actor, high_gear_only=False):
     body=actor.BodyData
     if body is None:
         return None  # material-only names are ambiguous
@@ -66,7 +69,10 @@ def classify(actor):
     if len(entries)!=1 or type(entries[0]) is not int or not 0<=entries[0]<=len(raw)-16:return None
     data=bytes(raw[entries[0]:entries[0]+16])
     if len(data)!=16:return None
-    return k if color_kind(struct.unpack('<4f',data))==k else None
+    values=struct.unpack('<4f',data)
+    if color_kind(values)!=k:return None
+    if k=='gear' and high_gear_only and not any(max(abs(a-b) for a,b in zip(values,c))<=.00002 for c in HIGH_GEAR_COLORS):return None
+    return k
 
 
 def point(v):
@@ -122,10 +128,12 @@ class Airborne(ValueError):
 
 class Vacuum:
     """One lease, one attempt per object, no retry or automatic gear collection."""
-    def __init__(self,context,weak,find,make,clock,thread,report,categories,radius,continuous=False):
+    def __init__(self,context,weak,find,make,clock,thread,report,categories,radius,continuous=False,high_gear_only=False):
         self.context,self.weak,self.find,self.make=context,weak,find,make
         self.clock,self.thread,self.report=clock,thread,report
         self.categories=frozenset(categories);self.radius=radius;self.continuous=continuous
+        if type(high_gear_only) is not bool:raise ValueError('invalid rarity filter')
+        self.high_gear_only=high_gear_only
         self.recent=deque();self.total_attempts=0;self.gear_targets={}
         self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.moved=0;self.next_due=0
 
@@ -157,7 +165,7 @@ class Vacuum:
         if self.record is not None:
             self.record=None;self.report(f'STOP: vacuum {reason}; {self.moved} native relocation successes, not confirmed pickups; moved items not restored')
 
-    def update_preferences(self,categories,radius):
+    def update_preferences(self,categories,radius,high_gear_only=None):
         """Committed persistent preferences only; preserve the original lease and ledger.
         Empty filters pause scanning, but not session validation.
         """
@@ -166,7 +174,9 @@ class Vacuum:
         categories=frozenset(categories)
         if not categories<=CATEGORIES or type(radius) not in (float,int) or not math.isfinite(radius) or not 5<=radius<=100:
             raise ValueError('invalid vacuum preferences')
+        if high_gear_only is not None and type(high_gear_only) is not bool:raise ValueError('invalid rarity filter')
         self.categories,self.radius=categories,radius
+        if high_gear_only is not None:self.high_gear_only=high_gear_only
         return True
 
     def gear_position(self,origin,vendors):
@@ -201,7 +211,7 @@ class Vacuum:
         pos=location(a);dist=distance(pos,origin)
         if dist<=150**2 or dist>(100*self.radius)**2:return None
         if any(distance(pos,v)<=500**2 or distance(origin,v)<=500**2 for v in vendors[0]):return None
-        kind=classify(a)
+        kind=classify(a,self.high_gear_only)
         if kind not in self.categories:return None
         return dist,key,kind
 

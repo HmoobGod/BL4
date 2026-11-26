@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.47-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.48-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -89,12 +89,13 @@ _automation_busy = False
 _AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY}
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
+VACUUM_HIGH_PREF = BoolOption('vacuum_pref_high_gear', False, display_name='Saved vacuum legendary/pearlescent beams only')
 VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., is_integer=False, display_name='Saved vacuum radius (m)')
 RECOVERY_RATES = {k: SliderOption('recovery_rate_'+k, 1., .1, 1., step=.1, is_integer=False, display_name=k.title()+' recovery (% maximum per pulse)') for k in ('health','shield')}
 SKILL_ADAPTIVE = {k: BoolOption('adaptive_'+k,False,display_name='Adaptive '+k.replace('_',' ')+' assist (native percent cross-check)') for k in ('skill_cooldown','skill_duration')}
 SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct replacement '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
-ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values())
+ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values())
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; opt in to persistent gameplay.'
@@ -108,16 +109,18 @@ _auto_last_diagnostic = ''
 
 _vacuum_filters = {k: False for k in ('ammo','cash','eridium','health','gear')}
 _vacuum_radius = 30.0
+_vacuum_high_gear = False
 
 
 def save_vacuum_preferences():
-    apply({**{o.identifier: _vacuum_filters[k] for k,o in VACUUM_PREFS.items()}, VACUUM_RADIUS_PREF.identifier: _vacuum_radius})
+    apply({**{o.identifier: _vacuum_filters[k] for k,o in VACUUM_PREFS.items()}, VACUUM_RADIUS_PREF.identifier: _vacuum_radius, VACUUM_HIGH_PREF.identifier: _vacuum_high_gear})
 
 
 def load_vacuum_preferences():
-    global _vacuum_radius
+    global _vacuum_radius, _vacuum_high_gear
     for k,o in VACUUM_PREFS.items(): _vacuum_filters[k] = normalize(o,o.value)
     _vacuum_radius = normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value)
+    _vacuum_high_gear = VACUUM_HIGH_PREF.value is True
 
 
 _pending = {}
@@ -175,9 +178,10 @@ def apply(values):
 
 
 def reset(_option=None):
-    global _status, _vacuum_radius
+    global _status, _vacuum_radius, _vacuum_high_gear
     for key in _vacuum_filters: _vacuum_filters[key] = False
     _vacuum_radius = 30.0
+    _vacuum_high_gear = False
     pause_auto("vanilla reset requested")
     cancel_activation("vanilla reset requested")
     stop_health_pulse('vanilla reset requested')
@@ -293,7 +297,7 @@ def displayed_selection(option):
 
 
 def draw():
-    global _category, _status, _compact_view, _vacuum_radius, _focus_controls
+    global _category, _status, _compact_view, _vacuum_radius, _focus_controls, _vacuum_high_gear
     if _backend is None or not mod.is_enabled:
         return
     if sync_window_close():
@@ -304,7 +308,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.47-experimental')
+    ui.text('BL4 CUSTOM | v0.7.48-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -396,6 +400,8 @@ def draw():
                 edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
                 if edited:
                     _vacuum_filters[kind] = selected is True
+            edited, selected = ui.checkbox('Gear: legendary/pearlescent beams only##vacuum_high_gear', _vacuum_high_gear)
+            if edited: _vacuum_high_gear = selected is True
             edited, radius = ui.slider_float('Pickup radius##vacuum_radius', _vacuum_radius, 5., 100., '%.0f m')
             if edited and type(radius) in (int,float) and math.isfinite(radius):
                 _vacuum_radius = max(5., min(100., radius))
@@ -407,9 +413,9 @@ def draw():
             if ui.button('Load saved vacuum preferences'):
                 load_vacuum_preferences()
             if not health_fault() and auto_master.value is not True and ui.button('Start continuous Loot Vacuum (session only)'):
-                activate_feature('loot_vacuum_continuous', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius))
+                activate_feature('loot_vacuum_continuous', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
             if not health_fault() and auto_master.value is not True and ui.button('Arm experimental Loot Vacuum (30 sec)'):
-                activate_feature('loot_vacuum', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius))
+                activate_feature('loot_vacuum', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
         ui.text_wrapped('Experimental automatic reload: one ordinary native reload request after observed magazine depletion, within 30 seconds.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm experimental automatic reload (30 sec)'):
             activate_feature('reload_assist', 1.0)
@@ -626,7 +632,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.47-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.48-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -856,7 +862,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.47-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.48-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -926,7 +932,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.47-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.48-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -952,7 +958,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.47-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.48-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1067,9 +1073,11 @@ def begin_loot_vacuum(selection,continuous=False):
         raise ValueError('restore active modifiers before isolated vacuum')
     sdk = sys.modules['unrealsdk']
     session = bound_session(sdk)
-    categories, radius = selection
+    if len(selection) not in (2,3):raise ValueError('invalid vacuum selection')
+    categories, radius = selection[:2]
+    high_gear_only = selection[2] if len(selection)==3 else False
     _health_pulse = Vacuum(lambda: current_session(session), sdk.unreal.WeakPointer, sdk.find_all,
-                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius, continuous=continuous)
+                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius, continuous=continuous,high_gear_only=high_gear_only)
     _health_pulse.begin()
 
 
@@ -1795,7 +1803,7 @@ def make_automation_lane(kind, session):
         from .loot_vacuum import Vacuum
         categories = tuple(k for k,o in VACUUM_PREFS.items() if o.value is True)
         radius = normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value)
-        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True)
+        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True,high_gear_only=VACUUM_HIGH_PREF.value is True)
     if kind in ('health','shield'):
         from .health_pulse import Pulse, bind, SPECS
         functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
@@ -1847,7 +1855,9 @@ def automation_tick():
             lease = _automation_leases.get(kind)
             if lease is not None:
                 if kind == 'vacuum' and callable(getattr(lease,'update_preferences',None)):
-                    lease.update_preferences(tuple(k for k,o in VACUUM_PREFS.items() if o.value is True), normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value))
+                    args=(tuple(k for k,o in VACUUM_PREFS.items() if o.value is True), normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value))
+                    if hasattr(lease,'high_gear_only'):lease.update_preferences(*args,high_gear_only=VACUUM_HIGH_PREF.value is True)
+                    else:lease.update_preferences(*args)
                 if kind in RECOVERY_RATES and callable(getattr(lease,'update_rate',None)):
                     rate=RECOVERY_RATES[kind]
                     lease.update_rate(normalize(rate,rate.value))
@@ -1900,7 +1910,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.47-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.48-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
@@ -1915,7 +1925,7 @@ open_key = keybind('open_custom_menu', 'F8', lambda: toggle_menu(), display_name
 options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_press=toggle_menu),
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
-options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF], display_name='Saved vacuum preferences (no startup activation)')]
+options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values()], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
