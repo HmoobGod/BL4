@@ -20,6 +20,21 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError): frame(outer(0,5,b'ABCD'))
     def test_compressed_single(self): self.assertEqual(frame(outer(3,8,inner(0,1,b'',b'123'))),[(b'123',8,True)])
     def test_multi(self): self.assertEqual(frame(outer(3,BLOCK+3,inner(0x03030812,2,struct.pack('>II',2,3),b'12345'))),[(b'12',BLOCK,True),(b'345',3,True)])
+    def test_explicit_raw_multi(self):
+        data=outer(3,4,inner(0x03030812,1,struct.pack('>I',4),b'ABCD'))
+        self.assertEqual(frame(data),[(b'ABCD',4,True)])
+        self.assertEqual(decode(data,'unused',(0,)),b'ABCD')
+    def test_mixed_raw_multi(self):
+        data=outer(3,BLOCK+3,inner(0x03030812,2,struct.pack('>II',2,3),b'12345'))
+        self.assertEqual(frame(data,(1,)),[(b'12',BLOCK,True),(b'345',3,False)])
+    def test_raw_wrong_length(self):
+        with self.assertRaises(ValueError):frame(outer(3,8,inner(0x03030812,1,struct.pack('>I',1),b'1')),(0,))
+    def test_raw_index_range_and_duplicate(self):
+        data=outer(3,4,inner(0x03030812,1,struct.pack('>I',4),b'ABCD'))
+        for ids in ((1,),(0,0),(-1,),(True,)):
+            with self.subTest(ids=ids),self.assertRaises(ValueError):frame(data,ids)
+    def test_raw_index_single_refused(self):
+        with self.assertRaises(ValueError):frame(outer(3,8,inner(0,1,b'',b'123')),(0,))
     def test_count(self):
         with self.assertRaises(ValueError): frame(outer(3,8,inner(0x03030812,2,struct.pack('>II',1,1),b'12')))
     def test_extra(self):

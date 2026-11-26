@@ -13,7 +13,10 @@ MAX = 16 * 1024 * 1024
 BLOCK = 0x40000
 
 
-def frame(data):
+def frame(data, raw_multi_blocks=()):
+    raw_multi_blocks=tuple(raw_multi_blocks)
+    if len(set(raw_multi_blocks))!=len(raw_multi_blocks) or any(type(i) is not int or i<0 for i in raw_multi_blocks):
+        raise ValueError("invalid explicit raw block indices")
     if len(data) < 16 or data[:4] != b'\x01NCS':
         raise ValueError('unsupported NCS header')
     flag, raw, stored = struct.unpack_from('<III', data, 4)
@@ -21,6 +24,7 @@ def frame(data):
         raise ValueError('invalid NCS size or trailing bytes')
     inner = data[16:]
     if flag == 0:
+        if raw_multi_blocks:raise ValueError("raw block indices require multi-block framing")
         if raw != stored:
             raise ValueError('raw size mismatch')
         return [(inner, raw, False)]
@@ -28,6 +32,7 @@ def frame(data):
         raise ValueError('unsupported compressed frame')
     flags, count = struct.unpack_from('>II', inner, 8)
     if flags == 0:
+        if raw_multi_blocks:raise ValueError("raw block indices require multi-block framing")
         if raw > BLOCK or count != 1:
             raise ValueError('unsupported single block')
         blob = inner[64:]
@@ -36,6 +41,7 @@ def frame(data):
         return [(blob, raw, len(blob) != raw)]
     if flags != 0x03030812 or count != (raw + BLOCK - 1) // BLOCK:
         raise ValueError('unsupported multi-block layout')
+    if any(i>=count for i in raw_multi_blocks):raise ValueError("raw block index outside table")
     start = 64 + 4 * count
     if start > len(inner):
         raise ValueError('truncated table')
@@ -46,7 +52,9 @@ def frame(data):
         expected = min(remaining, BLOCK)
         if not 0 < size <= expected + 65536 or start + size > len(inner):
             raise ValueError('invalid block size')
-        result.append((inner[start:start+size], expected, True))
+        raw_block=i in raw_multi_blocks
+        if raw_block and size!=expected:raise ValueError("explicit raw block size mismatch")
+        result.append((inner[start:start+size], expected, not raw_block))
         start += size
         remaining -= expected
     if start != len(inner) or remaining != 0:
@@ -79,9 +87,9 @@ def extract_pinned_zip(path, digest):
     return data
 
 
-def decode(data, decoder):
+def decode(data, decoder, raw_multi_blocks=()):
     parts = []
-    for block, expected, compressed in frame(data):
+    for block, expected, compressed in frame(data, raw_multi_blocks):
         if compressed:
             r = subprocess.run([str(pathlib.Path(decoder).resolve()), 'decompress', str(expected)], input=block,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=15, check=True)
@@ -100,6 +108,7 @@ def main():
     p.add_argument('output', type=pathlib.Path)
     p.add_argument('--decoder', required=True, type=pathlib.Path)
     p.add_argument('--zip-sha256', help='Required for one-PAK ZIP input')
+    p.add_argument('--raw-multi-block', type=int, action='append', default=[], help='Explicit zero-based raw block; requires equal stored/output size. Validate decoded records separately.')
     args = p.parse_args()
     if args.input.suffix.lower() == '.zip':
         if not args.zip_sha256:
@@ -109,7 +118,7 @@ def main():
         if args.input.stat().st_size > MAX+16:
             raise ValueError('frame too large')
         data = args.input.read_bytes()
-    out = decode(data, args.decoder)
+    out = decode(data, args.decoder, args.raw_multi_block)
     with args.output.open('xb') as f:
         f.write(out)
     print('Decoded', len(out), 'bytes; SHA256', hashlib.sha256(out).hexdigest())
