@@ -215,3 +215,97 @@ class NativeRateTests(unittest.TestCase):
         self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration'})
         self.assertTrue(all(o.value==1. for o in m.NATIVE_RATE_OPTIONS.values()))
         self.assertFalse(self.native)
+
+    def persistent_trial(self,mode='health',base=0.):
+        lane=self.trial(mode,base);lane.continuous=True;lane.selection=2.
+        return lane
+
+    def test_persistent_native_rate_survives_manual_deadline(self):
+        lane=self.persistent_trial();self.assertTrue(lane.begin());self.tick(lane);self.tick(lane,60.)
+        self.assertEqual(lane.phase,'active');self.assertEqual(len(self.native),1)
+        lane.stop('master off');self.tick(lane,permit=False);self.tick(lane,permit=False)
+        self.assertEqual(lane.phase,'done');self.assertEqual(self.rate,0.);self.assertEqual(len(self.native),2)
+
+    def test_persistent_native_rates_default_off(self):
+        m=self.base.m
+        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration'})
+        self.assertTrue(all(o.value is False for o in m.NATIVE_AUTO_OPTIONS.values()))
+
+    def test_persistent_native_skill_and_refill_mutually_exclusive(self):
+        m=self.base.m;k='native_rate_duration';m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS['duration'].value=2.
+        self.assertTrue(m.native_rate_allowed(k,2.));self.assertFalse(m.native_rate_allowed(k,3.))
+        m.AUTOMATION_OPTIONS['skill_duration'].value=True
+        self.assertFalse(m.native_rate_allowed(k,2.));self.assertIn('choose native',m.recovery_conflict('skill_duration'))
+        m.AUTOMATION_OPTIONS['skill_duration'].value=False
+        self.assertTrue(m.native_rate_allowed(k,2.))
+
+    def test_persistent_native_rate_cleanup_survives_master_off(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS['health'].value=2.
+        self.assertTrue(lane.begin());self.tick(lane);m._automation_leases[k]=lane;m._automation_attempted.add(k)
+        m.automation_permitted=lambda:False;m.stop_automation('master off')
+        self.assertIs(m._automation_leases[k],lane);self.assertEqual(len(self.native),1)
+        self.now+=.2;m.automation_tick();self.assertEqual(lane.phase,'verify');self.assertIs(m._automation_leases[k],lane)
+        self.now+=.2;m.automation_tick();self.assertNotIn(k,m._automation_leases);self.assertEqual(len(self.native),2);self.assertEqual(self.rate,0.)
+
+    def test_persistent_rate_selection_change_restores_no_rearm(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS['health'].value=2.
+        lane.begin();self.tick(lane);m._automation_leases[k]=lane;m._automation_attempted.add(k)
+        m.automation_permitted=lambda:True;m.NATIVE_RATE_OPTIONS['health'].value=3.
+        self.now+=.2;m.automation_tick();self.assertEqual(lane.phase,'verify')
+        self.now+=.2;m.automation_tick();self.assertNotIn(k,m._automation_leases);self.assertIn(k,m._automation_attempted);self.assertEqual(len(self.native),2)
+
+    def test_native_rate_cleanup_fault_retained(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();lane.begin();self.tick(lane);m._automation_leases[k]=lane
+        m.automation_permitted=lambda:False;self.restore=False
+        self.now+=.2;m.automation_tick();self.assertTrue(lane.fault);self.assertIs(m._automation_leases[k],lane);self.assertTrue(m.automation_fault())
+
+    def test_native_health_blocks_conflicting_field_until_restored(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();lane.begin();self.tick(lane)
+        m._automation_leases[k]=lane;m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS['health'].value=2.
+        m.AUTO_OPTIONS['healing_received'].value=True;m._PREVIEW_BY_KEY['healing_received'].value=2.
+        self.assertNotIn('healing_received',m.auto_desired());self.assertFalse(m.native_rate_allowed(k,2.))
+        m.automation_permitted=lambda:True;self.now+=.2;m.automation_tick()
+        self.assertNotIn('healing_received',m.auto_desired());self.now+=.2;m.automation_tick()
+        self.assertEqual(m.auto_desired()['healing_received'],2.)
+
+    def test_native_cooldown_and_duration_independently_selected(self):
+        m=self.base.m
+        for mode in ('health','cooldown','duration'):
+            m.NATIVE_AUTO_OPTIONS['native_rate_'+mode].value=True;m.NATIVE_RATE_OPTIONS[mode].value=2.
+        self.assertTrue(all(m.native_rate_allowed(k,2.) for k in m.NATIVE_AUTO_OPTIONS))
+        m.NATIVE_AUTO_OPTIONS['native_rate_cooldown'].value=False
+        self.assertFalse(m.native_rate_allowed('native_rate_cooldown',2.));self.assertTrue(m.native_rate_allowed('native_rate_duration',2.))
+
+    def test_three_native_lanes_arm_and_independently_restore(self):
+        from types import SimpleNamespace as N
+        m=self.base.m;lanes={};rates={};events=[]
+        from unittest.mock import patch
+        import sys
+        mock=patch.dict(sys.modules,{'unrealsdk':N()});mock.start();self.addCleanup(mock.stop)
+        m.time=N(monotonic=lambda:self.now)
+        m.automation_permitted=lambda:True;m.bound_session=lambda sdk:None
+        m.current_session=lambda _: (self.pc,self.pawn,self.world,True)
+        def factory(kind,session):
+            mode=kind.rsplit('_',1)[1];rates[mode]=0. if mode=='health' else 4.;base=rates[mode]
+            def add(md,d,pawn,selection):
+                events.append((md,'add'));amount=self.R.trial_amount(md,selection)
+                rates[md]=base+amount if md=='health' else base*amount
+                return object(),True
+            def remove(handle):events.append((mode,'remove'));rates[mode]=base
+            binding=N(read=lambda md,pawn:rates[md],add=add,remove=remove)
+            lane=self.R.NativeRateTrial(mode,binding,lambda:((self.pc,self.pawn,self.world),(mode,),object()),lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:m.native_rate_allowed(kind,2.),selection=2.,continuous=True)
+            lanes[kind]=lane;return lane
+        m.make_automation_lane=factory
+        for kind,flag in m.NATIVE_AUTO_OPTIONS.items():
+            flag.value=True;m.NATIVE_RATE_OPTIONS[kind.rsplit('_',1)[1]].value=2.
+        for _ in range(5):self.now+=.3;m.automation_tick()
+        self.assertEqual(set(lanes),set(m.NATIVE_AUTO_OPTIONS));self.assertTrue(all(l.phase=='active' for l in lanes.values()))
+        self.assertEqual(rates,{'health':.002,'cooldown':8.,'duration':2.})
+        m.NATIVE_AUTO_OPTIONS['native_rate_cooldown'].value=False
+        for _ in range(2):self.now+=.3;m.automation_tick()
+        self.assertEqual(rates,{'health':.002,'cooldown':4.,'duration':2.})
+        self.assertEqual(set(m._automation_leases),{'native_rate_health','native_rate_duration'})
+        self.assertEqual(events.count(('cooldown','add')),1)
+        m.stop_automation('master off');m.automation_permitted=lambda:False
+        for _ in range(2):self.now+=.3;m.automation_tick()
+        self.assertEqual(rates,{'health':0.,'cooldown':4.,'duration':4.});self.assertFalse(m._automation_leases)

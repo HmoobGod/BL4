@@ -108,7 +108,8 @@ SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct re
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
 NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=.1,is_integer=False,display_name=label)
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'))}
-ALL = PREVIEW + list(NATIVE_RATE_OPTIONS.values()) + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name='Auto-enable native '+k+' rate (experimental)') for k in NATIVE_RATE_OPTIONS}
+ALL = PREVIEW + list(NATIVE_AUTO_OPTIONS.values()) + list(NATIVE_RATE_OPTIONS.values()) + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; opt in to persistent gameplay.'
@@ -335,7 +336,14 @@ def displayed_selection(option):
 def native_rate_selection(ui, mode):
     option=NATIVE_RATE_OPTIONS[mode]
     edited,value=ui.slider_float(option.display_name+'##'+option.identifier,float(displayed_selection(option)),1.,5.,'%.1fx')
-    if edited:_pending[option.identifier]=normalize(option,value)
+    if edited:
+        if auto_master.value is True:queue_auto_edit(option,value)
+        else:_pending[option.identifier]=normalize(option,value)
+    if auto_master.value is True:
+        flag=NATIVE_AUTO_OPTIONS['native_rate_'+mode]
+        changed,chosen=ui.checkbox(flag.display_name+'##'+flag.identifier,flag.value is True)
+        if changed:set_auto_setting(flag,chosen)
+        ui.text(mode+' native rate: '+_automation_status.get('native_rate_'+mode,'Waiting / off'))
     return displayed_selection(option)
 
 
@@ -530,7 +538,7 @@ def draw():
             ui.text_wrapped('Native regeneration start/stop test: uses a distinct constant-rate initializer and existing flesh tags. Rate units and stop/expiry are unverified; share one timed attempt per process. Exit after testing.')
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native regeneration start/stop (2 sec)'):
                 activate_feature('health_regen_native', 1.0)
-            ui.text_wrapped('Native passive regeneration rate trial: small additive native rate, not a refill. Ten-second maximum; restore before travel. Rate units and actual healing unverified.')
+            ui.text_wrapped('Native passive regeneration rate: small additive native rate, not a refill. Manual ten-second trial or separate persistent opt-in; restore before travel. Rate units and actual healing unverified.')
             rate=native_rate_selection(ui,'health')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native passive health rate (10 sec)'):
                 activate_feature('native_rate_health',rate)
@@ -539,7 +547,7 @@ def draw():
                 activate_feature('shield_pulse', 1.0)
         if 'Action skills' in panels:
             ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
-            ui.text_wrapped('Native resource-rate trials: selectable cooldown regeneration speed or inverse duration consumption (above 1x), one at a time. Exact runtime property path and reversible readback required; no refill. Restore before skill changes.')
+            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or independent persistent opt-in; choose native OR matching refill assist. Changes to active rates restore and require toggle to rearm. Restore before skill changes.')
             for mode in ('cooldown','duration'):
                 rate=native_rate_selection(ui,mode)
                 if rate>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
@@ -1227,12 +1235,11 @@ def begin_blackboard_reward(key, selection):
     _health_pulse.begin()
 
 
-def begin_native_resource_rate(mode,selection):
-    global _health_pulse
+def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
                                         TARGETS, bind_health_readers, make_local_resolver, original_pool_identity)
     from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
-    if mode not in TARGETS or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
+    if mode not in TARGETS or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     names=set(RATE_SPECS)|set(POOL_SPECS)|set(ACTION_NAMES)|{'GetResourcePoolValue','GetResourcePoolPercent'}
@@ -1242,6 +1249,9 @@ def begin_native_resource_rate(mode,selection):
     def context():return current_session(session)
     def permitted():
         hooks=sdk.hooks
+        if persistent:
+            kind='native_rate_'+mode
+            return (_monitor_thread==threading.get_ident() and native_rate_allowed(kind,selection) and automation_permitted())
         return (mod.is_enabled is True and _offline_confirmed and auto_master.value is not True and not _auto_owned
                 and not _automation_leases and not conflicting_mods() and _monitor_registered
                 and _monitor_thread==threading.get_ident()
@@ -1255,7 +1265,12 @@ def begin_native_resource_rate(mode,selection):
                          lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
                          adaptive_api=adaptive,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
     resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill)
-    _health_pulse=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection)
+    return NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection,continuous=persistent)
+
+
+def begin_native_resource_rate(mode,selection):
+    global _health_pulse
+    _health_pulse=make_native_resource_rate(mode,selection)
     _health_pulse.begin()
 
 
@@ -1531,8 +1546,8 @@ def activate_feature(key, selection):
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
-        if auto_master.value is True or _auto_owned:
-            raise ValueError('disable persistent master before manual activation')
+        if auto_master.value is True or _auto_owned or _automation_leases:
+            raise ValueError('disable persistent master and finish automation restoration before manual activation')
         if not _valid_menu_backend():
             raise ValueError('verified BLImGui 1.1 hook-based F8 window required')
         if not _offline_confirmed:
@@ -1619,10 +1634,11 @@ def set_auto_setting(option, value):
             report_live('HOLD: master off in memory; saved settings may still be on, check before restart')
         report_live('HOLD: ' + str(exc)[:120])
         return
-    if option in AUTOMATION_OPTIONS.values():
-        kind = next(k for k,o in AUTOMATION_OPTIONS.items() if o is option)
+    lane_options={**AUTOMATION_OPTIONS,**NATIVE_AUTO_OPTIONS}
+    if option in lane_options.values():
+        kind = next(k for k,o in lane_options.items() if o is option)
         stop_automation_lane(kind, 'automation preference changed')
-        if value is True and not automation_fault():
+        if value is True and not automation_fault() and kind not in _automation_leases:
             _automation_attempted.discard(kind)
             _automation_status[kind] = 'Waiting for eligible session'
     if option is auto_master:
@@ -1716,6 +1732,11 @@ def auto_desired():
     for key in (AMMO_GROUP | LIFE_KEYS).intersection(_auto_edits):
         if not (_auto_owned and _controller is not None and key in _controller.records):
             desired.pop(key, None)
+    # A native passive-rate handle may still be restoring. Do not introduce a
+    # conflicting health field until its original baseline is verified.
+    native_health=_automation_leases.get('native_rate_health')
+    if native_health is not None and (native_health.record is not None or native_health.fault):
+        desired={k:v for k,v in desired.items() if k not in LIFE_KEYS|{'healing_received'}}
     return desired
 
 
@@ -1982,10 +2003,11 @@ def automation_fault():
 def stop_automation_lane(kind, reason):
     lease = _automation_leases.get(kind)
     if lease is not None:
-        lease.stop(reason)
-        if not lease.fault:
+        if kind not in NATIVE_AUTO_OPTIONS or (not lease.stop_requested and not lease.fault):
+            lease.stop(reason)
+        if not lease.fault and (kind not in NATIVE_AUTO_OPTIONS or lease.record is None):
             _automation_leases.pop(kind, None)
-    _automation_status[kind] = 'Stopped: '+reason
+    _automation_status[kind] = ('Restoring native rate; wait for verification' if kind in NATIVE_AUTO_OPTIONS and lease is not None and lease.record is not None else 'Stopped: '+reason)
 
 
 def stop_automation(reason):
@@ -2056,6 +2078,9 @@ def jump_event_tick(obj,*_):
 
 
 def recovery_conflict(kind):
+    counterpart={'health':'native_rate_health','skill_cooldown':'native_rate_cooldown','skill_duration':'native_rate_duration'}.get(kind)
+    if counterpart and (NATIVE_AUTO_OPTIONS[counterpart].value is True or counterpart in _automation_leases):
+        return 'choose native rate OR corresponding refill assist'
     if kind not in ('health', 'shield'):
         return ''
     selected = set(raw_auto_desired(SHIELD_KEYS | {'healing_received'}))
@@ -2121,7 +2146,25 @@ def ensure_crossfire_events():
     return owner
 
 
+def native_rate_allowed(kind,selection):
+    mode=kind.rsplit('_',1)[1]
+    option=NATIVE_RATE_OPTIONS[mode]
+    # Preserve an active committed setting while its draft is waiting to save.
+    if NATIVE_AUTO_OPTIONS[kind].value is not True or normalize(option,option.value)!=selection:
+        return False
+    if mode!='health' and selection<=1.:return False
+    counterpart='health' if mode=='health' else 'skill_'+mode
+    if AUTOMATION_OPTIONS[counterpart].value is True or counterpart in _automation_leases:return False
+    if mode=='health':
+        active=set(_controller.records) if _controller is not None else set()
+        if ({'healing_received'}|LIFE_KEYS).intersection(set(raw_auto_desired())|active):return False
+    return True
+
+
 def make_automation_lane(kind, session):
+    if kind in NATIVE_AUTO_OPTIONS:
+        mode=kind.rsplit('_',1)[1];option=NATIVE_RATE_OPTIONS[mode]
+        return make_native_resource_rate(mode,normalize(option,option.value),persistent=True)
     sdk = sys.modules['unrealsdk']
     adaptive_mode = kind in SKILL_ADAPTIVE and SKILL_ADAPTIVE[kind].value is True
     native_mode = kind in SKILL_NATIVE and SKILL_NATIVE[kind].value is True
@@ -2192,21 +2235,47 @@ def automation_tick():
     global _automation_busy, _automation_next
     if _automation_busy:
         return
-    if not _automation_leases and not any(o.value is True and k not in _automation_attempted for k,o in AUTOMATION_OPTIONS.items()):
+    lane_options={**AUTOMATION_OPTIONS,**NATIVE_AUTO_OPTIONS}
+    if not _automation_leases and not any(o.value is True and k not in _automation_attempted for k,o in lane_options.items()):
         return
     _automation_busy = True
     try:
-        if not automation_permitted():
+        # Drain native cleanup even after master/consent/mod disable, conflict, or peer fault.
+        # Never discard a pending native handle or its delayed verification receipt.
+        permitted=automation_permitted()
+        for kind in NATIVE_AUTO_OPTIONS:
+            lease=_automation_leases.get(kind)
+            if lease is None or lease.fault:continue
+            if not permitted or lease.stop_requested or not native_rate_allowed(kind,lease.selection):
+                if not lease.stop_requested:lease.stop('native rate permission or selection ended')
+                _automation_attempted.add(kind)
+                lease.tick(False)
+                if lease.fault:
+                    request_stop('native rate cleanup fault',immediate=False)
+                    permitted=False
+                elif lease.record is None:
+                    _automation_leases.pop(kind,None)
+                    _automation_status[kind]='Restored / toggle lane to rearm'
+                else:_automation_status[kind]='Restoring; wait for verification'
+        if not permitted or not automation_permitted():
             stop_automation('permission or modifier compatibility ended')
             return
         # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
-        for kind in ('vacuum','reload','health','shield','skill_cooldown','skill_duration','double_jump'):
-            if AUTOMATION_OPTIONS[kind].value is not True:
+        for kind in (*AUTOMATION_OPTIONS,*NATIVE_AUTO_OPTIONS):
+            if lane_options[kind].value is not True:
                 stop_automation_lane(kind,'disabled')
                 continue
             if not automation_permitted():
                 stop_automation('permission ended before next lane')
                 return
+            if kind in NATIVE_AUTO_OPTIONS:
+                lease=_automation_leases.get(kind)
+                if lease is not None and lease.stop_requested:continue
+                option=NATIVE_RATE_OPTIONS[kind.rsplit('_',1)[1]]
+                selection=normalize(option,option.value)
+                if not native_rate_allowed(kind,selection) or (lease is None and option.identifier in _auto_edits):
+                    _automation_status[kind]='Waiting: native rate selection or compatibility'
+                    continue
             conflict = recovery_conflict(kind)
             if conflict:
                 if kind in _automation_leases:
@@ -2240,6 +2309,8 @@ def automation_tick():
                     return
                 if lease.record is None:
                     stop_automation_lane(kind,'lease ended; toggle lane to rearm')
+                elif kind in NATIVE_AUTO_OPTIONS:
+                    _automation_status[kind]='Native '+lease.phase+' (gameplay unverified)'
                 elif kind=='reload' and hasattr(lease,'swap_paused'):
                     _automation_status[kind] = 'Waiting for supported loaded idle gun and reserve' if lease.swap_paused or lease.reserve_paused else 'Armed (gameplay unverified)'
                 elif kind=='skill_duration' and getattr(lease,'event_class',None) is not None:
@@ -2298,7 +2369,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('native_rate_options', list(NATIVE_RATE_OPTIONS.values()), display_name='Native rate trial selections (experimental)')]
+options += [NestedOption('native_rate_options', [*NATIVE_RATE_OPTIONS.values(),*NATIVE_AUTO_OPTIONS.values()], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']

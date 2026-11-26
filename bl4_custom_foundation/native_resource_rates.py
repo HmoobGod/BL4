@@ -150,11 +150,13 @@ class NativeRateTrial:
     and exact validated native definition. It may not mutate the game. Caller
     must run tick on the existing verified game hook; no scheduling here.
     """
-    def __init__(self,mode,binding,resolve,weak,clock,thread,report,can_add,cleanup_key=lambda key:key,selection=None):
+    def __init__(self,mode,binding,resolve,weak,clock,thread,report,can_add,cleanup_key=lambda key:key,selection=None,continuous=False):
         if mode not in TARGETS:raise ValueError('unknown native rate trial')
         self.mode,self.binding,self.resolve,self.weak=mode,binding,resolve,weak
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
+        if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
+        self.continuous=continuous
         trial_amount(mode,selection)
         self.record=None;self.fault=False;self.busy=False;self.used=False;self.stop_requested=False
         self.handle=None;self.phase='idle';self.baseline=None;self.expected=None;self.anomaly=False;self.due=0.
@@ -192,7 +194,7 @@ class NativeRateTrial:
             objs,key,_,base=self.stable_snapshot()
             if not self.permission():raise ValueError('local activation permission unavailable')
             self.target_value(base)
-            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+10.)
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+10. if not self.continuous else float('inf'))
             self.baseline=base;self.phase='armed'
         except Exception as e:self.report('HOLD: native rate '+str(e)[:120]);return False
         self.report('EXPERIMENT: native '+self.mode+' rate armed; no refill pulses.');return True
