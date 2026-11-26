@@ -17,7 +17,7 @@ class Movement(unittest.TestCase):
     def test_update_relative(self):
         self.c.activate('dash_speed',2.); self.c.activate('dash_speed',3.); self.assertEqual(self.c.vals(self.dash),(3600.,3600.))
     def test_manual_default(self):
-        for k in ('dash_speed','glide_speed'): self.assertNotIn(k,self.m.AUTO_OPTIONS)
+        for k in ('dash_speed','glide_speed'): self.assertFalse(self.m.AUTO_OPTIONS[k].value)
         self.assertEqual(self.dash.writes+self.glide.writes,[])
     def test_wrong_owner(self):
         self.comp.OakCharacterOwner=Node(); self.c.activate('dash_speed',2.); self.assertEqual(self.dash.writes,[])

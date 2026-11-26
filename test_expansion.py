@@ -63,11 +63,17 @@ class Expansion(unittest.TestCase):
     def test_all_available(self):
         from bl4_custom_foundation.gameplay_fields import FEATURES
         from bl4_custom_foundation.session_control import DAMAGE_HOLD
+        from test_combat_r13 import attr,typ,desc
+        comp=self.p.CharacterMovement
+        comp.DashSpeed=attr(1200.);comp.GlidingSpeed=attr(800.)
+        original=comp.Class._properties()
+        comp.Class=typ('OakCharacterMovementComponent',*original,desc('DashSpeed',comp.DashSpeed._type),desc('GlidingSpeed',comp.GlidingSpeed._type))
+        comp._path_name=lambda:'OwnedMovement';comp.OakCharacterOwner=self.p
         for k in FEATURES:
             if k in DAMAGE_HOLD or k in self.m.MANUAL_ONLY: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,1.2 if k == 'gravity' else 2.)
-        self.assertEqual(len(self.m._controller.records),18)
+        self.assertEqual(len(self.m._controller.records),20)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):

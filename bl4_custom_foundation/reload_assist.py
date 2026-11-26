@@ -47,7 +47,7 @@ class ReloadAssist:
         self.session_mode=session_mode and continuous
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
-        self.recent=deque();self.swap_paused=False
+        self.recent=deque();self.swap_paused=False;self.reserve_paused=False
         self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
 
     def resolve(self, check_weapon=True):
@@ -85,7 +85,7 @@ class ReloadAssist:
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),float("inf") if self.session_mode else now+30,now+.1)
             self.previous=loaded;self.empty_seen=False
             self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
-            self.recent.clear();self.swap_paused=False
+            self.recent.clear();self.swap_paused=False;self.reserve_paused=False
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
         self.report('EXPERIMENT: session reload armed (ten requests per rolling 30s; supported idle swaps)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
@@ -116,7 +116,12 @@ class ReloadAssist:
         if self.record is not snapshot:return None
         objs,fresh_key,_,loaded,_,reserve,native_state=sample
         changed=fresh_key!=key
-        if changed and fresh_key[0][3]==key[0][3]:raise ValueError('same weapon mode or behavior changed')
+        if changed and fresh_key[0][3]==key[0][3]:
+            # A new mode must resolve to distinct native behaviors on the same live weapon.
+            # Never adopt a same-mode replacement or a recycled weapon address.
+            if (fresh_key[1]==key[1] or refs[3]() is None or identity(refs[3]())!=fresh_key[0][3]
+                    or set(fresh_key[0][4:]) & set(key[0][4:])):
+                raise ValueError('same weapon mode or behavior changed without distinct scope')
         if changed or self.swap_paused:
             if self.waiting:raise ValueError('swap during unconfirmed reload')
             if native_state!='Active' or not loaded or min(reserve)<=0:
@@ -124,7 +129,7 @@ class ReloadAssist:
             new_refs=tuple(self.weak(o) for o in objs)
             if self.record is not snapshot:return None
             self.record=(new_refs,fresh_key,tid,end,self.clock()+.1)
-            self.previous=None;self.empty_seen=False;self.swap_paused=False
+            self.previous=None;self.empty_seen=False;self.swap_paused=False;self.reserve_paused=False
             self.report('EXPERIMENT: supported idle weapon admitted; awaiting fresh positive magazine sample')
             return None
         # Verify full original weak identities even when the address tuple matches.
@@ -146,7 +151,18 @@ class ReloadAssist:
             except Exception as e:self.stop(str(e)[:120]);return
             if self.record is not snapshot:return
             self.record=(refs,key,tid,end,now+.1)
-            if min(reserve)<=0:self.stop('no confirmed reserve');return
+            if min(reserve)<=0:
+                if not self.session_mode or self.waiting or state not in ('Active','Using','Firing'):
+                    self.stop('no confirmed reserve');return
+                if not self.reserve_paused:self.report('PAUSE: no confirmed reserve; waiting for ammo and a fresh loaded idle sample')
+                self.reserve_paused=True;self.previous=None;self.empty_seen=False;return
+            if self.reserve_paused:
+                if state not in ('Active','Using','Firing','Reloading'):
+                    self.stop('unsupported state during reserve recovery');return
+                if state=='Active' and loaded>0:
+                    self.reserve_paused=False;self.previous=loaded;self.empty_seen=False
+                    self.report('EXPERIMENT: reserve recovered with positive idle magazine; new cycle armed')
+                return
             if self.waiting:
                 if now>=self.completion_deadline:
                     self.stop('reload completion not observed');return
