@@ -5,10 +5,11 @@ import math
 from heapq import nsmallest
 import re
 import struct
-from collections import deque
+from collections import Counter, deque
 from itertools import product
 from .gameplay_fields import identity
 from .health_pulse import enum_name
+from .weapon_rates import prop
 
 CATEGORIES = frozenset(('ammo', 'cash', 'eridium', 'health', 'gear'))
 # Factual color observations from community loot metadata, not source code reuse.
@@ -75,6 +76,45 @@ def classify(actor, high_gear_only=False):
     return k
 
 
+def native_gear_identity(actor):
+    """Read an existing reflected item instance ID, never decode opaque identity.
+
+    Older/unexposed layouts retain actor-only admission. A present but malformed
+    item descriptor is rejected. An ID of zero is not positive identity evidence.
+    IDs may be recycled: collisions conservatively suppress relocation.
+    """
+    properties = getattr(actor.Class, '_properties', None)
+    if properties is None:
+        return None
+    if not any(str(p.Name) == 'item' for p in properties()):
+        return None
+
+    def struct(owner, name, type_name):
+        typ = getattr(owner, '_type', None) or owner.Class
+        d = prop(typ, name, 'ZStructProperty')
+        expected = '/Script/GbxGame.' + type_name
+        value = getattr(owner, name)
+        if (d.Struct._path_name() != expected or value._type._path_name() != expected
+                or identity(d.Struct) != identity(value._type)):
+            raise ValueError('native gear struct mismatch')
+        return value
+
+    item = struct(actor, 'item', 'GbxItem')
+    data = struct(item, 'data', 'GbxItemData')
+    state = struct(item, 'State', 'GbxItemState')
+    prop(data._type, 'InstanceId', 'ZUInt32Property')
+    prop(state._type, 'Quantity', 'ZUInt32Property')
+    instance, quantity = data.InstanceId, state.Quantity
+    if (type(instance) is not int or type(quantity) is not int
+            or not 0 <= instance <= 0xffffffff or not 0 <= quantity <= 0xffffffff):
+        raise ValueError('invalid native gear identity')
+    if instance == 0:
+        return None
+    if quantity == 0:
+        raise ValueError('empty native gear item')
+    return instance, quantity
+
+
 def point(v):
     xyz=tuple(getattr(v,k) for k in ('X','Y','Z'))
     if not all(type(n) in (int,float) and math.isfinite(n) and abs(n)<1e9 for n in xyz):raise ValueError('invalid location')
@@ -135,7 +175,7 @@ class Vacuum:
         if type(high_gear_only) is not bool:raise ValueError('invalid rarity filter')
         self.high_gear_only=high_gear_only
         self.recent=deque();self.total_attempts=0;self.gear_targets={}
-        self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.moved=0;self.next_due=0
+        self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.gear_ids=set();self.moved=0;self.next_due=0
 
     def resolve(self):
         pc,pawn,state,ok=self.context()
@@ -157,7 +197,7 @@ class Vacuum:
             if not self.categories or not self.categories<=CATEGORIES or type(self.radius) not in (float,int) or not math.isfinite(self.radius) or not 5<=self.radius<=100:raise ValueError('select categories and 5–100m radius')
             _,_,key,objs,_=self.resolve();now=self.clock()
             self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),math.inf if self.continuous else now+30)
-            self.attempted.clear();self.recent.clear();self.gear_targets.clear();self.total_attempts=0;self.moved=0;self.next_due=now+.5
+            self.attempted.clear();self.gear_ids.clear();self.recent.clear();self.gear_targets.clear();self.total_attempts=0;self.moved=0;self.next_due=now+.5
         except Exception as exc:self.report('HOLD: vacuum '+str(exc)[:120]);return False
         self.report('EXPERIMENT: vacuum armed '+('until stopped in original session; ' if self.continuous else '30s; ')+', '.join(sorted(self.categories))+'; native pickup unverified');return True
 
@@ -213,7 +253,9 @@ class Vacuum:
         if any(distance(pos,v)<=500**2 or distance(origin,v)<=500**2 for v in vendors[0]):return None
         kind=classify(a,self.high_gear_only)
         if kind not in self.categories:return None
-        return dist,key,kind
+        native = native_gear_identity(a) if kind == 'gear' else None
+        if native is not None and native[0] in self.gear_ids:return None
+        return dist,key+(native,),kind
 
     def tick(self,permitted):
         if self.record is None or self.busy:return
@@ -237,6 +279,10 @@ class Vacuum:
                     result=self.inspect(a,lev,origin,vendors)
                     if result is not None and (result[2]!='gear' or gear_space):candidates.append((result,self.weak(a)))
                 except Exception:continue
+            # Two actors presenting the same positive item ID in one candidate
+            # scan are ambiguous; relocate neither, rather than pick one.
+            counts = Counter(result[1][2][0] for result, _ in candidates if result[1][2] is not None)
+            candidates = [c for c in candidates if c[0][1][2] is None or counts[c[0][1][2][0]] == 1]
             for result,ref in nsmallest(4,candidates,key=lambda c:c[0][0]):
                 if self.record is not snapshot:return
                 if self.continuous:
@@ -276,6 +322,14 @@ class Vacuum:
                 if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
                     self.stop('scope ended before relocation');return
                 if distance(final_origin,origin)>25**2:continue
+                if kind == 'gear':
+                    # The final scope getter can synchronously change the item.
+                    # Re-read the native identity after it and before dispatch.
+                    try:
+                        native = native_gear_identity(a)
+                        if native != item_key[2] or (native is not None and native[0] in self.gear_ids):continue
+                    except Exception:continue
+                    if native is not None:self.gear_ids.add(native[0])
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1
                 if kind=='gear':self.gear_targets[gear_cell(xyz)]=xyz
                 try: moved=teleport(target,rot)
