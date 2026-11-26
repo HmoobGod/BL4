@@ -10,7 +10,7 @@ from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 
-TITLE = 'BL4 Custom - Community Integration v0.7.18-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.19-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -230,7 +230,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.18-experimental')
+    ui.text('BL4 CUSTOM | v0.7.19-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -302,6 +302,9 @@ def draw():
         ui.text_wrapped('Experimental automatic reload: one ordinary native reload request after observed magazine depletion, within 30 seconds.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm experimental automatic reload (30 sec)'):
             activate_feature('reload_assist', 1.0)
+        ui.text_wrapped('Continuous experiment: repeat only after observed Reloading and two positive idle samples; 30 sec, max 10 requests. Native completion compatibility unverified.')
+        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm continuous experimental reload (30 sec)'):
+            activate_feature('reload_continuous', 1.0)
     if _category == 6:
         ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
@@ -483,7 +486,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.18-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.19-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -713,7 +716,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.18-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.19-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -783,7 +786,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.18-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.19-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -809,7 +812,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.18-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.19-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -853,7 +856,7 @@ def conflicting_mods():
     # Do not import third-party mods or invoke their private APIs.
     known = {'loottreadmill', 'rarityremover', 'damageandmore', 'bl4damageandmore',
              'resourcesandcooldowns', 'bl4resourcesandcooldowns', 'bl4playermovement',
-             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint'}
+             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload'}
     for name, module in tuple(sys.modules.items()):
         if '.' in name or name.replace('_', '').casefold() not in known:
             continue
@@ -903,7 +906,7 @@ def begin_skill_pulse(mode):
     _health_pulse.begin()
 
 
-def begin_reload_assist():
+def begin_reload_assist(continuous=False):
     global _health_pulse
     from .reload_assist import ReloadAssist, bind, SPECS
     if health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
@@ -911,7 +914,7 @@ def begin_reload_assist():
     sdk=sys.modules['unrealsdk']
     functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
     api,fn=bind(functions,loot_bound); session=bound_session(sdk)
-    _health_pulse=ReloadAssist(lambda:current_session(session),sdk.unreal.WeakPointer,api,fn,time.monotonic,threading.get_ident,report_live)
+    _health_pulse=ReloadAssist(lambda:current_session(session),sdk.unreal.WeakPointer,api,fn,time.monotonic,threading.get_ident,report_live,continuous)
     _health_pulse.begin()
 
 
@@ -1138,7 +1141,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in ('health_pulse','shield_pulse','skill_cooldown','skill_duration','reload_assist') and _controller is not None and _controller.records:
+        if key in ('health_pulse','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous') and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1171,8 +1174,8 @@ def activate_feature(key, selection):
 def execute_activation(key, selection):
     global _controller
     # Called exclusively by monitor_tick after the explicit queued F8 action.
-    if key == 'reload_assist':
-        begin_reload_assist()
+    if key in ('reload_assist','reload_continuous'):
+        begin_reload_assist(key=='reload_continuous')
         return
     if key in ('skill_cooldown','skill_duration'):
         begin_skill_pulse(key.split('_',1)[1])
@@ -1424,7 +1427,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.18-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.19-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

@@ -40,11 +40,12 @@ def count(v):
 
 
 class ReloadAssist:
-    def __init__(self,context,weak,api,fn,clock,thread,report):
+    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False):
         self.context,self.weak,self.api,self.fn=context,weak,api,fn
+        self.continuous=continuous
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
-        self.previous=None;self.empty_seen=False
+        self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
 
     def resolve(self):
         pc,pawn,state,ok=self.context()
@@ -81,7 +82,7 @@ class ReloadAssist:
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),now+30,now+.1)
             self.previous=loaded;self.empty_seen=False
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
-        self.report('EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
+        self.report('EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
     def stop(self,reason):
         if self.record is not None:
@@ -100,6 +101,21 @@ class ReloadAssist:
             if self.record is not snapshot:return
             self.record=(refs,key,tid,end,now+.1)
             if min(reserve)<=0:self.stop('no confirmed reserve');return
+            if self.waiting:
+                if now>=self.completion_deadline:
+                    self.stop('reload completion not observed');return
+                if state=='Reloading':
+                    self.saw_reload=True;self.completion_samples=0;return
+                if state!='Active' or not loaded or not self.saw_reload:
+                    # Do not treat an external ammo increase or interrupted reload as completion.
+                    if state not in ('Active','Reloading') or (loaded and not self.saw_reload):
+                        self.stop('unconfirmed reload completion');return
+                    self.completion_samples=0;return
+                self.completion_samples+=1
+                if self.completion_samples>=2:
+                    self.waiting=False;self.previous=loaded;self.empty_seen=False
+                    self.report('EXPERIMENT: reload state and positive idle magazine observed; new cycle armed')
+                return
             if state not in ('Active','Using','Firing'):
                 self.stop('native reload or other state transition');return
             if loaded>0:
@@ -117,9 +133,19 @@ class ReloadAssist:
             # Keep the lease active and busy during dispatch; reentrant ticks cannot repeat it.
             self.empty_seen=False;self.previous=0
             try:
+                if self.continuous:
+                    self.waiting=True;self.saw_reload=False;self.completion_samples=0
+                    self.completion_deadline=min(end,self.clock()+10.)
                 fresh[2](key[1],0)
-                self.stop('one native request completed')
-                self.report('EXPERIMENT: normal reload requested once; actual outcome unverified')
+                if self.record is None:return
+                self.completed+=1
+                if not self.continuous:
+                    self.stop('one native request completed')
+                    self.report('EXPERIMENT: normal reload requested once; actual outcome unverified')
+                elif self.completed>=10:
+                    self.stop('maximum ten distinct requests reached')
+                else:
+                    self.report('EXPERIMENT: reload requested; waiting for native completion')
             except Exception:
                 self.fault=True;self.stop('native reload dispatch uncertain');self.report('FAULT: native reload request uncertain; exit game')
         finally:self.busy=False
