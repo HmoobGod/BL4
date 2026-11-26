@@ -156,6 +156,10 @@ from test_vacuum_body_r61 import PickupBody
 for name in PickupBody.__dict__:
     if name.startswith('test_'):
         t=PickupBody(name);unique[t.id()]=t
+from test_native_regen_r62 import NativeRegenTest
+for name in NativeRegenTest.__dict__:
+    if name.startswith('test_'):
+        t=NativeRegenTest(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

@@ -303,3 +303,193 @@ class NativeOvertime(Pulse):
             except Exception:
                 self.fault=True;self.record=None;self.report('FAULT: native overtime dispatch/ID uncertain. Exit game.')
         finally:self.busy=False
+
+# Distinct Start/StopHealthRegen experiment. Construct only a constant initializer
+# and pass the existing unique flesh definition's tag container, never edit it.
+REGEN_START='StartHealthRegen'
+REGEN_STOP='StopHealthRegen'
+INIT='/Script/GbxEngine.GbxAttributeInit'
+TAG_CONTAINER='/Script/GameplayTags.GameplayTagContainer'
+TAG='/Script/GameplayTags.GameplayTag'
+REGEN_SPECS={REGEN_START:(ACTOR,('Duration','ZFloatProperty'),('RegenRate','ZStructProperty'),('bStopWhenFull','ZBoolProperty'),('TickRate','ZFloatProperty'),('HealthTags','ZStructProperty'),('ReturnValue','ZIntProperty')),
+             REGEN_STOP:(ACTOR,('ID','ZIntProperty'))}
+
+
+def bind_regen(functions, existing):
+    out=[]; init_type=tag_type=None
+    for name,sig in tuple(SPECS.items())[:2]+tuple(REGEN_SPECS.items()):
+        matches=[f for f in functions if f._path_name()==PATH+name]
+        if len(matches)!=1:raise ValueError('native regen function unavailable: '+name)
+        fn=matches[0]; ps=tuple(fn._properties())
+        if (len(ps)!=len(sig) or any(p.ArrayDim!=1 for p in ps) or fn.Outer._path_name()!=PATH[:-1]
+                or ps[0].PropertyClass._path_name()!='/Script/Engine.Actor'):
+            raise ValueError('native regen signature mismatch')
+        if name==REGEN_START:
+            init_type=ps[2].Struct;tag_type=ps[5].Struct
+            if init_type._path_name()!=INIT or tag_type._path_name()!=TAG_CONTAINER:
+                raise ValueError('regen struct descriptor mismatch')
+        out.append(existing(functions,PATH+name,sig))
+    return tuple(out),init_type,tag_type
+
+
+def regen_rate(make,init_type,handle_type,def_type):
+    rate=make(INIT,True,constant=.01,PostScale=1.)
+    if rate._type._path_name()!=INIT or identity(rate._type)!=identity(init_type):raise ValueError('regen initializer wrapper mismatch')
+    for n in ('constant','PostScale'):prop(rate._type,n,'ZFloatProperty')
+    if abs(numeric(rate.constant)-.01)>1e-8 or numeric(rate.PostScale)!=1.:raise ValueError('regen initializer readback mismatch')
+    prop(rate._type,'attribute','ZGameDataHandleProperty')
+    a=rate.attribute
+    if type(a) is not handle_type or a._name!='None' or type(a._type_handle) is not int or a._type_handle!=0:
+        raise ValueError('regen initializer attribute is not empty')
+    table=nested(rate,'DataTableValue','DataTableValueHandle')
+    prop(table._type,'DataTable','ZGbxDefPtrProperty')
+    prop(table._type,'RowName','ZNameProperty');prop(table._type,'ColumnName','ZNameProperty')
+    dt=table.DataTable
+    if type(dt) is not def_type or dt._name!='None' or dt._type is not None or str(table.RowName)!='None' or str(table.ColumnName)!='None':
+        raise ValueError('regen initializer data table is not empty')
+    return rate
+
+
+def regen_tags(pawn,handle_type,tag_type,expected):
+    # Select from existing health definitions only. Explicit tags must be
+    # nonempty and unique to flesh, including hierarchical prefix matching.
+    h,key,ratio=select_flesh(pawn,handle_type)
+    if key!=expected:raise ValueError('regen flesh identity changed')
+    health=nested(pawn,'HealthState','OakCharacterHealthState')
+    groups=[];selected=None
+    for st in health.HealthTypeStates:
+        handle=st.HealthType;tags=handle.GameplayTags
+        if tags._type._path_name()!=TAG_CONTAINER or identity(tags._type)!=identity(tag_type):raise ValueError('regen tag container mismatch')
+        sets=[]
+        for name in ('GameplayTags','ParentTags'):
+            d=prop(tags._type,name,'ZArrayProperty').Inner
+            if type(d).__name__!='ZStructProperty' or d.Struct._path_name()!=TAG:raise ValueError('regen tag array mismatch')
+            arr=getattr(tags,name)
+            if len(arr)>64:raise ValueError('regen tag count excessive')
+            names=[]
+            for entry in arr:
+                if identity(entry._type)!=identity(d.Struct):raise ValueError('regen tag wrapper mismatch')
+                prop(entry._type,'TagName','ZNameProperty')
+                n=str(entry.TagName)
+                if not n or n=='None' or any(not part or not all(c.isalnum() or c=='_' for c in part) for part in n.split('.')):raise ValueError('invalid regen tag')
+                names.append(n.casefold())
+            if len(names)!=len(set(names)):raise ValueError('duplicate regen tag')
+            sets.append(tuple(sorted(names)))
+        explicit,parents=sets
+        if not explicit or any(not any(x.startswith(parent+'.') for x in explicit) for parent in parents):
+            raise ValueError('unclassified or incoherent health layer tags')
+        if handle._name==h._name and identity(handle)==identity(h):selected=(tags,explicit,parents)
+        else:groups.append((handle._name,identity(handle),explicit,parents))
+    if selected is None:raise ValueError('flesh tag container missing')
+    tags,explicit,parents=selected
+    if len(explicit)!=1:raise ValueError('unique flesh-only explicit tag required')
+    target=explicit[0]
+    for _,_,other,otherparents in groups:
+        if any(target==x or target.startswith(x+'.') or x.startswith(target+'.') for x in other) or target in otherparents:
+            raise ValueError('flesh tag overlaps another health layer')
+    return tags,(explicit,parents,tuple(groups)),ratio
+
+
+class NativeRegen(Pulse):
+    """One bounded native regeneration lease, not permanent passive regen.
+
+    Stop is deferred to the original monitor thread; no cleanup against a
+    replacement pawn or after the requested expiry (ID reuse unproven).
+    """
+    def __init__(self,context,weak,handle_type,api,clock,thread,report,claim,make,init_type,tag_type,def_type,cleanup_context):
+        super().__init__(context,weak,handle_type,api,clock,thread,report)
+        self.claim,self.make,self.init_type,self.tag_type,self.def_type,self.cleanup_context=claim,make,init_type,tag_type,def_type,cleanup_context
+        self.dispatched=False;self.native_id=None;self.stop_requested=False;self.started=None;self.tag_key=None;self.before=None
+    def begin(self):
+        if self.record is not None or self.fault or self.busy or self.dispatched:return False
+        try:
+            objs,_,key,p=self.resolve();now=self.clock()
+            if not 0<p<.97:raise ValueError('naturally missing flesh health required')
+            _,self.tag_key,_=regen_tags(objs[1],self.handle_type,self.tag_type,key[0])
+            regen_rate(self.make,self.init_type,self.handle_type,self.def_type)
+            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+5,now+1,key)
+        except Exception as exc:
+            self.report('HOLD: native regeneration '+str(exc)[:100]);return False
+        self.report('EXPERIMENT: native regeneration start/stop armed; rate and lifetime unverified.');return True
+    def fail(self,reason):
+        self.fault=True;self.record=None
+        self.report('FAULT: native regeneration '+reason+'; exit game, do not travel.')
+    def stop(self,reason):
+        if self.record is None:return
+        if not self.dispatched:
+            self.record=None;self.report('STOP: native regeneration before dispatch: '+reason)
+        else:
+            self.stop_requested=True
+            self.report('STOP PENDING: native regeneration; wait for original game hook, then exit game.')
+    def cleanup(self,snapshot,now,anomaly=False):
+        refs,ids,tid,_,_,key=snapshot
+        try:
+            if self.native_id is None or self.thread()!=tid or now>=self.started+2.:raise ValueError('original native ID window unavailable')
+            pc,pawn,state,eligible=self.cleanup_context()
+            if not eligible or any(r() is None or identity(r())!=i or identity(o)!=i for r,i,o in zip(refs,ids,(pc,pawn,state),strict=True)):
+                raise ValueError('original solo session unavailable')
+            _,fk,ratio=select_flesh(pawn,self.handle_type)
+            if fk!=key[0] or ratio>=1.:raise ValueError('original health identity lost or native stop-when-full may have retired ID')
+            last=self.cleanup_context()
+            if (not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid
+                    or self.clock()>=self.started+2. or self.record is not snapshot):
+                raise ValueError('native stop window or original session ended')
+            _,final_key,final_ratio=select_flesh(last[1],self.handle_type)
+            if final_key!=key[0] or final_ratio>=1. or self.clock()>=self.started+2. or self.record is not snapshot:
+                raise ValueError('health identity or native ID window changed after final scope')
+            self.api[3](last[1],self.native_id)
+        except Exception as e:
+            self.fail('cleanup uncertain: '+str(e)[:100]);return
+        self.record=None
+        if anomaly:
+            self.fail('unexpected health increase; matching stop dispatched, cancellation unverified');return
+        self.report('EXPERIMENT: matching native stop dispatched; cancellation/expiry unverified. Exit game after test.')
+    def tick(self,permitted):
+        if self.record is None or self.busy:return
+        snapshot=self.record;refs,ids,tid,end,due,key=snapshot;now=self.clock()
+        self.busy=True
+        try:
+            if self.dispatched:
+                if not permitted or self.stop_requested or self.thread()!=tid or now>=self.started+2.:
+                    self.cleanup(snapshot,self.clock());return
+                try:
+                    objs,_,_,p=self.resolve()
+                    _,tag_key,ratio=regen_tags(objs[1],self.handle_type,self.tag_type,key[0])
+                    if tag_key!=self.tag_key or abs(p-ratio)>.005:raise ValueError('health or tags changed during regen')
+                    last=self.context()
+                    if not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid:raise ValueError('session changed during regen')
+                except Exception:
+                    self.cleanup(snapshot,self.clock());return
+                if p>=1. or ratio>=1.:
+                    self.fail('full health observed; native stop-when-full may have retired ID');return
+                anomaly=max(p,ratio)>self.before+.025
+                if self.stop_requested or self.clock()>=self.started+1. or anomaly:
+                    self.report('EXPERIMENT: flesh readback '+('increased (causation unverified)' if p>self.before else 'did not increase')+'.')
+                    self.cleanup(snapshot,self.clock(),anomaly=anomaly);return
+                return
+            if not permitted or self.thread()!=tid or now>=end:
+                self.stop('permission/thread/window ended');return
+            if now<due:return
+            try:
+                objs,_,_,p=self.resolve();rate=regen_rate(self.make,self.init_type,self.handle_type,self.def_type)
+                fresh=self.context()
+                if not fresh[3] or tuple(identity(x) for x in fresh[:3])!=ids or self.thread()!=tid:raise ValueError('session changed')
+                tags,tag_key,ratio=regen_tags(fresh[1],self.handle_type,self.tag_type,key[0])
+                if tag_key!=self.tag_key or abs(p-ratio)>.005 or not 0<min(p,ratio) or max(p,ratio)>=.97:raise ValueError('health or tags changed')
+                last=self.context()
+                if not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid or self.clock()+2.>=end:raise ValueError('session/window changed before start')
+                tags,final_tag_key,final_ratio=regen_tags(last[1],self.handle_type,self.tag_type,key[0])
+                if final_tag_key!=self.tag_key or abs(final_ratio-p)>.005 or not 0<final_ratio<.97 or self.clock()+2.>=end:
+                    raise ValueError('health or tags changed after final session scope')
+                if self.record is not snapshot:return
+                if not self.claim():self.stop('one native timed attempt per process');return
+            except Exception as exc:
+                self.stop(str(exc)[:100]);return
+            self.before=max(p,ratio,final_ratio);self.started=self.clock();self.dispatched=True
+            try:
+                result=self.api[2](last[1],2.,rate,True,.5,tags)
+                if type(result) is not int or not 0<result<=2**31-1:raise ValueError('native regen ID not positive')
+                self.native_id=result
+                self.report('EXPERIMENT: native regeneration started; matching stop will be attempted on original hook.')
+            except Exception as exc:self.fail('start/ID uncertain: '+str(exc)[:100])
+        finally:self.busy=False
