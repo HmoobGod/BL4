@@ -95,6 +95,10 @@ from test_slide_timing_r46 import SlideTiming
 for name in SlideTiming.__dict__:
     if name.startswith('test_'):
         t=SlideTiming(name);unique[t.id()]=t
+from test_f8_focus_r47 import FocusRows
+for name in FocusRows.__dict__:
+    if name.startswith('test_'):
+        t=FocusRows(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

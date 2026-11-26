@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.44-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.45-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -126,6 +126,27 @@ _backend = None
 _reward_summary = "Not checked. Read-only checks are available on demand."
 _menu_close_ready = False
 _compact_view = None  # default compact in persistent mode, full in manual mode
+_focus_controls = False  # runtime-only opt-in; no change to saved gameplay options
+_focus_pages = {}
+_FOCUS_PAGE_SIZE = 6
+
+
+def focused_options(ui, category, compact, options):
+    """Limit only category feature rows; global safety and action controls stay visible."""
+    if not _focus_controls or len(options) <= _FOCUS_PAGE_SIZE:
+        return options
+    pages = (len(options) + _FOCUS_PAGE_SIZE - 1) // _FOCUS_PAGE_SIZE
+    key = (category, compact)
+    page = max(0, min(pages - 1, _focus_pages.get(key, 0)))
+    if page > 0 and ui.button('Previous controls##focus_prev'):
+        page -= 1
+    if page < pages - 1 and ui.button('Next controls##focus_next'):
+        page += 1
+    _focus_pages[key] = page
+    ui.text(f'Feature controls: page {page + 1} of {pages}')
+    start = page * _FOCUS_PAGE_SIZE
+    return options[start:start + _FOCUS_PAGE_SIZE]
+
 
 
 def normalize(option, value):
@@ -271,7 +292,7 @@ def displayed_selection(option):
 
 
 def draw():
-    global _category, _status, _compact_view, _vacuum_radius
+    global _category, _status, _compact_view, _vacuum_radius, _focus_controls
     if _backend is None or not mod.is_enabled:
         return
     if sync_window_close():
@@ -282,7 +303,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.44-experimental')
+    ui.text('BL4 CUSTOM | v0.7.45-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -304,6 +325,9 @@ def draw():
     edited_compact, compact_value = ui.checkbox('Compact menu (hide preview-only controls)', compact)
     if edited_compact:
         _compact_view = compact = bool(compact_value)
+    edited_focus, focus_value = ui.checkbox('Reduced feature rows (6 per page)', _focus_controls)
+    if edited_focus:
+        _focus_controls = bool(focus_value)
     if not compact or _loot_test_status.startswith(('HOLD', 'FAULT', 'STOP')):
         ui.text_wrapped(_loot_test_status)
     ui.text("Session monitor: " + monitor_status())
@@ -427,6 +451,7 @@ def draw():
     if _category == 8:
         ui.text_wrapped('Change the Open Custom Menu key in the SDK console Keybinds section. Default: F8.')
         ui.text('Current hotkey: ' + str(open_key.key or 'Unbound'))
+    options = focused_options(ui, _category, compact, options)
     for o in options:
         value = displayed_selection(o)
         label = o.display_name + '##' + o.identifier
@@ -596,7 +621,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.44-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.45-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -826,7 +851,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.44-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.45-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -896,7 +921,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.44-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.45-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -922,7 +947,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.44-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.45-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1863,7 +1888,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.44-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.45-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
