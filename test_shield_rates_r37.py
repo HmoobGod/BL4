@@ -30,7 +30,7 @@ class ShieldRates(unittest.TestCase):
     def activate(self,k,v):self.b.activate('shield_regen_'+k,v)
     def values(self,sh=None):
         sh=sh or self.sh;return (sh.RegenRate.Value,sh.RegenRate.BaseValue,sh.RegenDelay.Value,sh.RegenDelay.BaseValue)
-    def test_default_no_write(self):self.assertEqual(self.sh.RegenRate.writes+self.sh.RegenDelay.writes,[]);self.assertNotIn('shield_regen_rate',self.m.AUTO_OPTIONS)
+    def test_default_no_write(self):self.assertEqual(self.sh.RegenRate.writes+self.sh.RegenDelay.writes,[]);self.assertIs(self.m.AUTO_OPTIONS['shield_regen_rate'].value,False)
     def test_rate_cycle(self):self.activate('rate',2.);self.assertEqual(self.values(),(20.,20.,4.,4.));self.activate('rate',3.);self.assertEqual(self.values(),(30.,30.,4.,4.));self.activate('rate',1.);self.assertEqual(self.values(),(10.,10.,4.,4.))
     def test_delay_inverse(self):self.activate('delay',2.);self.assertEqual(self.values(),(10.,10.,2.,2.));self.activate('delay',.5);self.assertEqual(self.values(),(10.,10.,8.,8.))
     def test_both_and_jump_restore(self):self.activate('rate',2.);self.activate('delay',2.);self.b.activate('jump',2.);self.assertEqual(self.values(),(20.,20.,2.,2.));self.m.request_stop('test',immediate=True);self.assertEqual(self.values(),(10.,10.,4.,4.));self.assertEqual(self.b.jump.JumpZVelocity,620.)

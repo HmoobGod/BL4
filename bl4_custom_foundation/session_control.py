@@ -149,6 +149,11 @@ class Controller:
             _, values, _ = self.resolve(record)
             if values != record['baseline']:
                 raise ValueError('baseline readback mismatch')
+            if record.get('shield_scope') is not None:
+                shield_rates.validate_readback(record['shield_scope'][0](), key, values[0])
+                _, verified, _ = self.resolve(record)
+                if verified != record['baseline']:
+                    raise ValueError('shield baseline changed after getter readback')
         except Exception as exc:
             self.fail(key + ' restoration unverified (' + reason + '): ' + str(exc)[:150])
             return False
@@ -276,7 +281,7 @@ class Controller:
         finally:
             self.busy = False
 
-    def tick(self, permitted, *, observed=None, follow_weapon=False):
+    def tick(self, permitted, *, observed=None, follow_weapon=False, follow_shield=False):
         if self.busy or not self.records or self.fault:
             return
         transitioned = set()
@@ -303,8 +308,16 @@ class Controller:
                                 return
                             transitioned.add(key)
                             continue
+                        if follow_shield and observed[3] and key in shield_rates.KEYS:
+                            if not self.restore(key, 'shield transition; original restored'):
+                                self.restore_all('shield restoration failed')
+                                return
+                            transitioned.add(key)
+                            continue
                         self.restore_all('session or pawn changed')
                         return
+                    if key in shield_rates.KEYS:
+                        shield_rates.validate_readback(record['shield_scope'][0](), key, values[0])
                     if key == 'lifesteal_rate':
                         validate_lifesteal(record['pawn'](), values)
                     if key in weapon_rates.AMMO_KEYS:
