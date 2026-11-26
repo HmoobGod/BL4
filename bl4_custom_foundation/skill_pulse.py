@@ -60,7 +60,41 @@ def handle(h,ht):
 def has_type(t,path):
     return any(x._path_name()==path for x in (t,*t._superfields()))
 
-def candidates(skill,pawn,ht,inline):
+SET_CLASS='/Script/GbxGame.GbxSkillComponentSetData'
+SET_ENTRY='/Script/GbxGame.GbxSkillDataComponent'
+
+
+def loaded_set_entries(cls, soft_identifier):
+    """Read only already-resolved soft references; never load an asset."""
+    arr=cls.SkillComponentSets
+    if not len(arr):return [],()
+    if not callable(soft_identifier) or len(arr)>32:raise ValueError('external component sets unsupported')
+    inner=prop(cls,'SkillComponentSets','ZArrayProperty').Inner
+    if type(inner).__name__!='ZSoftObjectProperty' or inner.PropertyClass._path_name()!=SET_CLASS:
+        raise ValueError('external set descriptor mismatch')
+    entries=[];keys=[];paths=set();ids=set()
+    for i in range(len(arr)):
+        path=soft_identifier(arr,i)
+        obj=arr[i]
+        if type(path) is not str or not path.startswith('/Game/') or obj is None or obj._path_name()!=path or 'Default__' in path:
+            raise ValueError('external set not resolved to exact asset')
+        if obj.Class._path_name()!=SET_CLASS:raise ValueError('external set class mismatch')
+        token=identity(obj)
+        if path in paths or token in ids:raise ValueError('duplicate external set')
+        paths.add(path);ids.add(token)
+        element=prop(obj.Class,'Components','ZArrayProperty').Inner
+        if type(element).__name__!='ZStructProperty' or element.Struct._path_name()!=SET_ENTRY:
+            raise ValueError('external component entry descriptor mismatch')
+        components=obj.Components
+        if len(components)>128 or len(entries)+len(components)>128:raise ValueError('component count excessive')
+        for e in components:
+            if identity(e._type)!=identity(element.Struct):raise ValueError('external component entry type mismatch')
+            entries.append(((identity(cls),path,token),e))
+        keys.append((path,token))
+    return entries,tuple(keys)
+
+
+def candidates(skill,pawn,ht,inline,soft_identifier=None):
     if 'Default__' in skill._path_name() or identity(skill.SkillOwner)!=identity(pawn): raise ValueError('foreign skill')
     scripts=skill.SkillScripts
     if not 0<len(scripts)<=32: raise ValueError('skill scripts unavailable')
@@ -68,20 +102,25 @@ def candidates(skill,pawn,ht,inline):
     for s in scripts:
         if 'Default__' in s._path_name() or identity(s.Skill)!=identity(skill) or identity(s.Actor)!=identity(pawn) or s.bIsInitialized is not True: raise ValueError('skill script owner/init mismatch')
         if not has_type(s.Class,'/Script/GbxGame.GbxSkillScript'): raise ValueError('script type mismatch')
-        # Inherited inline definitions are admitted only when the full chain is
-        # unambiguous. External sets remain unsupported (no forced asset load).
+        # Inline and already-resolved external definitions are read-only.
+        # Every origin is pinned; no forced asset load or guessed reference.
         cls=s.Class
         chain=(cls,*cls._superfields())
         if len(chain)>32 or len({identity(c) for c in chain})!=len(chain):
             raise ValueError('skill class chain ambiguous')
-        entries=[]
+        entries=[];layout=[];external_paths=set();external_ids=set()
         for c in chain:
             if not hasattr(c,'SkillComponents'):
                 if c is cls:raise ValueError('component definitions unavailable')
                 continue
-            if len(c.SkillComponentSets):raise ValueError('external component sets unsupported')
             if len(c.SkillComponents)>128:raise ValueError('component count excessive')
-            entries.extend((c,e) for e in c.SkillComponents)
+            entries.extend(((identity(c),),e) for e in c.SkillComponents)
+            external,keys=loaded_set_entries(c,soft_identifier)
+            for path,token in keys:
+                if path in external_paths or token in external_ids:raise ValueError('duplicate external set in class chain')
+                external_paths.add(path);external_ids.add(token)
+            layout.append((identity(c),keys))
+            entries.extend(external)
             if len(entries)>128:raise ValueError('component count excessive')
         seen=set()
         for origin,e in entries:
@@ -98,15 +137,16 @@ def candidates(skill,pawn,ht,inline):
             resources=tuple(h.resource for h in definitions)
             rk=tuple(handle(h,ht) for h in resources)
             if len({k[:2] for k in keys+rk})!=4 or len({k[2] for k in keys+rk})!=4: raise ValueError('ambiguous skill pool identity')
-            out.append((s,d.ComponentID,cid,resources,keys+rk,identity(origin)))
+            out.append((s,d.ComponentID,cid,resources,keys+rk,(origin,tuple(layout))))
     return out
 
 class SkillPulse:
-    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.):
+    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
         self.context,self.weak,self.ht,self.inline,self.construct,self.ref_type,self.api,self.find=context,weak,ht,inline,construct,ref_type,api,find
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
         self.continuous=continuous is True
+        self.soft_identifier=soft_identifier
         self.record=None;self.fault=False;self.busy=False;self.prev=None;self.pending=None;self.rises=0
         if adaptive_api is not None and (not self.continuous or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
         self.adaptive_api=adaptive_api;self.rate=2.;self.sample_at=None;self.last_delta=None
@@ -130,7 +170,7 @@ class SkillPulse:
                 skills=self.find()
                 if len(skills)>256: raise ValueError('skill search exceeds bound')
                 owned=[s for s in skills if s.SkillOwner is not None and identity(s.SkillOwner)==identity(pawn)]
-        found=[(s,c) for s in owned for c in candidates(s,pawn,self.ht,self.inline)]
+        found=[(s,c) for s in owned for c in candidates(s,pawn,self.ht,self.inline,self.soft_identifier)]
         if len(found)!=1: raise ValueError('unique ordinary action skill unavailable')
         skill,(script,g,cid,resources,keys,origin)=found[0]
         k=(identity(skill),identity(script),cid,keys,origin)
@@ -146,6 +186,14 @@ class SkillPulse:
             expected=values[0 if self.mode=='cooldown' else 1]
             for actual in (numeric(self.adaptive_api[0](pawn)),numeric(self.adaptive_api[1](ref))):
                 if not 0<=actual<=1 or abs(actual-expected)>.005: raise ValueError('native action skill percent disagrees with selected resource')
+        # External references can disappear while native getters run. Re-read
+        # the selected layout before a dispatch; never substitute another set.
+        if refresh and any(keys for _,keys in origin[1]):
+            again=candidates(skill,pawn,self.ht,self.inline,self.soft_identifier)
+            if len(again)!=1:raise ValueError('external skill layout changed during getters')
+            a=again[0]
+            if (identity(a[0]),a[2],a[4],a[5])!=(identity(script),cid,keys,origin):
+                raise ValueError('external skill layout changed during getters')
         return (pc,pawn,state,skill,script),k,ref,resources,tuple(values)
     def begin(self):
         if self.record or self.fault or self.busy:return False
