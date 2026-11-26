@@ -1,0 +1,9 @@
+[package]
+name = "bl4-ncs-record-reader"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+bl4-ncs = { git = "https://github.com/monokrome/bl4", rev = "6f886674f1860a65132102af1b9710f8e3db771a" }
+serde_json = "1.0"

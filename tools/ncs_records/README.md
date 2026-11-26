@@ -1,0 +1,2 @@
+# Standalone NCS record reader
+Public source-only offline tool. Dependency: monokrome/bl4 BSD-2-Clause at 6f886674f1860a65132102af1b9710f8e3db771a. See upstream license, source, Cargo.lock and dependency metadata. Read a decompressed NCS payload from stdin and emit structured JSON or fail. No private mod asset is part of this project or the CI job. Do not put decoded records in the public repository. No game or save modifications.

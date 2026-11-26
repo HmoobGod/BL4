@@ -1,0 +1,33 @@
+name: Standalone NCS record reader
+on:
+  push:
+    branches:
+      - tools/r52-ncs-records
+permissions:
+  contents: read
+jobs:
+  reader:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Python framing tests
+        working-directory: tools/ncs_decoder
+        run: python3 -m unittest -v test_decode_ncs.py
+      - name: Build and test public record reader
+        working-directory: tools/ncs_records
+        run: |
+          cargo generate-lockfile
+          cargo test --locked
+          cargo build --release --locked
+          mkdir -p deliverable
+          cp target/release/bl4-ncs-record-reader Cargo.toml Cargo.lock README.md deliverable/
+          cp -r src deliverable/
+          cargo metadata --locked --format-version 1 > deliverable/dependency-metadata.json
+          (cd deliverable && sha256sum bl4-ncs-record-reader > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ncs-record-reader-linux-x64
+          path: tools/ncs_records/deliverable
+          if-no-files-found: error
+          retention-days: 7
