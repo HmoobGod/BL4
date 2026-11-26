@@ -6,6 +6,7 @@ from heapq import nsmallest
 import re
 import struct
 from collections import deque
+from itertools import product
 from .gameplay_fields import identity
 from .health_pulse import enum_name
 
@@ -104,6 +105,17 @@ def active(actor):
     return (actor is not None and 'Default__' not in actor._path_name() and actor.IsActorBeingDestroyed() is False and actor.bHidden is False)
 
 
+# Bounded local placement ledger: avoid stacking gear onto previous attempted
+# destinations. This is not a terrain/occupancy or collision prediction.
+_GEAR_OFFSETS = tuple((r*math.cos(i*math.tau/n),r*math.sin(i*math.tau/n))
+                      for r,n in ((200,8),(350,12),(480,16)) for i in range(n))
+_NEIGHBORS = tuple(product((-1,0,1),repeat=3))
+
+
+def gear_cell(pos):
+    return tuple(math.floor(x/100) for x in pos)
+
+
 class Airborne(ValueError):
     pass
 
@@ -114,7 +126,7 @@ class Vacuum:
         self.context,self.weak,self.find,self.make=context,weak,find,make
         self.clock,self.thread,self.report=clock,thread,report
         self.categories=frozenset(categories);self.radius=radius;self.continuous=continuous
-        self.recent=deque();self.total_attempts=0
+        self.recent=deque();self.total_attempts=0;self.gear_targets={}
         self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.moved=0;self.next_due=0
 
     def resolve(self):
@@ -137,7 +149,7 @@ class Vacuum:
             if not self.categories or not self.categories<=CATEGORIES or type(self.radius) not in (float,int) or not math.isfinite(self.radius) or not 5<=self.radius<=100:raise ValueError('select categories and 5–100m radius')
             _,_,key,objs,_=self.resolve();now=self.clock()
             self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),math.inf if self.continuous else now+30)
-            self.attempted.clear();self.recent.clear();self.total_attempts=0;self.moved=0;self.next_due=now+.5
+            self.attempted.clear();self.recent.clear();self.gear_targets.clear();self.total_attempts=0;self.moved=0;self.next_due=now+.5
         except Exception as exc:self.report('HOLD: vacuum '+str(exc)[:120]);return False
         self.report('EXPERIMENT: vacuum armed '+('until stopped in original session; ' if self.continuous else '30s; ')+', '.join(sorted(self.categories))+'; native pickup unverified');return True
 
@@ -156,6 +168,17 @@ class Vacuum:
             raise ValueError('invalid vacuum preferences')
         self.categories,self.radius=categories,radius
         return True
+
+    def gear_position(self,origin,vendors):
+        for dx,dy in _GEAR_OFFSETS:
+            pos=(origin[0]+dx,origin[1]+dy,origin[2])
+            cell=gear_cell(pos)
+            if cell in self.gear_targets:continue
+            if any(distance(pos,v)<=500**2 for v in vendors):continue
+            if any((old:=self.gear_targets.get(tuple(c+d for c,d in zip(cell,offset)))) is not None
+                   and distance(pos,old)<100**2 for offset in _NEIGHBORS):continue
+            return pos
+        return None
 
     def vendors(self,pc,lev):
         out=[];display=set();machines=self.find('OakVendingMachine',exact=False)
@@ -198,10 +221,11 @@ class Vacuum:
             actors=self.find('InventoryPickup',exact=True)
             if len(actors)>1024:raise ValueError('pickup scan exceeds limit')
             candidates=[]
+            gear_space='gear' in self.categories and self.gear_position(origin,vendors[0]) is not None
             for a in actors:
                 try:
                     result=self.inspect(a,lev,origin,vendors)
-                    if result is not None:candidates.append((result,self.weak(a)))
+                    if result is not None and (result[2]!='gear' or gear_space):candidates.append((result,self.weak(a)))
                 except Exception:continue
             for result,ref in nsmallest(4,candidates,key=lambda c:c[0][0]):
                 if self.record is not snapshot:return
@@ -219,8 +243,8 @@ class Vacuum:
                         or level(a)!=key[-1] or a.HasAuthority() is not True or a.Owner is not None):continue
                 rot=bound(a,'K2_GetActorRotation',ROTATION,ROT_SIG)()
                 if kind=='gear':
-                    angle=(len(self.attempted)%8)*math.tau/8
-                    xyz=(origin[0]+200*math.cos(angle),origin[1]+200*math.sin(angle),origin[2])
+                    xyz=self.gear_position(origin,self.vendors(pc,key[-1])[0])
+                    if xyz is None:continue
                 else:xyz=(origin[0],origin[1],origin[2]-40)
                 target=self.make('Vector',X=xyz[0],Y=xyz[1],Z=xyz[2])
                 if self.record is not snapshot:return
@@ -230,7 +254,10 @@ class Vacuum:
                 # checks after preparation, not only before it. No retry on dispatch.
                 a=ref()
                 if a is None:continue
-                try: fresh=self.inspect(a,key[-1],latest_origin,self.vendors(pc,key[-1]))
+                try:
+                    latest_vendors=self.vendors(pc,key[-1])
+                    fresh=self.inspect(a,key[-1],latest_origin,latest_vendors)
+                    if kind=='gear' and any(distance(xyz,v)<=500**2 for v in latest_vendors[0]):continue
                 except Exception:continue
                 if fresh is None or fresh[1:]!=result[1:]:continue
                 teleport=bound(a,'K2_TeleportTo',TELEPORT,TP_SIG)
@@ -240,6 +267,7 @@ class Vacuum:
                     self.stop('scope ended before relocation');return
                 if distance(final_origin,origin)>25**2:continue
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1
+                if kind=='gear':self.gear_targets[gear_cell(xyz)]=xyz
                 try: moved=teleport(target,rot)
                 except Exception as exc:
                     self.fault=True;self.stop('uncertain native relocation: '+str(exc)[:80]);return

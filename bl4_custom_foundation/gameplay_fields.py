@@ -28,6 +28,8 @@ FEATURES = {
     'ladder_descend': ('Ladder descent speed multiplier (experimental)', .5, 3.),
     'slam_height': ('Ground-slam height scalar (experimental)', .5, 2.),
     'player_ammo_regen': ('Existing player ammo regeneration rate (experimental)', .5, 3.),
+    'ground_friction': ('Ground friction multiplier (experimental)', .5, 2.),
+    'braking_friction': ('Braking friction factor multiplier (experimental)', .5, 2.),
     'gravity': ('Local gravity multiplier', .5, 1.5),
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
@@ -141,6 +143,17 @@ def gravity(pawn, state):
     fields = owned_movement_scalar(pawn, 'GravityScale')
     if identity(fields[0][0]) != identity(pawn.CharacterMovement):
         raise ValueError('Apex CharacterMovement identity mismatch')
+    return fields
+
+
+def local_friction(pawn, field):
+    # Existing native on-foot friction fields, not a slide-only adjustment.
+    fields = owned_movement_scalar(pawn, field)
+    comp = pawn.CharacterMovement
+    if (identity(fields[0][0]) != identity(comp)
+            or str(comp.Class.Name) != 'OakCharacterMovementComponent'
+            or identity(comp.OakCharacterOwner) != identity(pawn)):
+        raise ValueError('local Oak movement component unavailable')
     return fields
 
 
@@ -258,6 +271,8 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'walk_speed': walk_speed,
            'sprint': walk_speed,
            'gravity': gravity,
+           'ground_friction': lambda p, s: local_friction(p, 'GroundFriction'),
+           'braking_friction': lambda p, s: local_friction(p, 'BrakingFrictionFactor'),
            'dash_speed': lambda p, s: local_move_pair(p, 'DashSpeed'),
            'glide_speed': lambda p, s: local_move_pair(p, 'GlidingSpeed'),
            'double_jump_cost': lambda p, s: local_move_pair(p, 'VaultPowerCost_DoubleJump'),

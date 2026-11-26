@@ -72,6 +72,8 @@ class Expansion(unittest.TestCase):
         fields=list(comp.Class._properties())
         for n in ('VaultPowerCost_DoubleJump','VaultPowerCost_Dash','VaultPowerCost_Glide','GlidingAirControl','GlidingSpeedBoost','GlidingAcceleration','GlidingDeceleration','VaultPowerCost_Grapple','VaultPowerCost_GroundSlam','MaxLadderAscendSpeed','MaxLadderDescendSpeed','GroundSlamHeightScalar'):
             a=attr(10.);setattr(comp,n,a);fields.append(desc(n,a._type))
+        for n in ('GroundFriction','BrakingFrictionFactor'):
+            setattr(comp,n,8.);fields.append(type('ZFloatProperty',(),{'Name':n,'ArrayDim':1})())
         comp.Class._properties=lambda:fields
         self.p._path_name=lambda:'LocalPawn';self.p.WeaponSwapTimeScale=attr(1.)
         h=self.p.HealthState;h.owner=self.p;h.RepairKitHealth=attr(20.);h._type=typ('OakCharacterHealthState',desc('RepairKitHealth',h.RepairKitHealth._type))
@@ -80,7 +82,7 @@ class Expansion(unittest.TestCase):
             if k in DAMAGE_HOLD or k in self.m.MANUAL_ONLY or k in self.m.WEAPON_KEYS or k in self.m.CAPACITY_KEYS or k in self.m.SHIELD_KEYS or k == self.m.GADGET_KEY: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,1.2 if k == 'gravity' else 2.)
-        self.assertEqual(len(self.m._controller.records),35)
+        self.assertEqual(len(self.m._controller.records),37)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):
