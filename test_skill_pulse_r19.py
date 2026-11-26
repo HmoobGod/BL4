@@ -76,3 +76,9 @@ class SkillPulseTests(unittest.TestCase):
     def test_inherited_definition(self):
         base=typ('/Script/GbxGame.GbxSkillScript');base.SkillComponents=[N(ComponentData=self.d)];base.SkillComponentSets=[];self.cls._superfields=lambda:iter((base,));self.start();self.assertFalse(self.m.health_active())
     def test_other_modifier_excluded(self):self.c.activate('jump',1.5);self.start();self.assertFalse(self.m.health_active())
+    def test_unique_inherited_component_r20(self):
+        base=typ('/Script/GbxGame.GbxSkillScript');base.SkillComponents=[N(ComponentData=self.d)];base.SkillComponentSets=[];self.cls._superfields=lambda:iter((base,));self.cls.SkillComponents=[];self.start();self.assertTrue(self.m.health_active());self.advance(.3);self.advance(.4);self.assertEqual(len(self.calls),1)
+    def test_inherited_origin_change_r20(self):
+        base=typ('/Script/GbxGame.GbxSkillScript');base.SkillComponents=[];base.SkillComponentSets=[];self.cls._superfields=lambda:iter((base,));self.start();self.advance(.3);base.SkillComponents=self.cls.SkillComponents;self.cls.SkillComponents=[];self.advance(.4);self.assertEqual(self.calls,[]);self.assertFalse(self.m.health_active())
+    def test_inherited_external_set_r20(self):
+        base=typ('/Script/GbxGame.GbxSkillScript');base.SkillComponents=[];base.SkillComponentSets=[Node()];self.cls._superfields=lambda:iter((base,));self.start();self.assertFalse(self.m.health_active())

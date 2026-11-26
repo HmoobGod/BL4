@@ -45,17 +45,23 @@ def candidates(skill,pawn,ht,inline):
     for s in scripts:
         if 'Default__' in s._path_name() or identity(s.Skill)!=identity(skill) or identity(s.Actor)!=identity(pawn) or s.bIsInitialized is not True: raise ValueError('skill script owner/init mismatch')
         if not has_type(s.Class,'/Script/GbxGame.GbxSkillScript'): raise ValueError('script type mismatch')
-        # Read inline definitions only; inherited or external component sets are not resolved here.
+        # Inherited inline definitions are admitted only when the full chain is
+        # unambiguous. External sets remain unsupported (no forced asset load).
         cls=s.Class
-        for base in cls._superfields():
-            # Unknown inherited blueprint component definitions are not merged blindly.
-            if hasattr(base,'SkillComponents') and (len(base.SkillComponents) or len(base.SkillComponentSets)):
-                raise ValueError('inherited component definitions unsupported')
-        if len(cls.SkillComponentSets): raise ValueError('external component sets unsupported')
-        entries=cls.SkillComponents
+        chain=(cls,*cls._superfields())
+        if len(chain)>32 or len({identity(c) for c in chain})!=len(chain):
+            raise ValueError('skill class chain ambiguous')
+        entries=[]
+        for c in chain:
+            if not hasattr(c,'SkillComponents'):
+                if c is cls:raise ValueError('component definitions unavailable')
+                continue
+            if len(c.SkillComponentSets):raise ValueError('external component sets unsupported')
+            if len(c.SkillComponents)>128:raise ValueError('component count excessive')
+            entries.extend((c,e) for e in c.SkillComponents)
+            if len(entries)>128:raise ValueError('component count excessive')
         seen=set()
-        if len(entries)>128: raise ValueError('component count excessive')
-        for e in entries:
+        for origin,e in entries:
             d=e.ComponentData
             if type(d) is not inline: raise ValueError('inline component wrapper unavailable')
             if not has_type(d._type,'/Script/GbxGame.GbxSkillComponentData'): raise ValueError('component data type unavailable')
@@ -69,7 +75,7 @@ def candidates(skill,pawn,ht,inline):
             resources=tuple(h.resource for h in definitions)
             rk=tuple(handle(h,ht) for h in resources)
             if len({k[:2] for k in keys+rk})!=4 or len({k[2] for k in keys+rk})!=4: raise ValueError('ambiguous skill pool identity')
-            out.append((s,d.ComponentID,cid,resources,keys+rk))
+            out.append((s,d.ComponentID,cid,resources,keys+rk,identity(origin)))
     return out
 
 class SkillPulse:
@@ -95,8 +101,8 @@ class SkillPulse:
                 owned=[s for s in skills if s.SkillOwner is not None and identity(s.SkillOwner)==identity(pawn)]
         found=[(s,c) for s in owned for c in candidates(s,pawn,self.ht,self.inline)]
         if len(found)!=1: raise ValueError('unique ordinary action skill unavailable')
-        skill,(script,g,cid,resources,keys)=found[0]
-        k=(identity(skill),identity(script),cid,keys)
+        skill,(script,g,cid,resources,keys,origin)=found[0]
+        k=(identity(skill),identity(script),cid,keys,origin)
         if not initial and k!=key: raise ValueError('skill component or pool changed')
         ref=self.construct(self.ref_type,Context=script,ComponentID=g)
         if identity(ref.Context)!=identity(script) or guid(ref.ComponentID)!=cid: raise ValueError('constructed reference mismatch')
