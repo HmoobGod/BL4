@@ -13,6 +13,7 @@ from .inventory_capacity import KEYS as CAPACITY_KEYS, resolve as resolve_capaci
 from .weapon_rates import WEAPON_KEYS, AMMO_KEYS, validate_targets
 from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shield_readback
 from .gadget_rates import KEY as GADGET_KEY
+REWARD_KEYS = frozenset(('progress_enemy_xp', 'progress_money', 'progress_eridium'))
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
 TITLE = 'BL4 Custom - Community Integration v0.7.61-experimental'
@@ -40,7 +41,7 @@ def rarity_slider(identifier, label):
 
 def progression_slider(identifier, label):
     return SliderOption(identifier, 1.0, 1.0, 10.0, step=0.1, is_integer=False,
-                        display_name=label, description='Preview only - reward hook not verified.')
+                        display_name=label, description=('Experimental native earned reward trial; actual reward unverified.' if identifier in REWARD_KEYS else 'Preview only - reward hook not verified.'))
 
 
 def toggle(identifier, label):
@@ -342,7 +343,7 @@ def draw():
         close_menu()
         return
     ui.text('BL4 CUSTOM | v0.7.61-experimental')
-    ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
+    ui.text_wrapped('Manual or persistent solo activation. Earned reward trials are manual only; unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
     if auto_master.value is not True:
@@ -386,7 +387,7 @@ def draw():
     if _native_overtime_used:
         ui.text_wrapped('Native timed flesh test attempted: stay offline, do not travel, and exit game after the test.')
     if health_active():
-        ui.text_wrapped('Native rate trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
+        ui.text_wrapped('Native attribute trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
         if ui.button('Stop experimental action / Restore ALL'):
             request_stop('F8 restore all', immediate=True)
     ui.separator()
@@ -405,7 +406,7 @@ def draw():
     if _category == 0 and not compact:
         ui.text_wrapped('Damage applies to the equipped ordinary gun fire behavior only. Elemental and incoming modifiers are separate; actual hit effects unverified.')
     if _category == 1 and not compact:
-        ui.text_wrapped('HOLD: all six reward hooks are unverified. These sliders only save preview values.')
+        ui.text_wrapped('Experimental enemy-kill XP, pickup cash and Eridium: existing typed native key only; one 30-second trial at a time. Other reward sliders remain preview only. Use a backup character; earned rewards are not reversed.')
         ui.text_wrapped(_reward_summary)
         if ui.button('Run read-only reward compatibility check'):
             inspect_attribute_compatibility()
@@ -541,7 +542,7 @@ def draw():
     for o in options:
         value = displayed_selection(o)
         label = o.display_name + '##' + o.identifier
-        if (o.identifier not in FEATURES or o.identifier in DAMAGE_HOLD) and o is not probe:
+        if (o.identifier not in FEATURES or o.identifier in DAMAGE_HOLD) and o is not probe and o.identifier not in REWARD_KEYS:
             ui.text_wrapped(o.display_name + ' — HOLD / preview only')
         if isinstance(o, BoolOption):
             edited, value = ui.checkbox(label, value)
@@ -565,6 +566,10 @@ def draw():
                 _status = 'Unapplied changes.' 
     for selected in options:
         key = selected.identifier
+        if key in REWARD_KEYS:
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test earned '+selected.display_name+' (30 sec)##reward_'+key):
+                activate_feature(key, _pending.get(key, selected.value))
+            continue
         if key not in FEATURES or key in DAMAGE_HOLD:
             continue
         name = FEATURES[key][0]
@@ -714,7 +719,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 def attribute_report(sdk):
     lines = ['BL4 Custom v0.7.61-experimental - read-only compatibility report',
-             'All reward modifications HOLD. Metadata is not proof of live behavior.']
+             'Read-only check. Native reward trials are independent; metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
     functions = sdk.find_all('Function', exact=False)
@@ -799,7 +804,7 @@ def read_reward_attributes(sdk):
     except Exception as exc:
         lines.append('Skipped: ' + type(exc).__name__ + ': ' + str(exc)[:160])
     lines.append(str(resolved) + '/3 non-sentinel getter results; no proof of earned reward effect.')
-    lines.append('No modifier add/remove or reward-grant calls made. All gameplay effects HOLD.')
+    lines.append('No modifier add/remove or reward-grant calls made. Earned reward effects remain unverified.')
     return '\n'.join(lines), resolved
 
 def report_path():
@@ -1190,6 +1195,27 @@ def begin_native_regen():
     _health_pulse.begin()
 
 
+def begin_blackboard_reward(key, selection):
+    global _health_pulse
+    from .blackboard_rewards import Binding, Trial, SPECS, DEF
+    if key not in REWARD_KEYS or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
+        raise ValueError('restore existing features before isolated reward trial')
+    sdk=sys.modules['unrealsdk'];u=sdk.unreal
+    defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
+    if len(defs)!=1:raise ValueError('native attribute definition struct unavailable')
+    fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
+    binding=Binding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    session=bound_session(sdk)
+    def permitted():
+        hooks=sdk.hooks
+        return (mod.is_enabled is True and _offline_confirmed and auto_master.value is not True and not _auto_owned
+                and not _automation_leases and not conflicting_mods() and _monitor_registered
+                and _monitor_thread==threading.get_ident()
+                and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
+    _health_pulse=Trial(key,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+    _health_pulse.begin()
+
+
 def begin_native_resource_rate(mode):
     global _health_pulse
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
@@ -1490,7 +1516,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in ('native_rate_health','native_rate_cooldown','native_rate_duration','health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous') and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1523,6 +1549,9 @@ def activate_feature(key, selection):
 def execute_activation(key, selection):
     global _controller
     # Called exclusively by monitor_tick after the explicit queued F8 action.
+    if key in REWARD_KEYS:
+        begin_blackboard_reward(key, selection)
+        return
     if key in ('loot_vacuum','loot_vacuum_continuous'):
         begin_loot_vacuum(selection,continuous=key=='loot_vacuum_continuous')
         return
