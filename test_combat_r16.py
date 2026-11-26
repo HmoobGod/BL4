@@ -16,7 +16,7 @@ class WeaponTuning(unittest.TestCase):
         self.c.activate('weapon_spread',1.); self.assertEqual(self.c.vals(self.spread),(4.,4.)); self.assertEqual(self.c.vals(self.recoil),(1.,1.))
         self.c.activate('weapon_recoil',1.); self.assertEqual(self.c.vals(self.recoil),(2.,2.))
     def test_manual_and_inactive(self):
-        for k in ('weapon_spread','weapon_recoil'): self.assertNotIn(k,self.c.m.AUTO_OPTIONS)
+        for k in ('weapon_spread','weapon_recoil'): self.assertFalse(self.c.m.AUTO_OPTIONS[k].value)
         self.assertEqual(self.spread.writes+self.recoil.writes,[])
     def test_mode_change(self):
         self.c.activate('weapon_spread',.5); self.c.activate('weapon_recoil',.5)

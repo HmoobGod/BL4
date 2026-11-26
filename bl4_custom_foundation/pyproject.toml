@@ -1,6 +1,6 @@
 [project]
 name = "bl4_custom_foundation"
-version = "0.7.28"
+version = "0.7.29"
 description = "Experimental local capacity, recovery and native reload assists."
 authors = [{name = "BL4 Custom Project"}]
 

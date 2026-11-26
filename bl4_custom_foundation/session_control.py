@@ -256,9 +256,10 @@ class Controller:
         finally:
             self.busy = False
 
-    def tick(self, permitted, *, observed=None):
+    def tick(self, permitted, *, observed=None, follow_weapon=False):
         if self.busy or not self.records or self.fault:
             return
+        transitioned = set()
         self.busy = True
         try:
             if self.stop_pending is not None or not permitted:
@@ -274,6 +275,14 @@ class Controller:
                 try:
                     _, values, eligible = self.resolve(record, observed=observed)
                     if not eligible:
+                        # Only persistent fire controls may follow ordinary weapon changes.
+                        # resolve already proved the original session/pawn and exact old behavior.
+                        if follow_weapon and observed[3] and key in weapon_rates.FIRE_KEYS:
+                            if not self.restore(key, 'weapon transition; original restored'):
+                                self.restore_all('weapon restoration failed')
+                                return
+                            transitioned.add(key)
+                            continue
                         self.restore_all('session or pawn changed')
                         return
                     if key == 'lifesteal_rate':
@@ -286,5 +295,6 @@ class Controller:
                 except Exception as exc:
                     self.restore_all('context check failed: ' + str(exc)[:100])
                     return
+            return transitioned
         finally:
             self.busy = False

@@ -178,6 +178,13 @@ class ReloadAssist:
                     self.waiting=False;self.previous=loaded;self.empty_seen=False
                     self.report('EXPERIMENT: reload state and positive idle magazine observed; new cycle armed')
                 return
+            if self.session_mode and state=='Reloading':
+                # A manual/native reload is already underway. Observe, never dispatch.
+                self.waiting=True;self.saw_reload=True;self.completion_samples=0
+                self.completion_deadline=min(end,now+10.)
+                self.previous=None;self.empty_seen=False
+                self.report('EXPERIMENT: external reload observed; waiting for native completion')
+                return
             if state not in ('Active','Using','Firing'):
                 self.stop('native reload or other state transition');return
             if loaded>0:
