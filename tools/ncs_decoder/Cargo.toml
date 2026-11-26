@@ -1,0 +1,8 @@
+[package]
+name = "bl4-ncs-block-decoder"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+oozextract = { git = "https://github.com/lvlvllvlvllvlvl/oozextract", rev = "8acaeb2bc375dd56c413a83aae4e87156136fdac" }

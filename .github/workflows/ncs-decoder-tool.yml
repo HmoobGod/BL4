@@ -1,0 +1,34 @@
+name: Standalone NCS decoder tool
+on:
+  push:
+    branches:
+      - tools/r52-ncs-decoder
+permissions:
+  contents: read
+jobs:
+  decoder:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Build and test pinned public decoder
+        working-directory: tools/ncs_decoder
+        run: |
+          rustc --version
+          cargo --version
+          cargo generate-lockfile
+          cargo test --locked
+          cargo build --release --locked
+          printf '\114\006ABCD' | target/release/bl4-ncs-block-decoder decompress 4 > result.bin
+          printf 'ABCD' | cmp - result.bin
+          mkdir -p deliverable
+          cp target/release/bl4-ncs-block-decoder Cargo.toml Cargo.lock README.md deliverable/
+          cp -r src deliverable/
+          cargo metadata --locked --format-version 1 > deliverable/dependency-metadata.json
+          (cd deliverable && sha256sum bl4-ncs-block-decoder > SHA256SUMS)
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ncs-decoder-linux-x64
+          path: tools/ncs_decoder/deliverable
+          if-no-files-found: error
+          retention-days: 7
