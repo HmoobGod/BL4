@@ -2,7 +2,7 @@
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
 from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal
-from . import weapon_rates, inventory_capacity
+from . import weapon_rates, inventory_capacity, shield_rates
 
 
 from .ground_speed import floor_target
@@ -12,8 +12,9 @@ DAMAGE_HOLD = frozenset(('damage',))
 GROUND_KEYS = frozenset(('walk_speed', 'sprint'))
 
 class Controller:
-    def __init__(self, context, weak_pointer, report, thread):
+    def __init__(self, context, weak_pointer, report, thread, shield_binding=None):
         self.context = context
+        self.shield_binding = shield_binding
         self.weak_pointer = weak_pointer
         self.report = report
         self.thread = thread
@@ -35,7 +36,12 @@ class Controller:
             raise ValueError('eligible authoritative one-player session required')
         scope = weapon_rates.capture(pawn, key, self.weak_pointer) if key in weapon_rates.WEAPON_KEYS else None
         inv = inventory_capacity.capture(pc, pawn, key, self.weak_pointer) if key in inventory_capacity.KEYS else None
-        if inv is not None:
+        shield = shield_rates.capture(pawn, key, self.weak_pointer, self.shield_binding()) if key in shield_rates.KEYS else None
+        if shield is not None:
+            resolved, active = shield_rates.resolve(pawn, shield)
+            if not active: raise ValueError("shield no longer equipped")
+            _, tokens, baseline = describe_fields(resolved)
+        elif inv is not None:
             resolved, _ = inventory_capacity.resolve(pc, pawn, inv)
             _, tokens, baseline = describe_fields(resolved)
         elif scope is not None:
@@ -58,7 +64,7 @@ class Controller:
         return dict(key=key, pc=self.weak_pointer(pc), pawn=self.weak_pointer(pawn),
                     state=self.weak_pointer(state), pc_id=identity(pc), pawn_id=identity(pawn),
                     state_id=identity(state), tokens=tokens, baseline=baseline,
-                    weapon_scope=scope, inventory_scope=inv, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
+                    weapon_scope=scope, inventory_scope=inv, shield_scope=shield, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
 
     def resolve(self, record, *, observed=None):
         if self.thread() != record['thread']:
@@ -77,7 +83,12 @@ class Controller:
             raise ValueError('original pawn no longer identifiable')
         scope = record.get('weapon_scope')
         inv = record.get('inventory_scope')
-        if inv is not None:
+        shield = record.get('shield_scope')
+        if shield is not None:
+            resolved, active = shield_rates.resolve(pawn, shield)
+            fields, tokens, values = describe_fields(resolved)
+            eligible = eligible and active
+        elif inv is not None:
             resolved, _ = inventory_capacity.resolve(pc, pawn, inv)
             fields, tokens, values = describe_fields(resolved)
         elif scope is not None:
@@ -94,6 +105,10 @@ class Controller:
         fields, values, eligible = self.resolve(record)
         if applying and not eligible:
             raise ValueError('session became ineligible')
+        if applying and record.get('shield_scope') is not None:
+            pc, pawn, state, ok = self.context()
+            if not ok or self.stop_pending is not None or self.records.get(record['key']) is not record or tuple(identity(o) for o in (pc,pawn,state)) != (record['pc_id'],record['pawn_id'],record['state_id']):
+                raise ValueError('shield session changed before write')
         if any(v not in allowed for v, allowed in zip(values, record['owned'], strict=True)):
             raise ValueError('unexpected foreign value; refused to overwrite')
         inv = record.get('inventory_scope')
@@ -212,6 +227,11 @@ class Controller:
             _, readback, eligible = self.resolve(record)
             if readback != targets or not eligible:
                 raise ValueError('post-write verification failed')
+            if record.get('shield_scope') is not None:
+                shield_rates.validate_readback(record['shield_scope'][0](), key, targets[0])
+                _, checked, still_eligible = self.resolve(record)
+                if not still_eligible or checked != targets or self.stop_pending is not None or self.records.get(key) is not record:
+                    raise ValueError('shield scope changed after native readback')
             record['expected'] = targets
             record['selection'] = selection
             record['owned'] = [{b, t} for b, t in zip(record['baseline'], targets, strict=True)]
