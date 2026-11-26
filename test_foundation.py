@@ -119,7 +119,7 @@ class Test(unittest.TestCase):
     def test_no_game_imports(self):
         tree=ast.parse(SOURCE.read_text()); imports={a.name for n in ast.walk(tree) if isinstance(n,ast.Import) for a in n.names}
         imports|={n.module for n in ast.walk(tree) if isinstance(n,ast.ImportFrom)}
-        self.assertEqual(imports,{'math','sys','mods_base','pathlib','threading','time','gameplay_fields','session_control','ground_speed'})
+        self.assertEqual(imports,{'math','sys','mods_base','pathlib','threading','time','gameplay_fields','session_control','ground_speed','health_pulse'})
     def test_existing_settings_key(self):
         self.m.mod.restore({'options':{'settings_test':True},'enabled':True})
         self.assertTrue(self.m.probe.value); self.assertTrue(self.m.mod.is_enabled)

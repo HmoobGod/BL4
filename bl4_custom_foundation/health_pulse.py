@@ -1,0 +1,178 @@
+"""Opt-in bounded local flesh recovery using existing native health-type handles.
+No native timer, no constructed tags, no raw pointers or shared definition edits.
+Historical declarations and SDK wrapper evidence: SOURCES.md.
+"""
+import math
+from .gameplay_fields import identity
+from .weapon_rates import nested, prop
+
+KEY = 'health_pulse'
+PERIOD = 1.0
+LIFETIME = 30.0
+FRACTION = .01
+PATH = '/Script/GbxGame.DamageStatics:'
+ACTOR = ('Context','ZObjectProperty')
+HANDLE = ('HealthType','ZGameDataHandleProperty')
+SPECS = {
+ 'GetHealthPoolLayerOfType': (ACTOR,HANDLE,('bTopDown','ZBoolProperty'),('ReturnValue','ZIntProperty')),
+ 'GetHealthPoolPercent': (ACTOR,('layer','ZIntProperty'),('ReturnValue','ZFloatProperty')),
+ 'RefillHealthPercent': (ACTOR,HANDLE,('Percent','ZFloatProperty'),('MaxPercent','ZFloatProperty')),
+}
+
+def bind(functions, bind_existing):
+    out=[]
+    for name,spec in SPECS.items():
+        matches=[f for f in functions if f._path_name()==PATH+name]
+        if len(matches)!=1:
+            raise ValueError('health function missing or ambiguous')
+        fn=matches[0]; props=tuple(fn._properties())
+        if not props or any(p.ArrayDim != 1 for p in props) or props[0].PropertyClass._path_name()!='/Script/Engine.Actor':
+            raise ValueError('health function descriptor mismatch')
+        if fn.Outer._path_name()!=PATH[:-1]:
+            raise ValueError('health function owner mismatch')
+        out.append(bind_existing(functions,PATH+name,spec))
+    return tuple(out)
+
+def enum_name(value):
+    name=getattr(value,'name',None)
+    return name if type(name) is str else None
+
+def numeric(v):
+    if type(v) not in (float,int) or not math.isfinite(v):
+        raise ValueError('nonfinite health value')
+    return float(v)
+
+def select_flesh(pawn, handle_type):
+    condition=prop(pawn.Class,'HealthCondition','ZEnumProperty')
+    if condition.Enum._path_name()!='/Script/OakGame.ECharacterHealthCondition':
+        raise ValueError('health condition descriptor mismatch')
+    if enum_name(pawn.HealthCondition)!='Healthy':
+        raise ValueError('healthy player required; no FFYL recovery')
+    health=nested(pawn,'HealthState','OakCharacterHealthState')
+    if identity(health.owner)!=identity(pawn) or health.bCurrentlyDead is not False:
+        raise ValueError('health owner or living state unavailable')
+    disabled=nested(health,'HealingDisabled','GbxAttributeInteger')
+    if type(disabled.Value) is not int or disabled.Value!=0:
+        raise ValueError('native healing disabled or unknown')
+    d=prop(health._type,'HealthTypeStates','ZArrayProperty')
+    if type(d.Inner).__name__!='ZStructProperty' or str(d.Inner.Struct.Name)!='HealthTypeState':
+        raise ValueError('health layer descriptor mismatch')
+    states=health.HealthTypeStates
+    if not 0<len(states)<=16:
+        raise ValueError('health layers unavailable')
+    choices=[]; seen=set()
+    for st in states:
+        if identity(st._type)!=identity(d.Inner.Struct):
+            raise ValueError('health layer wrapper mismatch')
+        prop(st._type,'HealthType','ZGameDataHandleProperty')
+        h=st.HealthType
+        if type(h) is not handle_type:
+            raise ValueError('unsupported health handle')
+        name=h._name; typ=h._type_handle; addr=identity(h)
+        if type(name) is not str or not name.startswith('HealthType_') or type(typ) is not int or not 0<typ<=0xffffffff:
+            raise ValueError('unresolved health type identity')
+        key=(name,typ,addr)
+        if key in seen:
+            raise ValueError('duplicate health type')
+        seen.add(key)
+        color=enum_name(h.DisplayColor); variation=enum_name(h.Variation)
+        if color is None or variation is None:
+            raise ValueError('unknown health type classification')
+        if color=='FleshRed' and variation=='IsGeneric':
+            choices.append((h,key,st))
+    if len(choices)!=1:
+        raise ValueError('unique flesh-only layer unavailable')
+    h,key,st=choices[0]
+    cur=numeric(nested(st,'SimpleCurrentHealth','GbxAttributeFloat').Value)
+    maximum=numeric(nested(st,'SimpleMaxHealth','GbxAttributeFloat').Value)
+    if not 0<cur<=maximum<=1e9:
+        raise ValueError('positive living health ratio unavailable')
+    return h,key,cur/maximum
+
+class Pulse:
+    def __init__(self,context,weak,handle_type,api,clock,thread,report):
+        self.context,self.weak,self.handle_type,self.api=context,weak,handle_type,api
+        self.clock,self.thread,self.report=clock,thread,report
+        self.record=None; self.fault=False; self.busy=False; self.pending=None
+
+    def resolve(self):
+        pc,pawn,state,eligible=self.context()
+        if not eligible:
+            raise ValueError('solo permission lost')
+        if self.record is not None:
+            refs,ids,tid,_,_,expected=self.record
+            if self.thread()!=tid or any(r() is None or identity(r())!=i or identity(o)!=i for r,i,o in zip(refs,ids,(pc,pawn,state),strict=True)):
+                raise ValueError('original session changed')
+        h,key,ratio=select_flesh(pawn,self.handle_type)
+        layer=self.api[0](pawn,h,False)
+        if type(layer) is not int or not 0<=layer<16:
+            raise ValueError('native flesh layer unavailable')
+        p=numeric(self.api[1](pawn,layer))
+        # Only use a normalized getter when its independent simple ratio agrees.
+        # No guessing between percent units (community reader observes both possibilities).
+        if not 0<p<=1 or abs(p-ratio)>0.005:
+            raise ValueError('normalized health readback ambiguous')
+        if self.record is not None and (key,layer)!=expected:
+            raise ValueError('flesh layer identity changed')
+        return (pc,pawn,state),h,(key,layer),p
+
+    def begin(self):
+        if self.record is not None or self.fault or self.busy:
+            return False
+        try:
+            objs,_,key,_=self.resolve(); now=self.clock()
+            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+LIFETIME,now+PERIOD,key)
+        except Exception as exc:
+            self.report('HOLD: health pulse preflight: '+str(exc)[:120]); return False
+        self.report('EXPERIMENT: flesh recovery armed for 30 seconds; no native timer.'); return True
+
+    def stop(self,reason):
+        if self.record is not None:
+            self.record=None
+            self.pending=None
+            self.report('STOP: health pulse '+reason+'; no further healing dispatched.')
+
+    def tick(self,permitted):
+        if self.record is None or self.busy: return
+        now=self.clock(); refs,ids,tid,end,due,key=self.record
+        if not permitted or self.thread()!=tid or now>=end:
+            self.stop('permission, thread or lifetime ended'); return
+        if now<due: return
+        snapshot=self.record
+        self.busy=True
+        try:
+            try:
+                objs,h,_,p=self.resolve()
+            except Exception as exc:
+                self.stop(str(exc)[:100]); return
+            if self.record is not snapshot:
+                return
+            self.record=(refs,ids,tid,end,now+PERIOD,key) # no catch-up or stacked dispatch
+            if self.pending is not None:
+                before=self.pending
+                self.pending=None
+                if p<=before:
+                    self.stop('no positive readback after pulse; effect unconfirmed'); return
+            if p>=1: return
+            # Recheck the original live identity and flesh handle after native reads.
+            try:
+                fresh=self.context()
+                if not fresh[3] or tuple(identity(x) for x in fresh[:3])!=ids:
+                    raise ValueError('session changed before refill')
+                fresh_h,fresh_key,fresh_ratio=select_flesh(fresh[1],self.handle_type)
+                if fresh_key!=key[0] or abs(fresh_ratio-p)>0.005:
+                    raise ValueError('flesh identity or value changed before refill')
+                if self.clock()>=end or self.record is None:
+                    self.stop('lifetime ended before refill'); return
+            except Exception as exc:
+                self.stop(str(exc)[:100]); return
+            try:
+                # Native refill only; no direct HP edit. MaxPercent is bounded to 1.
+                self.api[2](fresh[1],fresh_h,min(FRACTION,1-p),1.0)
+                if self.record is not None:
+                    self.pending=p
+            except Exception:
+                self.fault=True; self.stop('native dispatch uncertain; do not retry')
+                self.report('FAULT: health pulse native dispatch uncertain. Exit game immediately.')
+        finally:
+            self.busy=False

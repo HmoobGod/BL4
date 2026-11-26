@@ -10,7 +10,7 @@ from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 
-TITLE = 'BL4 Custom - Community Integration v0.7.14-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.15-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -117,6 +117,10 @@ def reset(_option=None):
     global _status
     pause_auto("vanilla reset requested")
     cancel_activation("vanilla reset requested")
+    stop_health_pulse('vanilla reset requested')
+    if health_fault():
+        _status = 'Recovery fault latched; exit game immediately.'
+        return
     if _controller is not None and _controller.records:
         request_stop('Restore vanilla defaults', immediate=True)
         if _controller.records or _controller.fault:
@@ -226,7 +230,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.14-experimental')
+    ui.text('BL4 CUSTOM | v0.7.15-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -251,12 +255,16 @@ def draw():
     if not compact or _loot_test_status.startswith(('HOLD', 'FAULT', 'STOP')):
         ui.text_wrapped(_loot_test_status)
     ui.text("Session monitor: " + monitor_status())
-    if _controller is not None and _controller.fault:
+    if health_fault() or (_controller is not None and _controller.fault):
         ui.text_wrapped('FAULT LATCHED: exit game immediately; do not play.')
     if _controller is not None:
         ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' ' + str(r.get('selection', '?')) + 'x' for k, r in _controller.records.items()) or 'None / vanilla'))
         if _controller.records and not _controller.fault and ui.button('Restore ALL active gameplay values'):
             pause_auto('F8 restore all')
+            request_stop('F8 restore all', immediate=True)
+    if health_active():
+        ui.text_wrapped('Experimental health recovery armed; maximum 30 seconds. Healing already received is not reversed.')
+        if ui.button('Stop health recovery / Restore ALL'):
             request_stop('F8 restore all', immediate=True)
     ui.separator()
     for i, (_, name, _) in enumerate(CATEGORIES):
@@ -290,6 +298,10 @@ def draw():
         ui.text('Rarity weight is not guaranteed drop probability; 1x restores.')
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
+    if _category == 6:
+        ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL or shield refill. Actual game compatibility unverified.')
+        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
+            activate_feature('health_pulse', 1.0)
     if _category == 8:
         ui.text_wrapped('Change the Open Custom Menu key in the SDK console Keybinds section. Default: F8.')
         ui.text('Current hotkey: ' + str(open_key.key or 'Unbound'))
@@ -460,7 +472,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.14-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.15-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -602,6 +614,7 @@ _monitor_thread = None
 _monitor_seen = 0.0
 _monitor_error = "not registered"
 _activation_request = None
+_health_pulse = None
 _live_lines = []
 _loot_status = 'Optional read-only rarity check; activation validates its own field.'
 _LOOT_BOOL_SIG = (('WorldContextObject', 'ZObjectProperty'), ('ReturnValue', 'ZBoolProperty'))
@@ -689,7 +702,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.14-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.15-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -759,7 +772,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.14-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.15-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -785,7 +798,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.14-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.15-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -839,9 +852,38 @@ def conflicting_mods():
     return False
 
 
+def health_active():
+    return _health_pulse is not None and _health_pulse.record is not None
+
+
+def health_fault():
+    return _health_pulse is not None and _health_pulse.fault
+
+
+def stop_health_pulse(reason):
+    if _health_pulse is not None:
+        _health_pulse.stop(reason)
+
+
+def begin_health_pulse():
+    global _health_pulse
+    # Import only on explicit activation; no startup SDK discovery or writes.
+    from .health_pulse import Pulse, bind, SPECS
+    if health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
+        raise ValueError('restore existing features before isolated health experiment')
+    sdk = sys.modules['unrealsdk']
+    functions = [f for f in sdk.find_all('Function', exact=False) if str(f.Name) in SPECS]
+    api = bind(functions, loot_bound)
+    session = bound_session(sdk)
+    _health_pulse = Pulse(lambda: current_session(session), sdk.unreal.WeakPointer,
+                         sdk.unreal.FGameDataHandle, api, time.monotonic, threading.get_ident, report_live)
+    _health_pulse.begin()
+
+
 def request_stop(reason, *, immediate=False):
     global _offline_confirmed, _auto_blocked, _auto_ground
     _offline_confirmed = False
+    stop_health_pulse(reason)
     if _auto_owned or auto_master.value is True:
         _auto_blocked = reason + '; toggle master to retry'
         _auto_ground = None
@@ -997,6 +1039,17 @@ def monitor_tick(*_):
     _monitor_seen = time.monotonic()
     if _backend is not None:
         sync_window_close()
+    if health_active():
+        try:
+            hooks = sys.modules['unrealsdk'].hooks
+            permitted = (mod.is_enabled and _offline_confirmed and not auto_master.value and not _auto_owned
+                         and not conflicting_mods() and hooks.has_hook(_MONITOR_PATH, hooks.Type.POST_UNCONDITIONAL, _MONITOR_ID) is True)
+        except Exception:
+            permitted = False
+        _health_pulse.tick(permitted)
+        return
+    if health_fault():
+        return
     if auto_master.value is True or _auto_owned:
         auto_tick()
         report_auto_status_change()
@@ -1034,7 +1087,7 @@ def monitor_tick(*_):
         hooks = sys.modules['unrealsdk'].hooks
         if not _monitor_registered or hooks.has_hook(_MONITOR_PATH, hooks.Type.POST_UNCONDITIONAL, _MONITOR_ID) is not True:
             raise ValueError('session monitor not registered at execution')
-        if _controller is not None and _controller.fault:
+        if health_fault() or (_controller is not None and _controller.fault):
             raise ValueError('fault latched; exit game')
         execute_activation(key, selection)
     except Exception as exc:
@@ -1046,8 +1099,12 @@ def monitor_tick(*_):
 def activate_feature(key, selection):
     global _activation_request
     try:
-        if _controller is not None and _controller.fault:
+        if health_fault() or (_controller is not None and _controller.fault):
             raise ValueError('fault latched; exit game')
+        if health_active():
+            raise ValueError('stop isolated health recovery first')
+        if key == 'health_pulse' and _controller is not None and _controller.records:
+            raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
         if auto_master.value is True or _auto_owned:
@@ -1079,6 +1136,9 @@ def activate_feature(key, selection):
 def execute_activation(key, selection):
     global _controller
     # Called exclusively by monitor_tick after the explicit queued F8 action.
+    if key == 'health_pulse':
+        begin_health_pulse()
+        return
     if _controller is None or not _controller.records:
         sdk = sys.modules['unrealsdk']
         api = bound_session(sdk)
@@ -1109,6 +1169,8 @@ def set_auto_setting(option, value):
         report_live('HOLD: ' + str(exc)[:120])
         return
     if option is auto_master:
+        if value is True:
+            stop_health_pulse('persistent master enabled')
         _auto_ground = None
         _auto_edits.clear()
         _auto_blocked = ''
@@ -1321,7 +1383,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.14-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.15-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
