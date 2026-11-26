@@ -339,6 +339,29 @@ def validate_lifesteal(pawn, targets):
         raise ValueError('life-steal target above existing cap')
 
 
+
+def lifesteal_peer_context(key, pawn, baseline, targets, tokens):
+    """Pin the untouched rate/fraction and cap for either existing life-steal mode."""
+    from .weapon_rates import nested
+    damage = nested(pawn, 'DamageState', 'OakDamageState')
+    if identity(damage.owner) != identity(pawn):
+        raise ValueError('life-steal owner mismatch')
+    if key == 'lifesteal_fraction':
+        context = validate_lifesteal_fraction(pawn, baseline, targets)
+    elif key == 'lifesteal_rate':
+        fraction = pair(nested(damage, 'lifestealpercent', 'GbxAttributeFloat'))
+        cap = pair(nested(damage, 'lifestealratecap', 'GbxAttributeFloat'))
+        if fraction[0][3] != fraction[1][3] or cap[0][3] != cap[1][3]:
+            raise ValueError('existing life-steal fraction/cap uncertain')
+        if any(v > cap[0][3] for v in (*baseline, *targets)):
+            raise ValueError('life-steal target or baseline above existing cap')
+        context = describe_fields(fraction + cap)[1:]
+    else:
+        raise ValueError('unknown life-steal mode')
+    if set(tokens).intersection(context[0]):
+        raise ValueError('life-steal field aliases untouched peer')
+    return context
+
 def epic(pawn, state):
     # Upstream lists VeryRareModifier and EpicModifier; ambiguous distinct
     # candidates are not safe to guess between. Only exact reflected fields.

@@ -47,7 +47,7 @@ class Recovery(unittest.TestCase):
         self.activate('ammo_regen_rate',2.);self.w.CurrentUseModeIndex=1;self.m.monitor_tick();self.assertEqual(self.vals(self.rate),(2.,2.))
     def test_manual_only(self):
         for k in ('ammo_regen_rate','ammo_regen_delay'):self.assertFalse(self.m.AUTO_OPTIONS[k].value)
-        self.assertNotIn('lifesteal_rate',self.m.AUTO_OPTIONS)
+        self.assertFalse(self.m.AUTO_OPTIONS['lifesteal_rate'].value)
     def test_compatible(self):
         for k in ('ammo_regen_rate','ammo_regen_delay','lifesteal_rate','fire_rate'):self.activate(k,2.)
         self.assertEqual(len(self.m._controller.records),4);self.m.request_stop('test',immediate=True);self.assertEqual((self.vals(self.rate),self.vals(self.delay),self.vals(self.life)),((2.,2.),(4.,4.),(2.,2.)))

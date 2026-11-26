@@ -1,7 +1,7 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
-from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal, validate_lifesteal_fraction, validate_overshield, slide_scale, slide_active
+from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, lifesteal_peer_context, validate_overshield, slide_scale, slide_active
 from . import weapon_rates, inventory_capacity, shield_rates, gadget_rates
 
 
@@ -139,13 +139,13 @@ class Controller:
         fields, values, eligible = self.resolve(record)
         if applying and not eligible:
             raise ValueError('session became ineligible')
-        if applying and record['key'] == 'lifesteal_fraction':
+        if applying and record['key'] in ('lifesteal_rate', 'lifesteal_fraction'):
             if self.stop_pending is not None or self.records.get(record['key']) is not record:
                 raise ValueError('life-steal activation interrupted')
-            if validate_lifesteal_fraction(record['pawn'](), record['baseline'], (value,)) != record['life_context']:
+            if lifesteal_peer_context(record['key'], record['pawn'](), record['baseline'], (value,), record['tokens']) != record['life_context']:
                 raise ValueError('life-steal rate/cap changed')
             fields, values, eligible = self.resolve(record)
-            if not eligible:
+            if not eligible or self.stop_pending is not None or self.records.get(record['key']) is not record:
                 raise ValueError('life-steal scope lost')
         if applying and record['key'] == 'overshield_duration':
             if self.stop_pending is not None or self.records.get(record['key']) is not record:
@@ -283,10 +283,8 @@ class Controller:
                 if not eligible_now:
                     raise ValueError('inventory session became ineligible')
                 inventory_capacity.validate(record['inventory_scope'], count, targets[0], applying=True)
-            if key == 'lifesteal_rate':
-                validate_lifesteal(record['pawn'](), targets)
-            if key == 'lifesteal_fraction':
-                life_context = validate_lifesteal_fraction(record['pawn'](), record['baseline'], targets)
+            if key in ('lifesteal_rate', 'lifesteal_fraction'):
+                life_context = lifesteal_peer_context(key, record['pawn'](), record['baseline'], targets, record['tokens'])
                 if key in self.records and life_context != record['life_context']:
                     raise ValueError('life-steal rate/cap changed')
                 record['life_context'] = life_context
@@ -316,7 +314,7 @@ class Controller:
                 _, checked, still_eligible = self.resolve(record)
                 if not still_eligible or checked != targets or self.stop_pending is not None or self.records.get(key) is not record:
                     raise ValueError('shield scope changed after native readback')
-            if key == 'lifesteal_fraction' and validate_lifesteal_fraction(record['pawn'](), record['baseline'], targets) != record['life_context']:
+            if key in ('lifesteal_rate', 'lifesteal_fraction') and (self.stop_pending is not None or self.records.get(key) is not record or lifesteal_peer_context(key, record['pawn'](), record['baseline'], targets, record['tokens']) != record['life_context']):
                 raise ValueError('life-steal rate/cap changed after write')
             if key == 'overshield_duration' and (self.stop_pending is not None or self.records.get(key) is not record or validate_overshield(record['pawn'](), record['baseline'], targets) != record['overshield_context']):
                 raise ValueError('overshield scope/base changed after write')
@@ -413,9 +411,7 @@ class Controller:
                         return
                     if key in shield_rates.KEYS:
                         shield_rates.validate_readback(record['shield_scope'][0](), key, values[0])
-                    if key == 'lifesteal_rate':
-                        validate_lifesteal(record['pawn'](), values)
-                    if key == 'lifesteal_fraction' and validate_lifesteal_fraction(record['pawn'](), record['baseline'], values) != record['life_context']:
+                    if key in ('lifesteal_rate', 'lifesteal_fraction') and lifesteal_peer_context(key, record['pawn'](), record['baseline'], values, record['tokens']) != record['life_context']:
                         raise ValueError('life-steal rate/cap changed')
                     if key == 'overshield_duration' and validate_overshield(record['pawn'](), record['baseline'], values) != record['overshield_context']:
                         raise ValueError('overshield base changed')

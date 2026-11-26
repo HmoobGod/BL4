@@ -8,7 +8,7 @@ from mods_base import BoolOption, ButtonOption, NestedOption, SliderOption, buil
 from .gameplay_fields import FEATURES, RARITY_KEYS
 from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
-from .gameplay_fields import identity, target_values
+from .gameplay_fields import identity, target_values, lifesteal_peer_context
 from .inventory_capacity import KEYS as CAPACITY_KEYS, resolve as resolve_capacity, validate as validate_capacity
 from .weapon_rates import WEAPON_KEYS, AMMO_KEYS, validate_targets
 from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shield_readback
@@ -62,7 +62,7 @@ CATEGORIES = [
     ('inventory', 'Inventory', [SliderOption(k, 1., 1., 1000., step=1, is_integer=True, display_name=FEATURES[k][0], description='Experimental absolute slots; 1 restores captured original. Never fill above original capacity during testing.') for k in ('backpack_capacity','bank_capacity')]),
     ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement attribute; manual or persistent opt-in; 1x restores. Actual speed/distance unverified.') for k in ('dash_speed', 'glide_speed', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration')], *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Existing positive vault-power cost; lower may reduce consumption. 1x restores. No free energy or new jump actions.') for k in ('double_jump_cost','dash_cost','glide_cost','grapple_cost','slam_cost')], *[SliderOption(k, 1., FEATURES[k][1], FEATURES[k][2], step=.1, is_integer=False, display_name=FEATURES[k][0], description=('Only while exact native slide is active; persistent mode recommended. 1x restores.' if k=='slide_speed' else 'Local movement field only; native effect unverified. 1x restores.')) for k in ('ladder_ascend','ladder_descend','slam_height','ground_friction','braking_friction','slide_speed')], SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
-    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), SliderOption('overshield_duration', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['overshield_duration'][0], description='Existing positive overshield duration only; manual activation; does not grant shields. 1x restores.'), SliderOption('lifesteal_fraction', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['lifesteal_fraction'][0], description='Existing positive normalized life-steal only; manual activation. 1x restores. Restore other life-steal control first.'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental: existing positive native rate only; 1x restores. Weapon ammo, grenade and shield controls support persistent opt-in; player ammo regeneration supports persistent opt-in; life-steal remains manual.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'shield_regen_rate', 'shield_regen_delay', 'grenade_cooldown', 'player_ammo_regen')]]),
+    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), SliderOption('overshield_duration', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['overshield_duration'][0], description='Existing positive overshield duration only; manual activation; does not grant shields. 1x restores.'), SliderOption('lifesteal_fraction', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['lifesteal_fraction'][0], description='Existing positive normalized life-steal only; manual or persistent opt-in. 1x restores. Restore other life-steal control first.'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental: existing positive native rate only; 1x restores. Weapon ammo, grenade and shield controls support persistent opt-in; player ammo regeneration and existing positive life-steal support persistent opt-in.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'shield_regen_rate', 'shield_regen_delay', 'grenade_cooldown', 'player_ammo_regen')]]),
     ('enemies', 'Enemy Difficulty', [slider('enemy_health', 'Enemy health multiplier'), slider('enemy_damage', 'Enemy damage multiplier')]),
     ('menu', 'Custom Menu', [probe]),
 ]
@@ -72,7 +72,8 @@ _COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or (o.identifier i
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Persistent gameplay (experimental)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
-MANUAL_ONLY = frozenset(('sprint', 'lifesteal_rate', 'lifesteal_fraction', 'overshield_duration'))
+MANUAL_ONLY = frozenset(('sprint', 'overshield_duration'))
+LIFE_KEYS = frozenset(('lifesteal_rate', 'lifesteal_fraction'))
 PLAYER_AMMO_KEY = 'player_ammo_regen'
 AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
@@ -91,7 +92,7 @@ _JUMP_EVENT_PATH = '/Script/Engine.Character:OnJumped'
 _JUMP_EVENT_ID = 'bl4_custom_second_jump_event_v0751exp'
 _jump_event_attempted = False
 _jump_event_owned = False
-_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY} | RARITY_KEYS | {'damage'}
+_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY} | RARITY_KEYS | LIFE_KEYS | {'damage'}
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_HIGH_PREF = BoolOption('vacuum_pref_high_gear', False, display_name='Saved vacuum legendary/pearlescent beams only')
@@ -304,6 +305,8 @@ def persistent_feature_status(key):
         return 'Paused / HOLD'
     if key in AMMO_GROUP and ammo_selection_conflict(raw_auto_desired(AMMO_GROUP)):
         return 'HOLD: choose player OR weapon ammo regeneration'
+    if key in LIFE_KEYS and LIFE_KEYS <= set(raw_auto_desired(LIFE_KEYS)):
+        return 'HOLD: choose life-steal rate OR percentage'
     if key in _auto_edits:
         return 'Saving selection...'
     selected = _PREVIEW_BY_KEY[key].value
@@ -312,6 +315,8 @@ def persistent_feature_status(key):
         return 'Restoring' if record else 'Vanilla capacity' if key in CAPACITY_KEYS else '1x / vanilla'
     if record is not None and record.get('selection') == selected:
         return 'Active: ' + str(selected) + (' slots' if key in CAPACITY_KEYS else 'x') + ' (value verified)'
+    if key in LIFE_KEYS:
+        return 'Waiting for supported positive life-steal effect'
     return 'Waiting for exact active slide' if key == 'slide_speed' else 'Waiting for gameplay callback'
 
 
@@ -1604,8 +1609,8 @@ def raw_auto_desired(keys=None):
             record = _controller.records.get(key) if _auto_owned and _controller is not None else None
             if record is not None:
                 desired[key] = record['selection']
-            elif key in AMMO_GROUP and _PREVIEW_BY_KEY[key].value != 1.0:
-                # Preserve committed ammo selection for conflict detection while a draft saves.
+            elif key in AMMO_GROUP | LIFE_KEYS and _PREVIEW_BY_KEY[key].value != 1.0:
+                # Preserve committed mutually exclusive selections while a draft saves.
                 desired[key] = _PREVIEW_BY_KEY[key].value
         elif _PREVIEW_BY_KEY[key].value != 1.0:
             desired[key] = _PREVIEW_BY_KEY[key].value
@@ -1620,9 +1625,11 @@ def auto_desired():
     desired = raw_auto_desired()
     # Refuse ambiguous saved selections rather than silently choosing a winner.
     if ammo_selection_conflict(desired):
-        return {k: v for k, v in desired.items() if k not in AMMO_GROUP}
-    # A draft cannot initiate an inactive ammo modifier.
-    for key in AMMO_GROUP.intersection(_auto_edits):
+        desired = {k: v for k, v in desired.items() if k not in AMMO_GROUP}
+    if LIFE_KEYS <= set(desired):
+        desired = {k: v for k, v in desired.items() if k not in LIFE_KEYS}
+    # A draft cannot initiate an inactive mutually exclusive modifier.
+    for key in (AMMO_GROUP | LIFE_KEYS).intersection(_auto_edits):
         if not (_auto_owned and _controller is not None and key in _controller.records):
             desired.pop(key, None)
     return desired
@@ -1850,6 +1857,24 @@ def auto_tick():
                 if automation_fault():
                     _controller.restore_all('shield assist fault')
                     return
+        if key in LIFE_KEYS:
+            # Wait for a positive existing effect without blocking unrelated fields.
+            try:
+                rec = _controller.records.get(key) or _controller.capture(key)
+                _, values, eligible = _controller.resolve(rec)
+                if not eligible or values != rec['expected']:
+                    continue
+                targets = target_values(key, rec['baseline'], rec['tokens'], selection)
+                peers = lifesteal_peer_context(key, rec['pawn'](), rec['baseline'], targets, rec['tokens'])
+                if key in _controller.records and peers != rec['life_context']:
+                    continue
+            except (AttributeError, TypeError, ValueError):
+                continue
+            if 'health' in _automation_leases:
+                stop_automation_lane('health', 'native life-steal modifier selected; toggle lane to rearm')
+                if automation_fault():
+                    _controller.restore_all('health assist fault')
+                    return
         if key in WEAPON_KEYS:
             # Do not interrupt firing/reloading or block other controls on an unsupported gun.
             # A fresh capture is read-only; activate independently rechecks scope before writing.
@@ -1953,6 +1978,8 @@ def recovery_conflict(kind):
     active = set(_controller.records) if _controller is not None else set()
     if 'healing_received' in selected | active:
         return 'healing multiplier incompatible'
+    if kind == 'health' and LIFE_KEYS.intersection(set(auto_desired()) | active):
+        return 'native life-steal modifier incompatible with flesh assist'
     if kind == 'shield' and SHIELD_KEYS.intersection(selected | active):
         return 'native shield modifier incompatible with shield assist'
     return ''

@@ -79,7 +79,7 @@ class Expansion(unittest.TestCase):
         h=self.p.HealthState;h.owner=self.p;h.RepairKitHealth=attr(20.);h._type=typ('OakCharacterHealthState',desc('RepairKitHealth',h.RepairKitHealth._type))
         self.p.ammoregenrate=attr(2.);prior=list(getattr(self.p.Class,'_properties',lambda:[])());self.p.Class._properties=lambda:prior+[desc('WeaponSwapTimeScale',self.p.WeaponSwapTimeScale._type),desc('HealthState',h._type),desc('ammoregenrate',self.p.ammoregenrate._type)]
         for k in FEATURES:
-            if k in DAMAGE_HOLD or k in self.m.MANUAL_ONLY or k in self.m.WEAPON_KEYS or k in self.m.CAPACITY_KEYS or k in self.m.SHIELD_KEYS or k in (self.m.GADGET_KEY, 'slide_speed'): continue
+            if k in DAMAGE_HOLD or k in self.m.MANUAL_ONLY | self.m.LIFE_KEYS or k in self.m.WEAPON_KEYS or k in self.m.CAPACITY_KEYS or k in self.m.SHIELD_KEYS or k in (self.m.GADGET_KEY, 'slide_speed'): continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,1.2 if k == 'gravity' else 2.)
         self.assertEqual(len(self.m._controller.records),37)

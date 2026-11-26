@@ -10,7 +10,7 @@ class LifeFraction(unittest.TestCase):
     def set(self,obj,v):obj._values.update(Value=v,BaseValue=v)
     def test_neutral(self):self.apply(1.);self.assertEqual(self.p.writes,[])
     def test_default_manual(self):
-        self.assertNotIn('lifesteal_fraction',self.m.AUTO_OPTIONS)
+        self.assertFalse(self.m.AUTO_OPTIONS['lifesteal_fraction'].value)
         self.assertEqual(self.m._PREVIEW_BY_KEY['lifesteal_fraction'].value,1.)
         self.assertEqual(self.p.writes,[])
     def test_scale_update_restore(self):
