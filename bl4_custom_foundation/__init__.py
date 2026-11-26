@@ -944,6 +944,13 @@ def inspect_loot_readonly():
     except Exception as exc:
         lines.append('Read preflight HOLD: ' + type(exc).__name__ + ': ' + str(exc)[:200])
         _loot_status = 'HOLD: rarity compatibility not confirmed; no writes.'
+    # Extend the existing explicit report rather than add a control or polling hook.
+    try:
+        from .luck_categories import observe, report_lines
+        session = bound_session(sys.modules['unrealsdk'])
+        lines.extend(report_lines(observe(lambda: current_session(session))))
+    except Exception as exc:
+        lines.append('Player luck read HOLD: ' + type(exc).__name__ + ': ' + str(exc)[:200])
     try:
         path = loot_report_path()
         _write_report(None if path is None else path.with_name('bl4_custom_loot_read_report.txt'), lines + [_loot_status])
