@@ -81,6 +81,7 @@ class ReloadAssist:
             if state!='Active' or not loaded or min(reserve)<=0:raise ValueError('arm with idle loaded gun and reserve ammo')
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),now+30,now+.1)
             self.previous=loaded;self.empty_seen=False
+            self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
         self.report('EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
@@ -145,6 +146,17 @@ class ReloadAssist:
                 elif self.completed>=10:
                     self.stop('maximum ten distinct requests reached')
                 else:
+                    # A fast reload can start and end between camera samples.
+                    # Observe the original scoped weapon immediately after dispatch.
+                    # A failed observation is not a second request or a dispatch fault.
+                    try:
+                        observed=self.resolve()
+                        if self.record is None:return
+                        if observed[6]=='Reloading':self.saw_reload=True
+                        elif observed[6]!='Active' or observed[3]>0:
+                            self.stop('unconfirmed immediate reload state');return
+                    except Exception as e:
+                        self.stop('post-request observation failed: '+str(e)[:100]);return
                     self.report('EXPERIMENT: reload requested; waiting for native completion')
             except Exception:
                 self.fault=True;self.stop('native reload dispatch uncertain');self.report('FAULT: native reload request uncertain; exit game')
