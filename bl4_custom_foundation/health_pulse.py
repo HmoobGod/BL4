@@ -1,4 +1,4 @@
-"""Opt-in bounded local flesh recovery using existing native health-type handles.
+"""Opt-in bounded local flesh/energy-shield recovery using existing native health-type handles.
 No native timer, no constructed tags, no raw pointers or shared definition edits.
 Historical declarations and SDK wrapper evidence: SOURCES.md.
 """
@@ -42,7 +42,10 @@ def numeric(v):
         raise ValueError('nonfinite health value')
     return float(v)
 
-def select_flesh(pawn, handle_type):
+def select_health(pawn, handle_type, mode):
+    if mode not in ('flesh', 'shield'):
+        raise ValueError('unknown recovery mode')
+    wanted = ('FleshRed', 'IsGeneric') if mode == 'flesh' else ('EnergyBlue', 'IsShield')
     condition=prop(pawn.Class,'HealthCondition','ZEnumProperty')
     if condition.Enum._path_name()!='/Script/OakGame.ECharacterHealthCondition':
         raise ValueError('health condition descriptor mismatch')
@@ -78,22 +81,28 @@ def select_flesh(pawn, handle_type):
         color=enum_name(h.DisplayColor); variation=enum_name(h.Variation)
         if color is None or variation is None:
             raise ValueError('unknown health type classification')
-        if color=='FleshRed' and variation=='IsGeneric':
+        if (color, variation)==wanted:
             choices.append((h,key,st))
     if len(choices)!=1:
-        raise ValueError('unique flesh-only layer unavailable')
+        raise ValueError('unique '+mode+' layer unavailable')
     h,key,st=choices[0]
     cur=numeric(nested(st,'SimpleCurrentHealth','GbxAttributeFloat').Value)
     maximum=numeric(nested(st,'SimpleMaxHealth','GbxAttributeFloat').Value)
-    if not 0<cur<=maximum<=1e9:
+    if not 0<=cur<=maximum<=1e9 or maximum<=0 or (mode=='flesh' and cur<=0):
         raise ValueError('positive living health ratio unavailable')
     return h,key,cur/maximum
 
+def select_flesh(pawn, handle_type):
+    return select_health(pawn, handle_type, 'flesh')
+
 class Pulse:
-    def __init__(self,context,weak,handle_type,api,clock,thread,report):
+    def __init__(self,context,weak,handle_type,api,clock,thread,report,mode='flesh'):
         self.context,self.weak,self.handle_type,self.api=context,weak,handle_type,api
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None; self.fault=False; self.busy=False; self.pending=None
+        if mode not in ('flesh', 'shield'):
+            raise ValueError('unknown recovery mode')
+        self.mode=mode; self.observed=None; self.rises=0
 
     def resolve(self):
         pc,pawn,state,eligible=self.context()
@@ -103,33 +112,35 @@ class Pulse:
             refs,ids,tid,_,_,expected=self.record
             if self.thread()!=tid or any(r() is None or identity(r())!=i or identity(o)!=i for r,i,o in zip(refs,ids,(pc,pawn,state),strict=True)):
                 raise ValueError('original session changed')
-        h,key,ratio=select_flesh(pawn,self.handle_type)
+        h,key,ratio=select_health(pawn,self.handle_type,self.mode)
         layer=self.api[0](pawn,h,False)
         if type(layer) is not int or not 0<=layer<16:
-            raise ValueError('native flesh layer unavailable')
+            raise ValueError('native selected layer unavailable')
         p=numeric(self.api[1](pawn,layer))
         # Only use a normalized getter when its independent simple ratio agrees.
         # No guessing between percent units (community reader observes both possibilities).
-        if not 0<p<=1 or abs(p-ratio)>0.005:
+        if not 0<=p<=1 or (self.mode=='flesh' and p<=0) or abs(p-ratio)>0.005:
             raise ValueError('normalized health readback ambiguous')
         if self.record is not None and (key,layer)!=expected:
-            raise ValueError('flesh layer identity changed')
+            raise ValueError('selected layer identity changed')
         return (pc,pawn,state),h,(key,layer),p
 
     def begin(self):
         if self.record is not None or self.fault or self.busy:
             return False
         try:
-            objs,_,key,_=self.resolve(); now=self.clock()
+            objs,_,key,p=self.resolve(); now=self.clock()
+            self.observed=p; self.rises=0; self.pending=None
             self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+LIFETIME,now+PERIOD,key)
         except Exception as exc:
             self.report('HOLD: health pulse preflight: '+str(exc)[:120]); return False
-        self.report('EXPERIMENT: flesh recovery armed for 30 seconds; no native timer.'); return True
+        self.report('EXPERIMENT: '+self.mode+' recovery armed for 30 seconds; no native timer.'); return True
 
     def stop(self,reason):
         if self.record is not None:
             self.record=None
             self.pending=None
+            self.observed=None; self.rises=0
             self.report('STOP: health pulse '+reason+'; no further healing dispatched.')
 
     def tick(self,permitted):
@@ -153,24 +164,33 @@ class Pulse:
                 self.pending=None
                 if p<=before:
                     self.stop('no positive readback after pulse; effect unconfirmed'); return
+                if self.mode=='shield':
+                    # Own prior pulse could explain this sample. Do not count it as native recharge.
+                    self.observed=p; self.rises=0; return
+            if self.mode=='shield':
+                # Two successive rising samples without a mod pulse. External healing
+                # can still explain the rise; this is not a native recharge-state proof.
+                self.rises=self.rises+1 if self.observed is not None and p>self.observed+0.0001 else 0
+                self.observed=p
+                if self.rises<2 or p<=0 or p>=1: return
             if p>=1: return
             # Recheck the original live identity and flesh handle after native reads.
             try:
                 fresh=self.context()
                 if not fresh[3] or tuple(identity(x) for x in fresh[:3])!=ids:
                     raise ValueError('session changed before refill')
-                fresh_h,fresh_key,fresh_ratio=select_flesh(fresh[1],self.handle_type)
-                if fresh_key!=key[0] or abs(fresh_ratio-p)>0.005:
-                    raise ValueError('flesh identity or value changed before refill')
-                if self.clock()>=end or self.record is None:
+                fresh_h,fresh_key,fresh_ratio=select_health(fresh[1],self.handle_type,self.mode)
+                if fresh_key!=key[0] or abs(fresh_ratio-p)>0.005 or (self.mode=='shield' and fresh_ratio+1e-6<p):
+                    raise ValueError('selected layer identity or value changed before refill')
+                if self.clock()>=end or self.record is None or fresh_ratio>=1:
                     self.stop('lifetime ended before refill'); return
             except Exception as exc:
                 self.stop(str(exc)[:100]); return
             try:
                 # Native refill only; no direct HP edit. MaxPercent is bounded to 1.
-                self.api[2](fresh[1],fresh_h,min(FRACTION,1-p),1.0)
+                self.api[2](fresh[1],fresh_h,min(FRACTION,1-max(p,fresh_ratio)),1.0)
                 if self.record is not None:
-                    self.pending=p
+                    self.pending=max(p,fresh_ratio)
             except Exception:
                 self.fault=True; self.stop('native dispatch uncertain; do not retry')
                 self.report('FAULT: health pulse native dispatch uncertain. Exit game immediately.')

@@ -10,7 +10,7 @@ from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 
-TITLE = 'BL4 Custom - Community Integration v0.7.15-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.16-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -230,7 +230,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.15-experimental')
+    ui.text('BL4 CUSTOM | v0.7.16-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -263,7 +263,7 @@ def draw():
             pause_auto('F8 restore all')
             request_stop('F8 restore all', immediate=True)
     if health_active():
-        ui.text_wrapped('Experimental health recovery armed; maximum 30 seconds. Healing already received is not reversed.')
+        ui.text_wrapped('Experimental recovery armed; maximum 30 seconds. Healing already received is not reversed.')
         if ui.button('Stop health recovery / Restore ALL'):
             request_stop('F8 restore all', immediate=True)
     ui.separator()
@@ -299,9 +299,12 @@ def draw():
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
     if _category == 6:
-        ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL or shield refill. Actual game compatibility unverified.')
+        ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
             activate_feature('health_pulse', 1.0)
+        ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
+        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
+            activate_feature('shield_pulse', 1.0)
     if _category == 8:
         ui.text_wrapped('Change the Open Custom Menu key in the SDK console Keybinds section. Default: F8.')
         ui.text('Current hotkey: ' + str(open_key.key or 'Unbound'))
@@ -472,7 +475,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.15-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.16-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -702,7 +705,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.15-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.16-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -738,7 +741,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v079exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0716exp'
 
 
 def monitor_status():
@@ -772,7 +775,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.15-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.16-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -798,7 +801,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.15-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.16-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -865,7 +868,7 @@ def stop_health_pulse(reason):
         _health_pulse.stop(reason)
 
 
-def begin_health_pulse():
+def begin_health_pulse(mode='flesh'):
     global _health_pulse
     # Import only on explicit activation; no startup SDK discovery or writes.
     from .health_pulse import Pulse, bind, SPECS
@@ -876,7 +879,7 @@ def begin_health_pulse():
     api = bind(functions, loot_bound)
     session = bound_session(sdk)
     _health_pulse = Pulse(lambda: current_session(session), sdk.unreal.WeakPointer,
-                         sdk.unreal.FGameDataHandle, api, time.monotonic, threading.get_ident, report_live)
+                         sdk.unreal.FGameDataHandle, api, time.monotonic, threading.get_ident, report_live, mode=mode)
     _health_pulse.begin()
 
 
@@ -910,7 +913,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v079exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0716exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1103,7 +1106,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key == 'health_pulse' and _controller is not None and _controller.records:
+        if key in ('health_pulse','shield_pulse') and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1136,8 +1139,8 @@ def activate_feature(key, selection):
 def execute_activation(key, selection):
     global _controller
     # Called exclusively by monitor_tick after the explicit queued F8 action.
-    if key == 'health_pulse':
-        begin_health_pulse()
+    if key in ('health_pulse','shield_pulse'):
+        begin_health_pulse('flesh' if key=='health_pulse' else 'shield')
         return
     if _controller is None or not _controller.records:
         sdk = sys.modules['unrealsdk']
@@ -1383,7 +1386,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.15-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.16-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

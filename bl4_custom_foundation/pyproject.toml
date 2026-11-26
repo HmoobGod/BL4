@@ -1,7 +1,7 @@
 [project]
 name = "bl4_custom_foundation"
-version = "0.7.15"
-description = "Experimental local flesh recovery; previous controls preserved."
+version = "0.7.16"
+description = "Experimental local flesh and shield recovery; previous controls preserved."
 authors = [{name = "BL4 Custom Project"}]
 
 [tool.sdkmod]
