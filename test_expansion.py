@@ -64,7 +64,7 @@ class Expansion(unittest.TestCase):
         from bl4_custom_foundation.gameplay_fields import FEATURES
         from bl4_custom_foundation.session_control import DAMAGE_HOLD
         for k in FEATURES:
-            if k in DAMAGE_HOLD or k == 'sprint': continue
+            if k in DAMAGE_HOLD or k in self.m.MANUAL_ONLY: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,1.2 if k == 'gravity' else 2.)
         self.assertEqual(len(self.m._controller.records),18)

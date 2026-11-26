@@ -10,7 +10,7 @@ from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 
-TITLE = 'BL4 Custom - Community Integration v0.7.10-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.11-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -43,7 +43,7 @@ def toggle(identifier, label):
 
 
 CATEGORIES = [
-    ('combat', 'Combat', [slider('damage', 'Damage multiplier'), slider('fire_rate', 'Fire rate multiplier'), slider('reload', 'Reload speed multiplier'), slider('fire_damage', 'Fire damage multiplier'),
+    ('combat', 'Combat', [slider('damage', 'Damage multiplier'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Manual experimental native weapon rate; restore before swapping.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Manual experimental stock reload duration; restore before swapping.'), slider('fire_damage', 'Fire damage multiplier'),
         slider('damage_taken', 'Damage taken multiplier', minimum=0.1), slider('shock_damage', 'Shock damage multiplier'),
         slider('corrosive_damage', 'Corrosive damage multiplier'), slider('cryo_damage', 'Cryo damage multiplier'),
         slider('radiation_damage', 'Radiation damage multiplier')]),
@@ -57,7 +57,7 @@ CATEGORIES = [
     ('inventory', 'Inventory', [slider('capacity', 'Capacity multiplier')]),
     ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
-    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier')]),
+    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier')]),
     ('enemies', 'Enemy Difficulty', [slider('enemy_health', 'Enemy health multiplier'), slider('enemy_damage', 'Enemy damage multiplier')]),
     ('menu', 'Custom Menu', [probe]),
 ]
@@ -65,8 +65,9 @@ PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Persistent gameplay (experimental)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
+MANUAL_ONLY = frozenset(('sprint', 'fire_rate', 'reload', 'repair_health'))
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
-                for k in FEATURES if k not in DAMAGE_HOLD and k != 'sprint'}
+                for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values()]
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 ALL = PREVIEW + [probe] + AUTO_SETTINGS
@@ -225,7 +226,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.10-experimental')
+    ui.text('BL4 CUSTOM | v0.7.11-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -330,6 +331,11 @@ def draw():
             ui.text_wrapped('Experimental sprint-only floor. Restore combined ground speed first. Manual activation only; not an exact speed multiplier.')
             if auto_master.value is True:
                 ui.text('Disable persistent master to use sprint-only mode.')
+                continue
+        if key in ('fire_rate', 'reload', 'repair_health'):
+            ui.text_wrapped('Experimental local instance control; gameplay effect unverified. 1x restores. Restore before switching gear or travel.')
+            if auto_master.value is True:
+                ui.text('Disable persistent master to use this manual experiment.')
                 continue
         if auto_master.value is True:
             option = AUTO_OPTIONS[key]
@@ -454,7 +460,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.10-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.11-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -683,7 +689,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.10-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.11-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -753,7 +759,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.10-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.11-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -779,7 +785,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.10-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.11-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1315,7 +1321,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.10-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.11-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

@@ -1,7 +1,8 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
-from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity
+from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields
+from . import weapon_rates
 
 
 from .ground_speed import floor_target
@@ -32,7 +33,14 @@ class Controller:
         pc, pawn, state, eligible = self.context()
         if not eligible:
             raise ValueError('eligible authoritative one-player session required')
-        _, tokens, baseline = read_fields(key, pawn, state)
+        scope = weapon_rates.capture(pawn, key, self.weak_pointer) if key in weapon_rates.WEAPON_KEYS else None
+        if scope is not None:
+            resolved, active = weapon_rates.resolve(pawn, scope)
+            if not active:
+                raise ValueError('weapon no longer active')
+            _, tokens, baseline = describe_fields(resolved)
+        else:
+            _, tokens, baseline = read_fields(key, pawn, state)
         if key in RARITY_KEYS and any(v <= 0 for v in baseline):
             raise ValueError('positive rarity baseline required before activation')
         if key == 'legendary_weight' and baseline != (1.,):
@@ -46,7 +54,7 @@ class Controller:
         return dict(key=key, pc=self.weak_pointer(pc), pawn=self.weak_pointer(pawn),
                     state=self.weak_pointer(state), pc_id=identity(pc), pawn_id=identity(pawn),
                     state_id=identity(state), tokens=tokens, baseline=baseline,
-                    expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
+                    weapon_scope=scope, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
 
     def resolve(self, record, *, observed=None):
         if self.thread() != record['thread']:
@@ -63,7 +71,13 @@ class Controller:
         # never write a pawn-owned field to a replacement pawn or stale object.
         if record['key'] not in RARITY_KEYS and not same_pawn:
             raise ValueError('original pawn no longer identifiable')
-        fields, tokens, values = read_fields(record['key'], pawn, state)
+        scope = record.get('weapon_scope')
+        if scope is not None:
+            resolved, active = weapon_rates.resolve(pawn, scope)
+            fields, tokens, values = describe_fields(resolved)
+            eligible = eligible and active
+        else:
+            fields, tokens, values = read_fields(record['key'], pawn, state)
         if tokens != record['tokens']:
             raise ValueError('reflected field identity changed')
         return fields, values, eligible and same_pawn
@@ -151,6 +165,8 @@ class Controller:
                 raise ValueError('session or owned value changed')
             targets = (floor_target(record['baseline'], record['tokens'], selection, ground_sprinting, sprint_only=key == 'sprint')
                        if key in GROUND_KEYS else target_values(key, record['baseline'], record['tokens'], selection))
+            if record.get('weapon_scope') is not None:
+                weapon_rates.validate_targets(record['weapon_scope'], targets)
             if values == targets and key not in GROUND_KEYS:
                 self.log('ACTIVE ' + key + ': already ' + repr(targets) + '; no write')
                 return True

@@ -146,7 +146,7 @@ class Batch(unittest.TestCase):
     def test_conflict_while_active(self):
         self.activate('legendary_weight',2);old=sys.modules.get('LootTreadmill');sys.modules['LootTreadmill']=types.SimpleNamespace(mod=types.SimpleNamespace(is_enabled=True));self.addCleanup(self.restore_module,'LootTreadmill',old);self.m.monitor_tick();self.assertEqual(self.f.weight,1)
     def test_settings_only(self):self.m.apply({'legendary_weight':10,'jump':3,'fire_damage':3,'repair_cooldown':.5});self.assertEqual(self.f.writes,[]);self.assertEqual(self.jump.JumpZVelocity,620);self.assertEqual(self.fire.writes,[])
-    def test_unsupported_feature(self):self.activate('fire_rate',2);self.assertEqual(self.fire.writes,[]);self.assertIn('feature HOLD',self.report())
+    def test_unsupported_feature(self):self.activate('cooldown',2);self.assertEqual(self.fire.writes,[]);self.assertIn('feature HOLD',self.report())
     def test_out_of_range(self):self.activate('legendary_weight',11);self.assertEqual(self.f.writes,[])
     def test_bad_fraction(self):self.activate('legendary_weight',2.55);self.assertEqual(self.f.writes,[])
     def test_no_f9(self):self.assertEqual([k.identifier for k in self.m.mod.keybinds],['open_custom_menu'])

@@ -15,6 +15,9 @@ FEATURES = {
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
     'damage': ('Damage multiplier', .5, 5.),
+    'fire_rate': ('Weapon fire rate multiplier (experimental)', .5, 3.),
+    'reload': ('Weapon reload speed multiplier (experimental)', .5, 3.),
+    'repair_health': ('Repair-kit healing amount multiplier', .5, 5.),
     'damage_taken': ('Damage taken multiplier', .1, 5.),
     'shock_damage': ('Shock damage multiplier', .5, 5.),
     'corrosive_damage': ('Corrosive damage multiplier', .5, 5.),
@@ -125,6 +128,14 @@ def recovery(pawn, state):
     return pair(pawn.HealthState.RepairKitCooldown)
 
 
+def repair_health(pawn, state):
+    from .weapon_rates import nested
+    health = nested(pawn, 'HealthState', 'OakCharacterHealthState')
+    if identity(health.owner) != identity(pawn):
+        raise ValueError('repair kit owner mismatch')
+    return pair(nested(health, 'RepairKitHealth', 'GbxAttributeFloat'))
+
+
 def epic(pawn, state):
     # Upstream lists VeryRareModifier and EpicModifier; ambiguous distinct
     # candidates are not safe to guess between. Only exact reflected fields.
@@ -158,6 +169,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
+           'repair_health': repair_health,
            'damage': lambda p, s: pair(p.DamageCauserData.DamageDealtMultiplier),
            'damage_taken': lambda p, s: pair(p.DamageState.DamageTakenMultiplier),
            'shock_damage': lambda p, s: pair(p.ElementalDamageModifiers.ShockModifier),
@@ -174,14 +186,17 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'repair_duration': lambda p, s: pair(p.HealthState.RepairKitDuration)}
 
 
-def read_fields(key, pawn, state):
-    if key not in RESOLVE:
-        raise ValueError('feature HOLD')
-    fields = RESOLVE[key](pawn, state)
+def describe_fields(fields):
     tokens = tuple((identity(o), n, k) for o, n, k, _ in fields)
     if len(set(tokens)) != len(tokens):
         raise ValueError('duplicate field ownership')
     return fields, tokens, tuple(v for _, _, _, v in fields)
+
+
+def read_fields(key, pawn, state):
+    if key not in RESOLVE:
+        raise ValueError('feature HOLD')
+    return describe_fields(RESOLVE[key](pawn, state))
 
 
 def target_values(key, baseline, tokens, selection):
@@ -193,7 +208,7 @@ def target_values(key, baseline, tokens, selection):
         raise ValueError('rarity weight uses 0.1 increments')
     result = []
     for base, (_, _, kind) in zip(baseline, tokens, strict=True):
-        v = base * selection
+        v = base / selection if key == 'reload' else base * selection
         if kind == 'ZFloatProperty':
             v = struct.unpack('<f', struct.pack('<f', v))[0]
         if not math.isfinite(v) or not (0 <= v <= 1e6 if key in ZERO_RARITY_KEYS and selection == 0 else 0 < v <= 1e6):
