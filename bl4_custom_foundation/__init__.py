@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.56-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.57-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -138,6 +138,7 @@ _menu_close_ready = False
 _compact_view = None  # default compact in persistent mode, full in manual mode
 _focus_controls = False  # runtime-only opt-in; no change to saved gameplay options
 _focus_pages = {}
+_action_panels = {}  # runtime-only, independent of feature-row page
 _FOCUS_PAGE_SIZE = 6
 
 
@@ -157,6 +158,24 @@ def focused_options(ui, category, compact, options):
     start = page * _FOCUS_PAGE_SIZE
     return options[start:start + _FOCUS_PAGE_SIZE]
 
+
+
+def visible_action_panels(ui, category, labels):
+    """When reduced rows are selected, render just one action group.
+
+    Navigation changes only presentation; gameplay checks and global stop controls
+    remain in draw/monitor_tick. Full view preserves the original layout.
+    """
+    if not _focus_controls:
+        return frozenset(labels)
+    chosen = _action_panels.get(category, labels[0])
+    if chosen not in labels:
+        chosen = labels[0]
+    for name in labels:
+        if ui.button(name + (' *' if chosen == name else '') + '##action_panel_' + str(category) + '_' + name):
+            chosen = name
+    _action_panels[category] = chosen
+    return frozenset((chosen,))
 
 
 def normalize(option, value):
@@ -314,7 +333,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.56-experimental')
+    ui.text('BL4 CUSTOM | v0.7.57-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -356,6 +375,8 @@ def draw():
         if ui.button('Stop automation / Restore ALL'):
             pause_auto('F8 restore all')
             request_stop('F8 restore all', immediate=True)
+    if _native_overtime_used:
+        ui.text_wrapped('Native timed flesh test attempted: stay offline, do not travel, and exit game after the test.')
     if health_active():
         ui.text_wrapped('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.')
         if ui.button('Stop experimental action / Restore ALL'):
@@ -401,45 +422,50 @@ def draw():
         ui.text('double_jump: '+_automation_status.get('double_jump','Waiting / off'))
         ui.text_wrapped('Experimental second-jump velocity only; actual height unverified. Land before use; toggle lane to rearm after changing scale. First jump and shared goals unchanged.')
     if _category == 5:
+        panels = visible_action_panels(ui, 5, ('Loot Vacuum', 'Automatic reload'))
         if auto_master.value is True:
             ui.text_wrapped('Persistent automation: movement, elemental and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload follows supported idle weapon/mode swaps and waits for reserve recovery between requests. Toggle a stopped lane off/on to rearm.')
             for kind, option in AUTOMATION_OPTIONS.items():
-                if kind not in ('vacuum','reload'): continue
+                if kind not in ('vacuum','reload') or ('Loot Vacuum' if kind == 'vacuum' else 'Automatic reload') not in panels: continue
                 edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
                 if edited: set_auto_setting(option, selected)
                 ui.text(kind+': '+_automation_status.get(kind, 'Waiting / off'))
-        ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only. Completed moves are not reversed.')
-        if not health_active():
-            for kind in _vacuum_filters:
-                edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
-                if edited:
-                    _vacuum_filters[kind] = selected is True
-            edited, selected = ui.checkbox('Gear: legendary/pearlescent beams only##vacuum_high_gear', _vacuum_high_gear)
-            if edited: _vacuum_high_gear = selected is True
-            edited, radius = ui.slider_float('Pickup radius##vacuum_radius', _vacuum_radius, 5., 100., '%.0f m')
-            if edited and type(radius) in (int,float) and math.isfinite(radius):
-                _vacuum_radius = max(5., min(100., radius))
-            if ui.button('Save vacuum preferences'):
-                try:
-                    save_vacuum_preferences(); _status = 'Vacuum preferences saved; active persistent vacuum updates on gameplay callback.'
-                except Exception:
-                    _status = 'Vacuum preferences save failed.'
-            if ui.button('Load saved vacuum preferences'):
-                load_vacuum_preferences()
-            if not health_fault() and auto_master.value is not True and ui.button('Start continuous Loot Vacuum (session only)'):
-                activate_feature('loot_vacuum_continuous', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
-            if not health_fault() and auto_master.value is not True and ui.button('Arm experimental Loot Vacuum (30 sec)'):
-                activate_feature('loot_vacuum', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
-        ui.text_wrapped('Experimental automatic reload: one ordinary native reload request after observed magazine depletion, within 30 seconds.')
-        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm experimental automatic reload (30 sec)'):
-            activate_feature('reload_assist', 1.0)
-        ui.text_wrapped('Continuous experiment: repeat only after observed Reloading and two positive idle samples; 30 sec, max 10 requests. Native completion compatibility unverified.')
-        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm continuous experimental reload (30 sec)'):
-            activate_feature('reload_continuous', 1.0)
+        if 'Loot Vacuum' in panels:
+            ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only. Completed moves are not reversed.')
+            if not health_active():
+                for kind in _vacuum_filters:
+                    edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
+                    if edited:
+                        _vacuum_filters[kind] = selected is True
+                edited, selected = ui.checkbox('Gear: legendary/pearlescent beams only##vacuum_high_gear', _vacuum_high_gear)
+                if edited: _vacuum_high_gear = selected is True
+                edited, radius = ui.slider_float('Pickup radius##vacuum_radius', _vacuum_radius, 5., 100., '%.0f m')
+                if edited and type(radius) in (int,float) and math.isfinite(radius):
+                    _vacuum_radius = max(5., min(100., radius))
+                if ui.button('Save vacuum preferences'):
+                    try:
+                        save_vacuum_preferences(); _status = 'Vacuum preferences saved; active persistent vacuum updates on gameplay callback.'
+                    except Exception:
+                        _status = 'Vacuum preferences save failed.'
+                if ui.button('Load saved vacuum preferences'):
+                    load_vacuum_preferences()
+                if not health_fault() and auto_master.value is not True and ui.button('Start continuous Loot Vacuum (session only)'):
+                    activate_feature('loot_vacuum_continuous', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
+                if not health_fault() and auto_master.value is not True and ui.button('Arm experimental Loot Vacuum (30 sec)'):
+                    activate_feature('loot_vacuum', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
+        if 'Automatic reload' in panels:
+            ui.text_wrapped('Experimental automatic reload: one ordinary native reload request after observed magazine depletion, within 30 seconds.')
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm experimental automatic reload (30 sec)'):
+                activate_feature('reload_assist', 1.0)
+            ui.text_wrapped('Continuous experiment: repeat only after observed Reloading and two positive idle samples; 30 sec, max 10 requests. Native completion compatibility unverified.')
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm continuous experimental reload (30 sec)'):
+                activate_feature('reload_continuous', 1.0)
     if _category == 6:
+        panels = visible_action_panels(ui, 6, ('Recovery', 'Action skills'))
         if auto_master.value is True:
             ui.text_wrapped('Continuous recovery assists: native refill pulses, not native regen-rate or recharge-delay modifiers. Stop on lost scope or ineffective refill; toggle to rearm. Already recovered health is not reversed.')
             for kind in ('health','shield','skill_cooldown','skill_duration'):
+                if ('Recovery' if kind in ('health','shield') else 'Action skills') not in panels: continue
                 option = AUTOMATION_OPTIONS[kind]
                 edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
                 if edited: set_auto_setting(option, selected)
@@ -461,25 +487,32 @@ def draw():
                     follow=SKILL_FOLLOW[kind]
                     edited,selected=ui.checkbox(follow.display_name+'##'+follow.identifier,follow.value is True)
                     if edited:set_auto_setting(follow,selected)
-            ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each requested addition at 1%, checks readback, and requires rearm on mode change. Native effect unverified.')
-            ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct ordinary replacement; changing follow mode requires lane rearm.')
+            if 'Action skills' in panels:
+                ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each requested addition at 1%, checks readback, and requires rearm on mode change. Native effect unverified.')
+            if 'Action skills' in panels:
+                ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct ordinary replacement; changing follow mode requires lane rearm.')
             ui.text_wrapped('Player and weapon ammo regeneration cannot overlap. If both are selected, all ammo regeneration modifiers restore until you choose one.')
-            ui.text_wrapped('Adaptive skill mode uses observed native pool change, capped at 3% per eligible sample; 1x adds nothing. Mode change requires toggling lane to rearm. Not an exact native multiplier.')
-            ui.text_wrapped('Native shield modifiers take priority over the shield pulse assist; flesh recovery remains independent. Restore before changing equipment if possible.')
-            ui.text_wrapped('Skill assists: only unique ordinary skills, no charges or auxiliary pools; not exact cooldown/duration multipliers.')
-        ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
-        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
-            activate_feature('health_pulse', 1.0)
-        ui.text_wrapped('Native timed flesh experiment: one small engine-timed refill per game process. Timer cancellation/expiry unverified; stay offline, do not travel, and exit game after this test.')
-        if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native timed flesh recovery (2 sec)'):
-            activate_feature('health_overtime', 1.0)
-        ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
-        if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
-            activate_feature('shield_pulse', 1.0)
-        ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
-        for mode in ('cooldown','duration'):
-            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental skill '+mode+' assist (30 sec)'):
-                activate_feature('skill_'+mode, 1.0)
+            if 'Action skills' in panels:
+                ui.text_wrapped('Adaptive skill mode uses observed native pool change, capped at 3% per eligible sample; 1x adds nothing. Mode change requires toggling lane to rearm. Not an exact native multiplier.')
+            if 'Recovery' in panels:
+                ui.text_wrapped('Native shield modifiers take priority over the shield pulse assist; flesh recovery remains independent. Restore before changing equipment if possible.')
+            if 'Action skills' in panels:
+                ui.text_wrapped('Skill assists: only unique ordinary skills, no charges or auxiliary pools; not exact cooldown/duration multipliers.')
+        if 'Recovery' in panels:
+            ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
+                activate_feature('health_pulse', 1.0)
+            ui.text_wrapped('Native timed flesh experiment: one small engine-timed refill per game process. Timer cancellation/expiry unverified; stay offline, do not travel, and exit game after this test.')
+            if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native timed flesh recovery (2 sec)'):
+                activate_feature('health_overtime', 1.0)
+            ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
+                activate_feature('shield_pulse', 1.0)
+        if 'Action skills' in panels:
+            ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
+            for mode in ('cooldown','duration'):
+                if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental skill '+mode+' assist (30 sec)'):
+                    activate_feature('skill_'+mode, 1.0)
     if _category == 8:
         ui.text_wrapped('Change the Open Custom Menu key in the SDK console Keybinds section. Default: F8.')
         ui.text('Current hotkey: ' + str(open_key.key or 'Unbound'))
@@ -657,7 +690,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.56-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.57-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -888,7 +921,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.56-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.57-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -958,7 +991,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.56-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.57-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -984,7 +1017,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.56-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.57-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -2026,7 +2059,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.56-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.57-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
