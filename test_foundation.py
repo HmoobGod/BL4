@@ -113,7 +113,7 @@ class Test(unittest.TestCase):
     def open(self): self.install_gui(); self.m.toggle_menu()
     def test_categories(self): self.assertEqual(len(self.m.CATEGORIES),9)
     def test_defaults(self):
-        for o in self.m.ALL: self.assertEqual(o.value, False if isinstance(o,Bool) else 1.0)
+        for o in self.m.ALL: self.assertEqual(o.value, False if isinstance(o,Bool) else (30.0 if o.identifier=='vacuum_pref_radius' else 1.0))
     def test_unique_ids(self): self.assertEqual(len({o.identifier for o in self.m.ALL}),len(self.m.ALL))
     def test_no_game_hooks_commands(self): self.assertEqual((self.m.mod.hooks,self.m.mod.commands),([],[]))
     def test_no_game_imports(self):

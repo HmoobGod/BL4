@@ -6,6 +6,10 @@ def flatten(s):
         if isinstance(t,unittest.TestSuite): yield from flatten(t)
         else: yield t
 unique={t.id():t for t in flatten(suite)}
+from test_vacuum_r26 import Continuous
+for name in Continuous.__dict__:
+    if name.startswith('test_'):
+        t=Continuous(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
