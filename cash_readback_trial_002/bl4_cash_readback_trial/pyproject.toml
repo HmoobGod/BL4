@@ -1,0 +1,11 @@
+[project]
+name = "bl4_cash_readback_trial"
+version = "0.0.2"
+description = "Isolated cash readback trial; not approved for execution or gameplay."
+authors = [{name = "BL4 Custom Project"}]
+
+[tool.sdkmod]
+name = "BL4 Cash Readback Trial (HOLD)"
+supported_games = ["BL4"]
+coop_support = "Incompatible"
+auto_enable = false
