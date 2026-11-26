@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.57-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.58-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -99,9 +99,12 @@ VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., 
 RECOVERY_RATES = {k: SliderOption('recovery_rate_'+k, 1., .1, 1., step=.1, is_integer=False, display_name=k.title()+' recovery (% maximum per pulse)') for k in ('health','shield')}
 SKILL_ADAPTIVE = {k: BoolOption('adaptive_'+k,False,display_name='Adaptive '+k.replace('_',' ')+' assist (native percent cross-check)') for k in ('skill_cooldown','skill_duration')}
 SKILL_NATIVE = {k: BoolOption('native_refill_'+k,False,display_name='Dedicated native refill for '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
+CROSSFIRE_GATE = BoolOption('crossfire_duration_events',False,display_name='Cross-Fire duration: require local start/end events (experimental)')
+_crossfire_hooks = None
+_crossfire_attempted = False
 SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct replacement '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
-ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values())
+ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; opt in to persistent gameplay.'
@@ -333,7 +336,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.57-experimental')
+    ui.text('BL4 CUSTOM | v0.7.58-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -484,12 +487,16 @@ def draw():
                     native=SKILL_NATIVE[kind]
                     edited,selected=ui.checkbox(native.display_name+'##'+native.identifier,native.value is True)
                     if edited:set_auto_setting(native,selected)
+                    if kind=='skill_duration':
+                        edited,selected=ui.checkbox(CROSSFIRE_GATE.display_name+'##'+CROSSFIRE_GATE.identifier,CROSSFIRE_GATE.value is True)
+                        if edited:set_auto_setting(CROSSFIRE_GATE,selected)
                     follow=SKILL_FOLLOW[kind]
                     edited,selected=ui.checkbox(follow.display_name+'##'+follow.identifier,follow.value is True)
                     if edited:set_auto_setting(follow,selected)
             if 'Action skills' in panels:
                 ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each requested addition at 1%, checks readback, and requires rearm on mode change. Native effect unverified.')
             if 'Action skills' in panels:
+                ui.text_wrapped('Cross-Fire event gate: dedicated adaptive duration only; follow OFF; wait for a new activation after arming. Other skills are not admitted in this mode.')
                 ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct ordinary replacement; changing follow mode requires lane rearm.')
             ui.text_wrapped('Player and weapon ammo regeneration cannot overlap. If both are selected, all ammo regeneration modifiers restore until you choose one.')
             if 'Action skills' in panels:
@@ -690,7 +697,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.57-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.58-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -921,7 +928,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.57-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.58-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -991,7 +998,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.57-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.58-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -1017,7 +1024,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.57-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.58-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1914,15 +1921,71 @@ def recovery_conflict(kind):
     return ''
 
 
+def crossfire_hooks_live():
+    if _crossfire_hooks is None:return False
+    hooks=sys.modules['unrealsdk'].hooks
+    return all(hooks.has_hook(path,kind,tag) is True for path,kind,tag in _crossfire_hooks[1])
+
+
+def crossfire_event(obj,starting):
+    lease=_automation_leases.get('skill_duration')
+    if (lease is None or lease.record is None or getattr(lease,'event_class',None) is None
+            or _monitor_thread!=threading.get_ident()):return
+    try:
+        if not crossfire_hooks_live():return
+        # No SDK getters or game mutations from this callback. Start events
+        # only record a witness; the normal monitor still validates scope.
+        lease.observe_event(obj,starting)
+    except Exception:
+        lease.event_active=False;lease.event_epoch+=1
+
+
+def ensure_crossfire_events():
+    global _crossfire_attempted,_crossfire_hooks
+    from .skill_pulse import CROSSFIRE_CLASS,CROSSFIRE_EVENTS
+    sdk=sys.modules['unrealsdk'];hooks=sdk.hooks
+    functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in CROSSFIRE_EVENTS]
+    found=[]
+    for name in CROSSFIRE_EVENTS:
+        path=CROSSFIRE_CLASS+':'+name
+        matches=[f for f in functions if f._path_name()==path]
+        if len(matches)!=1:raise ValueError('Cross-Fire event missing or ambiguous')
+        fn=matches[0]
+        if fn.NumParams!=0 or tuple(fn._properties()) or fn.Outer._path_name()!=CROSSFIRE_CLASS:
+            raise ValueError('Cross-Fire event signature mismatch')
+        found.append(fn)
+    owner=identity(found[0].Outer)
+    if identity(found[1].Outer)!=owner:raise ValueError('Cross-Fire event owner mismatch')
+    fn_ids=tuple(identity(f) for f in found)
+    if _crossfire_attempted:
+        if not crossfire_hooks_live() or _crossfire_hooks[0]!=owner or _crossfire_hooks[2]!=fn_ids:raise ValueError('Cross-Fire hooks unavailable; restart game')
+        return owner
+    specs=tuple((f._path_name(),kind,'bl4_custom_crossfire_r60_'+str(i))
+                for i,(f,kind) in enumerate(zip(found,(hooks.Type.POST,hooks.Type.PRE),strict=True)))
+    if any(hooks.has_hook(*spec) is not False for spec in specs):raise ValueError('Cross-Fire hook identifier conflict')
+    _crossfire_attempted=True
+    # A partially registered pair stays inert and is never treated as owned.
+    for i,spec in enumerate(specs):
+        cb=(lambda obj,*_:crossfire_event(obj,True)) if i==0 else (lambda obj,*_:crossfire_event(obj,False))
+        added=hooks.add_hook(*spec,cb)
+        if type(added) is not bool or hooks.has_hook(*spec) is not True:raise ValueError('Cross-Fire hook registration failed; restart game')
+    _crossfire_hooks=(owner,specs,fn_ids)
+    return owner
+
+
 def make_automation_lane(kind, session):
     sdk = sys.modules['unrealsdk']
     adaptive_mode = kind in SKILL_ADAPTIVE and SKILL_ADAPTIVE[kind].value is True
     native_mode = kind in SKILL_NATIVE and SKILL_NATIVE[kind].value is True
     follow_mode = kind in SKILL_FOLLOW and SKILL_FOLLOW[kind].value is True
+    event_mode = kind=='skill_duration' and CROSSFIRE_GATE.value is True
     jump_rate = normalize(DOUBLE_JUMP_RATE,DOUBLE_JUMP_RATE.value) if kind=='double_jump' else None
     def context():
         if kind=='double_jump' and (DOUBLE_JUMP_RATE.identifier in _auto_edits or normalize(DOUBLE_JUMP_RATE,DOUBLE_JUMP_RATE.value)!=jump_rate):
             raise ValueError('double jump scale changed; toggle lane to rearm')
+        if kind=='skill_duration':
+            if (CROSSFIRE_GATE.value is True)!=event_mode:raise ValueError('Cross-Fire event mode changed')
+            if event_mode and not crossfire_hooks_live():raise ValueError('Cross-Fire event hooks lost')
         if kind in SKILL_ADAPTIVE:
             if (SKILL_NATIVE[kind].value is True)!=native_mode:
                 raise ValueError('native refill mode changed')
@@ -1962,7 +2025,9 @@ def make_automation_lane(kind, session):
         mode=kind.split('_',1)[1]
         extra=bind_action_percent(functions,loot_bound,mode,ref) if adaptive else None
         native=bind_native_refill(functions,loot_bound,mode,ref) if native_mode else None
-        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,continuous=True,adaptive_api=extra,rate=normalize(SKILL_RATES[kind],SKILL_RATES[kind].value),soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None),follow=follow_mode,native_refill=native)
+        if event_mode and (native is None or follow_mode):raise ValueError('Cross-Fire event gate requires dedicated adaptive duration and follow OFF')
+        event_class=ensure_crossfire_events() if event_mode else None
+        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,continuous=True,adaptive_api=extra,rate=normalize(SKILL_RATES[kind],SKILL_RATES[kind].value),soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None),follow=follow_mode,native_refill=native,event_class=event_class)
     if kind != 'reload': raise ValueError('unknown automation lane')
     from .reload_assist import ReloadAssist, bind, SPECS
     functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
@@ -2006,6 +2071,8 @@ def automation_tick():
                 if kind in RECOVERY_RATES and callable(getattr(lease,'update_rate',None)):
                     rate=RECOVERY_RATES[kind]
                     lease.update_rate(normalize(rate,rate.value))
+                if kind=='skill_duration' and (getattr(lease,'event_class',None) is not None)!=(CROSSFIRE_GATE.value is True):
+                    stop_automation_lane(kind,'Cross-Fire event mode changed; toggle lane to rearm');continue
                 if kind in SKILL_ADAPTIVE and hasattr(lease,'adaptive_api'):
                     if (getattr(lease,'native_refill',None) is not None)!=(SKILL_NATIVE[kind].value is True):
                         stop_automation_lane(kind,'native refill mode changed; toggle lane to rearm');continue
@@ -2021,6 +2088,8 @@ def automation_tick():
                     return
                 if lease.record is None:
                     stop_automation_lane(kind,'lease ended; toggle lane to rearm')
+                elif kind=='skill_duration' and getattr(lease,'event_class',None) is not None:
+                    _automation_status[kind] = 'Observed Cross-Fire active (gameplay unverified)' if lease.event_active else 'Waiting for a new local Cross-Fire activation'
                 elif kind in SKILL_FOLLOW and getattr(lease,'follow',False):
                     _automation_status[kind] = 'Waiting: distinct skill replacement witness' if lease.follow_candidate is not None else 'Armed (gameplay unverified)'
                 continue
@@ -2059,7 +2128,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.57-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.58-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
@@ -2075,7 +2144,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values()], display_name='Adaptive skill assist (experimental)')]
+options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
 options += [NestedOption('menu', [ButtonOption('open_from_menu', display_name='Open Graphical Menu', on_press=toggle_menu)], display_name='Custom Menu'),

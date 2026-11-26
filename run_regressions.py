@@ -148,6 +148,10 @@ from test_f8_panels_r59 import ActionPanels
 for name in ActionPanels.__dict__:
     if name.startswith('test_'):
         t=ActionPanels(name);unique[t.id()]=t
+from test_crossfire_r60 import Crossfire
+for name in Crossfire.__dict__:
+    if name.startswith('test_'):
+        t=Crossfire(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

@@ -49,6 +49,10 @@ def bind_action_percent(functions, existing, mode, ref_type):
 
 NATIVE_REFILL_NAMES=('RefillCooldownInternal','RefillDurationInternal')
 REFILL_ENUM='/Script/OakGame.EOakActionSkillResourceRefillMode'
+# Factual event identifiers observed in the supplied Cross-Fire reference.
+CROSSFIRE_CLASS='/Game/DLC/Cowbell/PlayerCharacters/RoboDealer/ActionSkills/CrossFire/Scripts/SkillScript_Robo_Crossfire.SkillScript_Robo_Crossfire_C'
+CROSSFIRE_EVENTS=('K2Node_GbxSkillStateEvent_Enabled_5_S_General_Active_Enabled',
+                  'K2Node_GbxSkillStateEvent_Enabled_7_S_General_Ending_Enabled')
 
 def bind_native_refill(functions, existing, mode, ref_type):
     """Dedicated component-scoped action-skill API; never call pawn and controller together."""
@@ -157,7 +161,7 @@ def candidates(skill,pawn,ht,inline,soft_identifier=None):
     return out
 
 class SkillPulse:
-    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False,native_refill=None):
+    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False,native_refill=None,event_class=None):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
         self.context,self.weak,self.ht,self.inline,self.construct,self.ref_type,self.api,self.find=context,weak,ht,inline,construct,ref_type,api,find
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
@@ -168,8 +172,23 @@ class SkillPulse:
         if adaptive_api is not None and (not self.continuous or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
         if native_refill is not None and (adaptive_api is None or not callable(native_refill)):raise ValueError('native refill requires adaptive cross-checks')
         self.native_refill=native_refill
+        if event_class is not None and (mode!='duration' or native_refill is None or self.follow):
+            raise ValueError('Cross-Fire lifecycle requires dedicated adaptive duration and follow OFF')
+        self.event_class=event_class;self.event_active=False;self.event_epoch=0
         self.adaptive_api=adaptive_api;self.rate=2.;self.sample_at=None;self.last_delta=None
         self.update_adaptive_rate(rate)
+    def observe_event(self,script,starting):
+        # Observation only. Never dispatch from an event hook. An ending event
+        # must invalidate even if it occurs reentrantly inside a pool getter.
+        if self.event_class is None or self.record is None:return
+        refs,ids,tid,_,_,_=self.record
+        if (self.thread()!=tid or refs[4]() is None or identity(refs[4]())!=ids[4]
+                or identity(script)!=ids[4] or script.Class._path_name()!=CROSSFIRE_CLASS
+                or identity(script.Class)!=self.event_class):return
+        self.event_epoch+=1
+        self.event_active=starting is True and not self.busy
+        self.prev=None;self.sample_at=None;self.rises=0;self.last_delta=None;self.pending=None
+
     def update_adaptive_rate(self,rate):
         if type(rate) not in (int,float) or not math.isfinite(rate) or not 1.<=rate<=3.: raise ValueError('adaptive skill rate out of range')
         if rate!=self.rate:
@@ -237,6 +256,8 @@ class SkillPulse:
         found=[(s,c) for s in owned for c in candidates(s,pawn,self.ht,self.inline,self.soft_identifier)]
         if len(found)!=1: raise ValueError('unique ordinary action skill unavailable')
         skill,(script,g,cid,resources,keys,origin)=found[0]
+        if self.event_class is not None and (script.Class._path_name()!=CROSSFIRE_CLASS or identity(script.Class)!=self.event_class):
+            raise ValueError('exact Cross-Fire script required')
         k=(identity(skill),identity(script),cid,keys,origin)
         if not initial and k!=key: raise ValueError('skill component or pool changed')
         ref=self.construct(self.ref_type,Context=script,ComponentID=g)
@@ -264,19 +285,19 @@ class SkillPulse:
         try:
             objs,key,_,_,v=self.resolve(True);now=self.clock()
             self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),math.inf if self.continuous else now+30,now+1,key)
-            self.prev=v;self.pending=None;self.rises=0;self.sample_at=now;self.last_delta=None;self.follow_candidate=None
+            self.prev=v;self.pending=None;self.rises=0;self.sample_at=now;self.last_delta=None;self.follow_candidate=None;self.event_active=False
         except Exception as e:self.report('HOLD: skill assist '+str(e)[:120]);return False
         self.report('EXPERIMENT: '+self.mode+' assist armed '+('for this session' if self.continuous else 'for 30 seconds'));return True
     def stop(self,reason):
         if self.record is not None:
-            self.record=None;self.pending=None;self.prev=None;self.rises=0;self.sample_at=None;self.last_delta=None;self.follow_candidate=None
+            self.record=None;self.pending=None;self.prev=None;self.rises=0;self.sample_at=None;self.last_delta=None;self.follow_candidate=None;self.event_active=False;self.event_epoch+=1
             self.report('STOP: skill assist '+reason+'; no future refill; recovered resource not reversed')
     def tick(self,permitted):
         if self.record is None or self.busy:return
         now=self.clock();refs,ids,tid,end,due,key=self.record
         if not permitted or self.thread()!=tid or now>=end:self.stop('permission/thread/lifetime ended');return
         if now<due:return
-        snapshot=self.record;self.busy=True
+        snapshot=self.record;epoch=self.event_epoch;self.busy=True
         try:
             try:
                 if self.follow_replacement(snapshot):return
@@ -285,7 +306,18 @@ class SkillPulse:
             if self.record is not snapshot:return
             self.record=(refs,ids,tid,end,now+1,key)
             idx=0 if self.mode=='cooldown' else 1
+            if self.event_class is not None and (not self.event_active or epoch!=self.event_epoch or self.prev is None):
+                self.prev=v if self.event_active else None
+                self.sample_at=now if self.event_active else None
+                self.rises=0;self.last_delta=None;return
             p=v[idx];old=self.prev[idx];self.prev=v
+            # A depleted duration or unexplained upward jump is a conservative
+            # end/reset witness, even when the named end event was missed.
+            # Ignore only the first sample after our own verified refill.
+            if self.event_class is not None and (p<=.05 or (self.pending is None and p>old+.005)):
+                self.event_active=False;self.event_epoch+=1
+                self.prev=None;self.pending=None;self.sample_at=None;self.rises=0;self.last_delta=None
+                return
             elapsed=None if self.sample_at is None else now-self.sample_at
             self.sample_at=now
             if self.pending is not None:
@@ -320,6 +352,7 @@ class SkillPulse:
                     # No native cap parameter: limit requested addition and verify immediately.
                     amount=min(amount,.01)
                 cap=min(.95,freshp+amount)
+                if self.event_class is not None and (not self.event_active or epoch!=self.event_epoch):return
                 if self.native_refill is not None:
                     self.native_refill(fresh[2],cap-freshp,0) # historical Normal=0; no retry
                 else:self.api[3](fresh[2],fresh[3][idx],cap-freshp,cap)
@@ -336,6 +369,8 @@ class SkillPulse:
                         raise ValueError('other skill resource changed during dedicated refill')
                 if after>cap+.005:raise ValueError('refill exceeded cap')
                 if after<=freshp:self.stop('refill readback ineffective');return
+                if self.event_class is not None and epoch!=self.event_epoch:
+                    self.prev=None;self.sample_at=None;self.pending=None;self.rises=0;self.last_delta=None;return
                 self.pending=True;self.rises=0;self.last_delta=None
             except Exception:
                 self.fault=True;self.stop('native dispatch/readback uncertain');self.report('FAULT: skill assist; exit game')
