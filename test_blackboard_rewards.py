@@ -19,7 +19,7 @@ class RewardTests(unittest.TestCase):
         for n,(lib,sig) in R.SPECS.items():
             ps=[p(k,kind) for k,kind in sig]
             for d in ps:
-                if type(d).__name__==R.S:d.Struct=self.entry if d.Name=='BlackboardKey' else self.param
+                if type(d).__name__==R.S:d.Struct=self.entry if d.Name in ('BlackboardKey','A','B') else self.param
                 if type(d).__name__==R.O:d.PropertyClass=Node(Name='/Script/CoreUObject.Object')
             self.fs.append(Node(Name=n,Outer=Node(Name=R.ENGINE+lib),NumParams=len(ps),_properties=lambda ps=ps:ps,_path_name=lambda n=n,lib=lib:R.ENGINE+lib+':'+n))
         self.binding=self.bind()
@@ -34,14 +34,16 @@ class RewardTests(unittest.TestCase):
         if n=='GetBlackboardParamPure':return lambda k,pawn,report:(self.param_obj(*self.values.get(k.Name,('None',0.))),k)
         if n=='GetBlackboardFloatPure':return lambda k,pawn,report:(float(self.values.get(k.Name,('None',0.))[1]),k)
         if n=='GetValueOfAttribute':return lambda key,pawn,default:self.values.get(key,('None',default))[1]
-        if n=='SetBlackboardParam':return self.write
+        if n=='EqualEqual_GbxBlackboardEntryRef':return lambda a,b:(a.Name==b.Name and getattr(a,'marker',None)==getattr(b,'marker',None),a,b)
+        if n=='SetBlackboardFloat':return self.write
         raise AssertionError(n)
     def write(self,k,p,pawn):
         assert pawn is self.pawn
-        self.calls.append((k.Name,p.kind,p.v));self.values[k.Name]=(p.kind,p.v)
+        assert k is self.defs.definitions[k.Name].Value.Variable
+        self.calls.append((k.Name,'Float',p));self.values[k.Name]=('Float',p)
         if self.peer_drift and len(self.calls)==1:self.values[next(n for n in self.values if n!=k.Name)]=('Float',99.)
         if self.corrupt and len(self.calls)==1:return None
-        return Ellipsis,k,p
+        return Ellipsis,k
     def lane(self,key='progress_enemy_xp',scale=2.):return self.R.Trial(key,scale,self.binding,lambda:(self.pc,self.pawn,self.state,self.ok),lambda o:lambda:o,lambda:self.time,lambda:self.tid,self.messages.append,lambda:self.permission)
     def tick(self,lane,dt=.6,permit=True):self.time+=dt;lane.tick(permit)
     def cycle(self,key):
@@ -117,3 +119,24 @@ class RewardTests(unittest.TestCase):
             if v==2.:self.values[l.name]=('Float',3.)
             return old(v)
         self.binding.make_float=change;self.tick(l);self.assertFalse(self.calls)
+
+    def test_exact_resolver_key_not_reconstructed(self):
+        l=self.lane();key=self.defs.definitions[l.name].Value.Variable;key.marker=51
+        old=self.binding.make
+        def reserved_only(typ,Name):
+            self.assertNotIn(Name,self.R.TARGETS.values());return old(typ,Name=Name)
+        self.binding.make=reserved_only;self.cycle('progress_enemy_xp')
+    def test_native_key_comparator_must_distinguish_missing(self):
+        self.binding.calls['EqualEqual_GbxBlackboardEntryRef']=lambda a,b:(True,a,b)
+        self.assertFalse(self.lane().begin());self.assertFalse(self.calls)
+    def test_native_key_echo_wrong_opaque_identity(self):
+        old=self.binding.calls['GetBlackboardParamPure']
+        def bad(k,pawn,report):
+            p,echo=old(k,pawn,report)
+            if k.Name in self.values:echo=self.key(k.Name);echo.marker=7
+            return p,echo
+        self.binding.calls['GetBlackboardParamPure']=bad
+        self.assertFalse(self.lane().begin());self.assertFalse(self.calls)
+    def test_setter_uses_only_native_float(self):
+        self.assertNotIn('SetBlackboardParam',self.binding.calls)
+        self.cycle('progress_money')

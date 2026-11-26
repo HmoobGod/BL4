@@ -17,7 +17,8 @@ S='ZStructProperty'; O='ZObjectProperty'; F='ZFloatProperty'; N='ZNameProperty';
 SPECS={
  'GetBlackboardParamPure':('GbxBlackboardBlueprintLibrary',(('BlackboardKey',S),('OwnerContext',O),('bReportIfMissing','ZBoolProperty'),('ReturnValue',S))),
  'GetBlackboardFloatPure':('GbxBlackboardBlueprintLibrary',(('BlackboardKey',S),('OwnerContext',O),('bReportIfMissing','ZBoolProperty'),('ReturnValue',F))),
- 'SetBlackboardParam':('GbxBlackboardBlueprintLibrary',(('BlackboardKey',S),('Value',S),('OwnerContext',O))),
+ 'SetBlackboardFloat':('GbxBlackboardBlueprintLibrary',(('BlackboardKey',S),('Value',F),('OwnerContext',O))),
+ 'EqualEqual_GbxBlackboardEntryRef':('GbxBlackboardBlueprintLibrary',(('A',S),('B',S),('ReturnValue','ZBoolProperty'))),
  'Conv_FloatToGbxParam':('GbxParamBlueprintLibrary',(('Value',F),('ReturnValue',S))),
  'Conv_IntToGbxParam':('GbxParamBlueprintLibrary',(('Value','ZIntProperty'),('ReturnValue',S))),
  'Conv_DoubleToGbxParam':('GbxParamBlueprintLibrary',(('Value','ZDoubleProperty'),('ReturnValue',S))),
@@ -47,7 +48,7 @@ class Binding:
             for p in ps:
                 if type(p).__name__==O and p.PropertyClass._path_name()!='/Script/CoreUObject.Object':raise ValueError('unexpected owner argument')
                 if type(p).__name__==S:
-                    expected=ENTRY if str(p.Name)=='BlackboardKey' else PARAM
+                    expected=ENTRY if str(p.Name) in ('BlackboardKey','A','B') else PARAM
                     if p.Struct._path_name()!=expected:raise ValueError('unexpected parameter struct')
                     old=self.types.setdefault(expected,p.Struct)
                     if identity(old)!=identity(p.Struct):raise ValueError('parameter type identity differs')
@@ -56,11 +57,13 @@ class Binding:
         if type(obj) is not self.wrapper or obj._type._path_name()!=path or identity(obj._type)!=identity(self.types[path]):raise ValueError('unexpected returned native struct')
         return obj
     def key(self,name):
+        if name in TARGETS.values():return self.resolve_definition(name)[1]
+        if name not in (MISSING,MISSING+'_B'):raise ValueError('unsupported reward key')
         prop(self.types[ENTRY],'Name',N)
         result=self.check(self.make(self.types[ENTRY],Name=name),ENTRY)
         if result.Name!=name:raise ValueError('blackboard key mismatch')
         return result
-    def definition(self,name):
+    def resolve_definition(self,name):
         d=self.def_type(name,self.def_struct,True)
         if type(d) is not self.def_type or d._name!=name or identity(d._type)!=identity(self.def_struct):raise ValueError('unresolved reward definition')
         for k in ('Context','Value'):prop(d._type,k,'ZGbxInlineStructProperty')
@@ -68,10 +71,18 @@ class Binding:
         if c._type._path_name()!=ENGINE+'GbxBlackboardOwnerContextResolver' or v._type._path_name()!=ENGINE+'GbxBlackboardValueResolver':raise ValueError('not an exact blackboard resolver')
         k=struct(v,'Variable',ENTRY)
         if k.Name!=name:raise ValueError('reward variable mismatch')
-        return (identity(d),identity(c._type),identity(v._type),name)
+        return (identity(d),identity(c._type),identity(v._type),name),self.check(k,ENTRY)
+    def definition(self,name):return self.resolve_definition(name)[0]
+    def keys_equal(self,a,b):
+        a,b=self.check(a,ENTRY),self.check(b,ENTRY)
+        r=self.calls['EqualEqual_GbxBlackboardEntryRef'](a,b)
+        if type(r) is not tuple or len(r)!=3 or type(r[0]) is not bool or self.check(r[1],ENTRY).Name!=a.Name or self.check(r[2],ENTRY).Name!=b.Name:raise ValueError('unexpected native key comparison')
+        return r[0]
+    def echo(self,key,returned):
+        return self.check(returned,ENTRY).Name==key.Name and self.keys_equal(key,returned) is True
     def get(self,name,pawn):
-        r=self.calls['GetBlackboardParamPure'](self.key(name),pawn,False)
-        if type(r) is not tuple or len(r)!=2 or self.check(r[1],ENTRY).Name!=name:raise ValueError('unexpected blackboard read tuple')
+        key=self.key(name);r=self.calls['GetBlackboardParamPure'](key,pawn,False)
+        if type(r) is not tuple or len(r)!=2 or not self.echo(key,r[1]):raise ValueError('unexpected blackboard read tuple')
         return self.check(r[0],PARAM)
     def fingerprint(self,p):
         self.check(p,PARAM)
@@ -95,11 +106,13 @@ class Binding:
         # absent representation. No guessed existing-entry creation/clearing.
         names=(MISSING,MISSING+'_B')
         fps=[]
+        keys=tuple(self.key(n) for n in names)
+        if self.keys_equal(keys[0],keys[0]) is not True or self.keys_equal(*keys) is not False:raise ValueError('native key equality not calibrated')
         for n in names:
             fp=self.fingerprint(self.get(n,pawn))
             if not all(not x.strip() or re.fullmatch(r'\s*(?:none|invalid|unset|null|empty)\s*',x,re.I) for x in fp):raise ValueError('missing entry representation is ambiguous')
-            r=self.calls['GetBlackboardFloatPure'](self.key(n),pawn,False)
-            if type(r) is not tuple or len(r)!=2 or self.check(r[1],ENTRY).Name!=n or type(r[0]) not in (float,int) or r[0]!=0:raise ValueError('missing entry scalar semantics are ambiguous')
+            key=self.key(n);r=self.calls['GetBlackboardFloatPure'](key,pawn,False)
+            if type(r) is not tuple or len(r)!=2 or not self.echo(key,r[1]) or type(r[0]) not in (float,int) or r[0]!=0:raise ValueError('missing entry scalar semantics are ambiguous')
             fps.append(fp)
         if fps[0]!=fps[1]:raise ValueError('missing entry witnesses disagree')
         return fps[0]
@@ -109,16 +122,20 @@ class Binding:
         if type(r) is not tuple or len(r)!=2 or self.fingerprint(self.check(r[1],PARAM))!=self.fingerprint(p):raise ValueError('native parameter float conversion response uncertain')
         return number(r[0])
     def read(self,name,pawn,missing):
-        p=self.get(name,pawn);r=self.calls['GetBlackboardFloatPure'](self.key(name),pawn,False)
-        if type(r) is not tuple or len(r)!=2 or self.check(r[1],ENTRY).Name!=name:raise ValueError('unexpected typed float read tuple')
+        p=self.get(name,pawn);key=self.key(name);r=self.calls['GetBlackboardFloatPure'](key,pawn,False)
+        if type(r) is not tuple or len(r)!=2 or not self.echo(key,r[1]):raise ValueError('unexpected typed float read tuple')
         v=number(r[0]);a=number(self.calls['GetValueOfAttribute'](name,pawn,-123456.))
         if not near(v,a):raise ValueError('attribute and blackboard value disagree')
         fp=self.typed_float(p,v,missing)
         if not near(v,self.decoded_float(p,pawn)):raise ValueError('native parameter float disagrees with blackboard value')
         return v,fp,p
-    def write(self,name,pawn,p):
-        r=self.calls['SetBlackboardParam'](self.key(name),self.check(p,PARAM),pawn)
-        if type(r) is not tuple or len(r)!=3 or r[0] is not Ellipsis or self.check(r[1],ENTRY).Name!=name or self.fingerprint(self.check(r[2],PARAM))!=self.fingerprint(p):raise ValueError('native setter response uncertain')
+    def write(self,name,pawn,v,expected_definition):
+        # Native Float setter avoids copying the opaque FGbxParam into a write call.
+        # Never fall back to another setter after an uncertain dispatch.
+        definition,key=self.resolve_definition(name)
+        if definition!=expected_definition:raise ValueError('reward definition changed before dispatch')
+        r=self.calls['SetBlackboardFloat'](key,number(v),pawn)
+        if type(r) is not tuple or len(r)!=2 or r[0] is not Ellipsis or not self.echo(key,r[1]):raise ValueError('native float setter response uncertain')
 
 class Trial:
     def __init__(self,mode,scale,binding,context,weak,clock,thread,report,permission):
@@ -163,7 +180,7 @@ class Trial:
     def cleanup(self,s):
         if not self.matches(s,self.target,self.target_fp):raise ValueError('owned reward value changed; no overwrite')
         self.owned=False # never retry setter after dispatch
-        self.binding.write(self.name,s[0][1],self.base[4])
+        self.binding.write(self.name,s[0][1],self.base[2],self.base[0])
         now=self.stable()
         if not self.matches(now,self.base[2],self.base[3]) or now[6]!=self.base[5]:raise ValueError('original reward or peer restoration unverified')
         self.phase='verify';self.due=self.clock()+.2
@@ -183,7 +200,7 @@ class Trial:
                 if (not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5] or self.stop_requested
                         or self.clock()>=self.record[3] or self.permission() is not True):raise ValueError('reward scope or permission changed during target construction')
                 self.phase='active';self.owned=True
-                self.binding.write(self.name,s[0][1],p);s=self.stable()
+                self.binding.write(self.name,s[0][1],self.target,self.base[0]);s=self.stable()
                 if not self.matches(s,self.target,self.target_fp) or s[6]!=self.base[5]:raise ValueError('native reward change or peer isolation unverified')
                 self.due=self.clock()+.5;self.report('EXPERIMENT: '+self.name+' value changed; actual earned reward unverified.')
                 if self.stop_requested or self.permission() is not True:self.cleanup(s)
