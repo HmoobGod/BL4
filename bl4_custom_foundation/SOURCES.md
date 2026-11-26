@@ -53,22 +53,17 @@ Existing community-derived field paths and licenses remain unchanged. Direct sou
 ## R6 v0.7.5 fire-only opt-in
 No upstream code added. Re-admits the existing pinned MIT Squ1ggs local pawn FireModifier pair as an experiment; see earlier v0.5.3 native field readback and v0.6.3 gameplay limitation. General/other elemental damage remain HOLD. New persistent flag defaults OFF. Runtime effect not independently verified. R5 session and movement paths retained. See R6_DEVELOPMENT.md in source archive.
 
+## R7 v0.7.6 elemental opt-in batch
+Existing pinned MIT Squ1ggs source mapping (above) for ShockModifier, CorrosiveModifier, CryoModifier and RadiationModifier is now admitted individually, default disabled. Fire retained. No upstream code added; general damage and automation/XP HOLD. Actual hit effects unverified. See R7_DEVELOPMENT.md in source archive.
 
-## Experimental R7 (0.7.6)
+## R8 v0.7.7 rarity controls
+Pinned MIT Loot Treadmill commit 4852b34ac82c86c3093192fb029edab495fbb63a, LootTreadmill/__init__.py blob d4b5bf43b3406710208b2efc09c83856f7b6235e, LootTreadmill/profiles.py blob 9f80f00524ed913a209a5bf837fa0c387be02129. Source maps CommonModifier and UncommonModifier and uses captured baseline-relative fractional multipliers; optional low-rarity filter sets common and uncommon to 0.0. https://github.com/noahlincke/bl4-loot-treadmill/blob/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill/profiles.py . Independent narrow adaptation uses the existing world-session RarityState controller, positive captured baseline, exact field identity, solo consent, restoration, no bonus spawns, no global asset changes. New common/uncommon controls default OFF and support 0–10; rare/epic/legendary 0.1–10 (zero not admitted for higher tiers); 0.1 increments, optional numeric input. World weights are not absolute chances. Existing XP/cash/Eridium and overall-luck preview settings have no active reward path. No community asset modifications or native gameplay tests.
 
-Four existing MIT Squ1ggs reflected pawn elemental pairs are admitted by explicit individual opt-in: shock, corrosive, cryo and radiation. Fire retained. All new flags default off; no general damage, XP or automation admission. Actual hit effects unverified. 246 mocked regressions passed locally; no native game execution.
+## R9 v0.7.8 pearlescent experiment
+Pinned MIT Loot Treadmill by Noah Lincke, 4852b34ac82c86c3093192fb029edab495fbb63a: LootTreadmill/__init__.py blob d4b5bf43b3406710208b2efc09c83856f7b6235e maps PearlescentModifier and PearlModifier, profiles.py blob 9f80f00524ed913a209a5bf837fa0c387be02129 supplies positive baseline-relative pearl weights. https://github.com/noahlincke/bl4-loot-treadmill/tree/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill . Independent adaptation uses existing solo-world controller, exact unique reflected scalar identity, .1–10x in .1 increments, default opt-in OFF, 1x restores. Missing/ambiguous fields refuse activation. No spawn, grants, shared asset edits or save access. Actual native availability and loot outcomes unverified. No new upstream code copied. 287 local mock regressions passed.
 
+## R10 local gravity experiment
+Kevin-hDev, Apex Movement (Apache-2.0), pinned 897c99eef4cd6d91637816d101456d59f4fb920f. https://github.com/kevin-hDev/Mods-Borderlands-4/blob/897c99eef4cd6d91637816d101456d59f4fb920f/apex_movement/apex_movement/heavier_fall.py (blob 0aa25f94a87cc0b0a6920049b6f391b53a669580) reports measured effects of GravityScale 1.3 on jump height and timing. Independent local CharacterMovement scalar adapter only; shared jump goal definitions excluded. No upstream code copied. Actual native effect unverified; 1x restores captured baseline. See R10_DEVELOPMENT.md in private source archive.
 
-## R8 (0.7.7) rarity experiment
-
-Existing MIT Loot Treadmill source (Noah Lincke), pinned 4852b34ac82c86c3093192fb029edab495fbb63a, maps CommonModifier and UncommonModifier and uses baseline-relative fractional weights. Its profiles.py (blob 9f80f00524ed913a209a5bf837fa0c387be02129) explicitly uses zero for low rarities. https://github.com/noahlincke/bl4-loot-treadmill/blob/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill/profiles.py . Independent adaptation uses existing solo world-session rarity controller; common/uncommon 0–10x, rare/epic/legendary 0.1–10x, step 0.1, optional numeric entry and 1x restoration. New flags default off. Not guaranteed drop probabilities; actual gameplay and numeric binding unverified. XP/cash/Eridium/overall luck remain preview-only. No original community assets or global asset changes, no grants or saves. Local mocked regressions 274/274.
-
-
-## R9 (0.7.8) pearlescent experiment
-
-Independent optional pearlescent rarity weight, 0.1–10x with 0.1 steps, based on the MIT Loot Treadmill field mapping and baseline-relative weights at https://github.com/noahlincke/bl4-loot-treadmill/tree/4852b34ac82c86c3093192fb029edab495fbb63a/LootTreadmill . Unique reflected identity required; ambiguous/missing fields refuse activation. Existing solo-world controller, restoration and R8 settings retained. No new reward or save writes. Native availability and actual gameplay unverified. 287 mocked regressions passed locally.
-
-
-## R10 (0.7.9) local gravity experiment
-
-Independent 0.5–1.5x baseline-relative local CharacterMovement.GravityScale control, default off, existing ownership and restoration guards. Community evidence: Apache-2.0 Apex Movement by Kevin-hDev, pinned heavier_fall.py https://github.com/kevin-hDev/Mods-Borderlands-4/blob/897c99eef4cd6d91637816d101456d59f4fb920f/apex_movement/apex_movement/heavier_fall.py reports changed jump timing and height. No shared jump definition writes or upstream code copied. Lower gravity can change jump height and airborne time; not an exact height multiplier. Actual gameplay unverified. Existing progression and rarity controls unchanged. 300 local mock tests pass.
+## R12 sprint-only floor
+Independent extension of the existing Apache-2.0 Apex-derived ground-speed adapter. No additional upstream code. Same MinAnalogWalkSpeed and bIsSprinting, captured original floor while not sprinting, 828 reference units/s while sprinting. Manual activation only; mutually exclusive with combined walk/sprint floor. Existing R10 native acceptance not claimed for R12. All other source provenance and licenses retained.

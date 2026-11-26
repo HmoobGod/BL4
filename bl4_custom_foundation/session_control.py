@@ -8,6 +8,7 @@ from .ground_speed import floor_target
 
 # R7: explicit elemental-only experiments; general damage remains HOLD.
 DAMAGE_HOLD = frozenset(('damage',))
+GROUND_KEYS = frozenset(('walk_speed', 'sprint'))
 
 class Controller:
     def __init__(self, context, weak_pointer, report, thread):
@@ -121,6 +122,9 @@ class Controller:
     def activate(self, key, selection, *, ground_sprinting=None):
         if self.busy or self.fault:
             return False
+        if key in GROUND_KEYS and selection != 1 and (GROUND_KEYS - {key}).intersection(self.records):
+            self.log('HOLD: restore the other ground-speed mode first')
+            return False
         self.busy = True
         try:
             if key not in FEATURES or key in DAMAGE_HOLD:
@@ -142,12 +146,12 @@ class Controller:
             # Ground animation maintenance already accepts the captured baseline
             # as an engine reset. Allow the same exact reset during a live update,
             # but never adopt a different value or a replacement object.
-            baseline_reset = key == 'walk_speed' and key in self.records and values == record['baseline']
+            baseline_reset = key in GROUND_KEYS and key in self.records and values == record['baseline']
             if not eligible or (values != record['expected'] and not baseline_reset):
                 raise ValueError('session or owned value changed')
-            targets = (floor_target(record['baseline'], record['tokens'], selection, ground_sprinting)
-                       if key == 'walk_speed' else target_values(key, record['baseline'], record['tokens'], selection))
-            if values == targets and key != 'walk_speed':
+            targets = (floor_target(record['baseline'], record['tokens'], selection, ground_sprinting, sprint_only=key == 'sprint')
+                       if key in GROUND_KEYS else target_values(key, record['baseline'], record['tokens'], selection))
+            if values == targets and key not in GROUND_KEYS:
                 self.log('ACTIVE ' + key + ': already ' + repr(targets) + '; no write')
                 return True
             if not self.log('IN PROGRESS ' + key + ': ' + repr(values) + ' -> ' + repr(targets)):
@@ -176,7 +180,7 @@ class Controller:
 
     def ground_frame(self, sprint, *, observed=None):
         """Maintain the owned floor on the local animation frame only; no arbitrary drift adoption."""
-        record = self.records.get('walk_speed')
+        record = next((self.records[k] for k in GROUND_KEYS if k in self.records), None)
         if record is None or self.busy or self.fault:
             return
         self.busy = True
@@ -187,7 +191,7 @@ class Controller:
                 return
             if values not in (record['baseline'], record['expected']):
                 raise ValueError('foreign ground speed drift')
-            target = floor_target(record['baseline'], record['tokens'], record['selection'], sprint)
+            target = floor_target(record['baseline'], record['tokens'], record['selection'], sprint, sprint_only=record['key'] == 'sprint')
             if values == target and record['expected'] == target:
                 return
             previous = record['expected']
@@ -223,7 +227,7 @@ class Controller:
                     if not eligible:
                         self.restore_all('session or pawn changed')
                         return
-                    if values != record['expected'] and not (key == 'walk_speed' and values == record['baseline']):
+                    if values != record['expected'] and not (key in GROUND_KEYS and values == record['baseline']):
                         self.restore_all('engine or another writer changed active field; no reapply')
                         return
                 except Exception as exc:
