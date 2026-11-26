@@ -70,7 +70,7 @@ class Expansion(unittest.TestCase):
         comp.Class=typ('OakCharacterMovementComponent',*original,desc('DashSpeed',comp.DashSpeed._type),desc('GlidingSpeed',comp.GlidingSpeed._type))
         comp._path_name=lambda:'OwnedMovement';comp.OakCharacterOwner=self.p
         fields=list(comp.Class._properties())
-        for n in ('VaultPowerCost_DoubleJump','VaultPowerCost_Dash','VaultPowerCost_Glide'):
+        for n in ('VaultPowerCost_DoubleJump','VaultPowerCost_Dash','VaultPowerCost_Glide','GlidingAirControl','GlidingSpeedBoost','GlidingAcceleration','GlidingDeceleration','VaultPowerCost_Grapple','VaultPowerCost_GroundSlam'):
             a=attr(10.);setattr(comp,n,a);fields.append(desc(n,a._type))
         comp.Class._properties=lambda:fields
         self.p._path_name=lambda:'LocalPawn';self.p.WeaponSwapTimeScale=attr(1.)
@@ -80,7 +80,7 @@ class Expansion(unittest.TestCase):
             if k in DAMAGE_HOLD or k in self.m.MANUAL_ONLY or k in self.m.WEAPON_KEYS or k in self.m.CAPACITY_KEYS: continue
             if k == 'walk_speed': self.ground(2.)
             else: self.b.activate(k,1.2 if k == 'gravity' else 2.)
-        self.assertEqual(len(self.m._controller.records),25)
+        self.assertEqual(len(self.m._controller.records),31)
         self.m.request_stop('test',immediate=True); self.assertFalse(self.m._controller.records); self.assertFalse(self.m._controller.fault)
         self.assertEqual(self.r.RareModifier.Value,1.); self.assertEqual(self.b.jump.MaxWalkSpeed,600.)
     def test_new_loot_on_pawn_change(self):
