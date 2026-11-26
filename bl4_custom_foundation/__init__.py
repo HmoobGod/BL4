@@ -13,7 +13,7 @@ from .inventory_capacity import KEYS as CAPACITY_KEYS, resolve as resolve_capaci
 from .weapon_rates import WEAPON_KEYS, validate_targets
 from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shield_readback
 
-TITLE = 'BL4 Custom - Community Integration v0.7.36-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.37-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -263,7 +263,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.36-experimental')
+    ui.text('BL4 CUSTOM | v0.7.37-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -568,7 +568,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.36-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.37-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -798,7 +798,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.36-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.37-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -834,7 +834,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0736exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0737exp'
 
 
 def monitor_status():
@@ -868,7 +868,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.36-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.37-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -894,7 +894,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.36-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.37-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -940,15 +940,23 @@ def current_session(api):
     return pc, pawn, state, eligible
 
 
-def conflicting_mods():
-    # Do not import third-party mods or invoke their private APIs.
-    known = {'loottreadmill', 'rarityremover', 'damageandmore', 'bl4damageandmore',
+# Cache only candidate module *names*, never objects, enabled flags or permission.
+# A new import/removal invalidates the name index, and replacement under the
+# same name is read from sys.modules on every check.
+_CONFLICT_NAMES = frozenset({'loottreadmill', 'rarityremover', 'damageandmore', 'bl4damageandmore',
              'resourcesandcooldowns', 'bl4resourcesandcooldowns', 'bl4playermovement',
-             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank', 'lootvacuum', 'lootmagnet'}
-    for name, module in tuple(sys.modules.items()):
-        if '.' in name or name.replace('_', '').casefold() not in known:
-            continue
-        candidate = getattr(module, 'mod', None)
+             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank', 'lootvacuum', 'lootmagnet'})
+_conflict_index = (None, ())
+
+
+def conflicting_mods():
+    global _conflict_index
+    names = tuple(sys.modules)
+    if names != _conflict_index[0]:
+        candidates = tuple(name for name in names if '.' not in name and name.replace('_', '').casefold() in _CONFLICT_NAMES)
+        _conflict_index = (names, candidates)
+    for name in _conflict_index[1]:
+        candidate = getattr(sys.modules.get(name), 'mod', None)
         if candidate is None or getattr(candidate, 'is_enabled', None) is not False:
             return True
     return False
@@ -1050,7 +1058,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0736exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0737exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1744,7 +1752,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.36-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.37-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

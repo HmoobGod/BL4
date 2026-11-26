@@ -2,6 +2,7 @@
 The live classifier and contact semantics are experimental, not gameplay certified.
 """
 import math
+from heapq import nsmallest
 import re
 import struct
 from collections import deque
@@ -202,7 +203,7 @@ class Vacuum:
                     result=self.inspect(a,lev,origin,vendors)
                     if result is not None:candidates.append((result,self.weak(a)))
                 except Exception:continue
-            for result,ref in sorted(candidates,key=lambda c:c[0][0])[:4]:
+            for result,ref in nsmallest(4,candidates,key=lambda c:c[0][0]):
                 if self.record is not snapshot:return
                 if self.continuous:
                     while self.recent and self.recent[0]<=self.clock()-30:self.recent.popleft()
@@ -211,24 +212,33 @@ class Vacuum:
                 elif not self.continuous and len(self.attempted)>=24:self.stop('attempt limit reached');return
                 pc,pawn,key,_,origin=self.resolve();a=ref()
                 if a is None:continue
-                # Revalidate identity, type, distance and vendor status just before dispatch.
-                try: fresh=self.inspect(a,key[-1],origin,self.vendors(pc,key[-1]))
-                except Exception:continue
-                if fresh is None or fresh[1:]!=result[1:]:continue
-                _,item_key,kind=fresh
-                teleport=bound(a,'K2_TeleportTo',TELEPORT,TP_SIG)
+                # Prepare destination first; native getters/struct construction may
+                # synchronously change actor ownership, classification or vendor state.
+                _,item_key,kind=result
+                if (identity(a)!=item_key[0] or a.Class._path_name()!=PICKUP or not active(a)
+                        or level(a)!=key[-1] or a.HasAuthority() is not True or a.Owner is not None):continue
                 rot=bound(a,'K2_GetActorRotation',ROTATION,ROT_SIG)()
                 if kind=='gear':
                     angle=(len(self.attempted)%8)*math.tau/8
                     xyz=(origin[0]+200*math.cos(angle),origin[1]+200*math.sin(angle),origin[2])
                 else:xyz=(origin[0],origin[1],origin[2]-40)
                 target=self.make('Vector',X=xyz[0],Y=xyz[1],Z=xyz[2])
-                # Mark before native dispatch, even if it refuses. Never replay an overlap/RPC.
-                if self.record is not snapshot or self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
-                    self.stop('scope ended before relocation');return
-                _,_,_,_,latest_origin=self.resolve()
                 if self.record is not snapshot:return
+                pc,pawn,key,_,latest_origin=self.resolve()
                 if distance(latest_origin,origin)>25**2:continue
+                # Revalidate the original weak actor and all classification/vendor
+                # checks after preparation, not only before it. No retry on dispatch.
+                a=ref()
+                if a is None:continue
+                try: fresh=self.inspect(a,key[-1],latest_origin,self.vendors(pc,key[-1]))
+                except Exception:continue
+                if fresh is None or fresh[1:]!=result[1:]:continue
+                teleport=bound(a,'K2_TeleportTo',TELEPORT,TP_SIG)
+                _,_,_,_,final_origin=self.resolve()
+                if self.record is not snapshot:return
+                if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
+                    self.stop('scope ended before relocation');return
+                if distance(final_origin,origin)>25**2:continue
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1
                 try: moved=teleport(target,rot)
                 except Exception as exc:
