@@ -152,6 +152,10 @@ from test_crossfire_r60 import Crossfire
 for name in Crossfire.__dict__:
     if name.startswith('test_'):
         t=Crossfire(name);unique[t.id()]=t
+from test_vacuum_body_r61 import PickupBody
+for name in PickupBody.__dict__:
+    if name.startswith('test_'):
+        t=PickupBody(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

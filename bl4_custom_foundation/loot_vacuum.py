@@ -100,6 +100,34 @@ def dlc_gear_witness(actor, body=None):
     return (path, identity(body), identity(outer), identity(body.Class))
 
 
+def pickup_body_witness(actor):
+    """Keep the exact body object/path stable through dispatch.
+
+    When reflection exposes BodyData, require its declared InventoryBodyData
+    class and package identity. Legacy unavailable descriptors retain the
+    original path/beam classifier, not a claim of native category identity.
+    """
+    body = actor.BodyData
+    path = body._path_name()
+    witness = (path, identity(body))
+    properties = getattr(actor.Class, '_properties', None)
+    if properties is None or not any(str(p.Name) == 'BodyData' for p in properties()):
+        return witness
+    descriptor = prop(actor.Class, 'BodyData', 'ZObjectProperty')
+    cls = body.Class
+    if (descriptor.PropertyClass._path_name() != DLC_BODY_TYPE
+            or cls._path_name() != DLC_BODY_TYPE
+            or identity(descriptor.PropertyClass) != identity(cls)):
+        raise ValueError('pickup body descriptor mismatch')
+    package, dot, name = path.rpartition('.')
+    outer = body.Outer
+    if (not dot or not name or name != package.rsplit('/', 1)[-1]
+            or outer is None or outer.Class._path_name() != '/Script/CoreUObject.Package'
+            or outer._path_name() != package):
+        raise ValueError('pickup body package mismatch')
+    return witness + (identity(cls), identity(outer))
+
+
 def classify(actor, high_gear_only=False):
     body=actor.BodyData
     if body is None:
@@ -307,7 +335,7 @@ class Vacuum:
         native = native_gear_identity(a) if kind == 'gear' else None
         if native is not None and native[0] in self.gear_ids:return None
         dlc = dlc_gear_witness(a) if kind == 'gear' else None
-        return dist,key+(native,dlc),kind
+        return dist,key+(native,dlc,pickup_body_witness(a)),kind
 
     def tick(self,permitted):
         if self.record is None or self.busy:return
@@ -374,16 +402,28 @@ class Vacuum:
                 if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
                     self.stop('scope ended before relocation');return
                 if distance(final_origin,origin)>25**2:continue
-                if kind == 'gear':
-                    # The final scope getter can synchronously change the item.
-                    # Re-read the native identity after it and before dispatch.
-                    try:
+                # The final scope getter can synchronously change any pickup,
+                # including its body, beam, lock, ownership or actor lifetime.
+                # Recheck the original weak object and category for ALL lanes.
+                try:
+                    a = ref()
+                    if (a is None or identity(a)!=item_key[0] or a._path_name()!=item_key[1]
+                            or a.Class._path_name()!=PICKUP or not active(a)
+                            or level(a)!=key[-1] or a.HasAuthority() is not True or a.Owner is not None
+                            or a.RootPrimitiveComponent is None
+                            or identity(a.RootPrimitiveComponent.Outer)!=identity(a)
+                            or a.UsableActorState.bInteractabilityLockedReplicated is not False
+                            or kind not in self.categories or classify(a,self.high_gear_only)!=kind
+                            or pickup_body_witness(a)!=item_key[4]):continue
+                    if kind == 'gear':
                         native = native_gear_identity(a)
                         if native != item_key[2] or (native is not None and native[0] in self.gear_ids):continue
                         if dlc_gear_witness(a) != item_key[3]:continue
-                        if item_key[3] is not None and classify(a,self.high_gear_only) != 'gear':continue
-                    except Exception:continue
-                    if native is not None:self.gear_ids.add(native[0])
+                except Exception:continue
+                if self.record is not snapshot:return
+                if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
+                    self.stop('scope ended during final pickup checks');return
+                if kind == 'gear' and native is not None:self.gear_ids.add(native[0])
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1
                 if kind=='gear':self.gear_targets[gear_cell(xyz)]=xyz
                 try: moved=teleport(target,rot)
