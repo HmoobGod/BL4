@@ -36,7 +36,7 @@ class ReloadRecovery(SwapReload):
     def test_resume_after_reserve_recovery(self):
         self.reserves(0);self.empty();self.assertIsNotNone(self.a.record);self.reserves(20);self.tick();self.assertFalse(self.r.calls);self.tick(4,'Active');self.empty();self.assertEqual(len(self.r.calls),1)
     def test_reserve_loss_inflight_stops(self):
-        self.empty();self.reserves(0);self.tick(state='Reloading');self.assertIsNone(self.a.record);self.assertEqual(len(self.r.calls),1)
+        self.empty();self.reserves(0);self.tick(state='Reloading');self.assertIsNotNone(self.a.record);self.tick(state='Reloading',dt=11);self.assertIsNone(self.a.record);self.assertEqual(len(self.r.calls),1)
     def test_pause_scope_loss(self):
         self.reserves(0);self.tick();self.r.b.f.players=2;self.tick();self.assertIsNone(self.a.record);self.assertFalse(self.r.calls)
     def switch_mode(self):

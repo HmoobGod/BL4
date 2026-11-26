@@ -171,12 +171,17 @@ def validate_targets(scope, targets):
     if scope['key'] in AMMO_KEYS:
         validate_ammo(scope)
     if scope['key'] == 'reload':
-        from .gameplay_fields import scalar
-        b = scope['behavior']()
-        minimum = nested(b, 'MinReloadTime', 'GbxAttributeFloat')
-        floor = max(scalar(minimum, n, allow_zero=True)[3] for n in ('Value', 'BaseValue'))
-        if any(t < floor for t in targets):
-            raise ValueError('reload target below native minimum')
+        validate_reload_floor(scope, targets)
+
+
+def validate_reload_floor(scope, targets):
+    # Read-only: monitor the floor even during native reloading/firing.
+    from .gameplay_fields import scalar
+    b = scope['behavior']()
+    minimum = nested(b, 'MinReloadTime', 'GbxAttributeFloat')
+    floor = max(scalar(minimum, n, allow_zero=True)[3] for n in ('Value', 'BaseValue'))
+    if any(t < floor for t in targets):
+        raise ValueError('reload target below native minimum')
 
 
 def validate_ammo(scope):

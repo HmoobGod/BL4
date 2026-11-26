@@ -275,9 +275,9 @@ class Controller:
                 try:
                     _, values, eligible = self.resolve(record, observed=observed)
                     if not eligible:
-                        # Only persistent fire controls may follow ordinary weapon changes.
+                        # Only persistent weapon controls may follow ordinary weapon changes.
                         # resolve already proved the original session/pawn and exact old behavior.
-                        if follow_weapon and observed[3] and key in weapon_rates.FIRE_KEYS:
+                        if follow_weapon and observed[3] and key in weapon_rates.WEAPON_KEYS:
                             if not self.restore(key, 'weapon transition; original restored'):
                                 self.restore_all('weapon restoration failed')
                                 return
@@ -289,6 +289,8 @@ class Controller:
                         validate_lifesteal(record['pawn'](), values)
                     if key in weapon_rates.AMMO_KEYS:
                         weapon_rates.validate_ammo(record['weapon_scope'])
+                    if key == 'reload':
+                        weapon_rates.validate_reload_floor(record['weapon_scope'], values)
                     if values != record['expected'] and not (key in GROUND_KEYS and values == record['baseline']):
                         self.restore_all('engine or another writer changed active field; no reapply')
                         return

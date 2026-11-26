@@ -151,7 +151,9 @@ class ReloadAssist:
             except Exception as e:self.stop(str(e)[:120]);return
             if self.record is not snapshot:return
             self.record=(refs,key,tid,end,now+.1)
-            if min(reserve)<=0:
+            # The last reserve rounds may legitimately be consumed by an in-flight
+            # reload. Observe completion without issuing another request.
+            if min(reserve)<=0 and not (self.session_mode and (self.waiting or state=='Reloading')):
                 if not self.session_mode or self.waiting or state not in ('Active','Using','Firing'):
                     self.stop('no confirmed reserve');return
                 if not self.reserve_paused:self.report('PAUSE: no confirmed reserve; waiting for ammo and a fresh loaded idle sample')
@@ -175,8 +177,9 @@ class ReloadAssist:
                     self.completion_samples=0;return
                 self.completion_samples+=1
                 if self.completion_samples>=2:
-                    self.waiting=False;self.previous=loaded;self.empty_seen=False
-                    self.report('EXPERIMENT: reload state and positive idle magazine observed; new cycle armed')
+                    self.waiting=False;self.reserve_paused=self.session_mode and min(reserve)<=0
+                    self.previous=None if self.reserve_paused else loaded;self.empty_seen=False
+                    self.report('PAUSE: reload completed; reserve exhausted' if self.reserve_paused else 'EXPERIMENT: reload state and positive idle magazine observed; new cycle armed')
                 return
             if self.session_mode and state=='Reloading':
                 # A manual/native reload is already underway. Observe, never dispatch.
