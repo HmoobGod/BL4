@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.49-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.50-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -78,8 +78,9 @@ AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Auto-enable '+label)
-                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'))}
-AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values()]
+                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'))}
+DOUBLE_JUMP_RATE = SliderOption('double_jump_velocity_scale', 1., .5, 2., step=.1, is_integer=False, display_name='Double-jump upward velocity multiplier (experimental)')
+AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
 # Independent persistent lanes. Isolated manual experiments remain unchanged.
 _automation_leases = {}
 _automation_attempted = set()
@@ -308,7 +309,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.49-experimental')
+    ui.text('BL4 CUSTOM | v0.7.50-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -386,6 +387,14 @@ def draw():
         ui.text('Rarity weight is not guaranteed drop probability; 1x restores.')
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
+    if _category == 4 and auto_master.value is True:
+        option = AUTOMATION_OPTIONS['double_jump']
+        edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
+        if edited: set_auto_setting(option,selected)
+        edited, selected = ui.slider_float(DOUBLE_JUMP_RATE.display_name+'##'+DOUBLE_JUMP_RATE.identifier,float(displayed_selection(DOUBLE_JUMP_RATE)),.5,2.,'%.1fx')
+        if edited: queue_auto_edit(DOUBLE_JUMP_RATE,selected)
+        ui.text('double_jump: '+_automation_status.get('double_jump','Waiting / off'))
+        ui.text_wrapped('Experimental second-jump velocity only; actual height unverified. Land before use; toggle lane to rearm after changing scale. First jump and shared goals unchanged.')
     if _category == 5:
         if auto_master.value is True:
             ui.text_wrapped('Persistent automation: movement, elemental and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload follows supported idle weapon/mode swaps and waits for reserve recovery between requests. Toggle a stopped lane off/on to rearm.')
@@ -632,7 +641,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.49-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.50-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -862,7 +871,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.49-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.50-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -932,7 +941,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.49-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.50-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -958,7 +967,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.49-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.50-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1784,7 +1793,10 @@ def make_automation_lane(kind, session):
     sdk = sys.modules['unrealsdk']
     adaptive_mode = kind in SKILL_ADAPTIVE and SKILL_ADAPTIVE[kind].value is True
     follow_mode = kind in SKILL_FOLLOW and SKILL_FOLLOW[kind].value is True
+    jump_rate = normalize(DOUBLE_JUMP_RATE,DOUBLE_JUMP_RATE.value) if kind=='double_jump' else None
     def context():
+        if kind=='double_jump' and (DOUBLE_JUMP_RATE.identifier in _auto_edits or normalize(DOUBLE_JUMP_RATE,DOUBLE_JUMP_RATE.value)!=jump_rate):
+            raise ValueError('double jump scale changed; toggle lane to rearm')
         if kind in SKILL_ADAPTIVE:
             if (SKILL_FOLLOW[kind].value is True)!=follow_mode:
                 raise ValueError('follow skill mode changed')
@@ -1799,6 +1811,9 @@ def make_automation_lane(kind, session):
         if conflict:
             raise ValueError(conflict)
         return current_session(session)
+    if kind == 'double_jump':
+        from .double_jump import DoubleJump
+        return DoubleJump(context,sdk.unreal.WeakPointer,time.monotonic,threading.get_ident,report_live,jump_rate)
     if kind == 'vacuum':
         from .loot_vacuum import Vacuum
         categories = tuple(k for k,o in VACUUM_PREFS.items() if o.value is True)
@@ -1838,7 +1853,7 @@ def automation_tick():
             stop_automation('permission or modifier compatibility ended')
             return
         # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
-        for kind in ('vacuum','reload','health','shield','skill_cooldown','skill_duration'):
+        for kind in ('vacuum','reload','health','shield','skill_cooldown','skill_duration','double_jump'):
             if AUTOMATION_OPTIONS[kind].value is not True:
                 stop_automation_lane(kind,'disabled')
                 continue
@@ -1910,7 +1925,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.49-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.50-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
