@@ -24,8 +24,8 @@ class Inventory(unittest.TestCase):
     def activate(self,k,v):self.b.activate(k,v)
     def test_no_startup(self):
         self.assertEqual(self.back.writes+self.bank.writes,[])
-        self.assertNotIn('bank_capacity',self.m.AUTO_OPTIONS)
-        self.assertNotIn('backpack_capacity',self.m.AUTO_OPTIONS)
+        self.assertFalse(self.m.AUTO_OPTIONS['bank_capacity'].value)
+        self.assertFalse(self.m.AUTO_OPTIONS['backpack_capacity'].value)
     def test_independent(self):
         self.activate('backpack_capacity',250);self.assertEqual(self.back.Value,250);self.assertEqual(self.bank.writes,[])
         self.activate('bank_capacity',500);self.assertEqual((self.back.Value,self.bank.Value),(250,500))
