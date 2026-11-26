@@ -47,6 +47,7 @@ FEATURES = {
     'grenade_cooldown': ('Grenade gadget cooldown speed (experimental)', .5, 3.),
     'lifesteal_rate': ('Existing life-steal rate (experimental)', .5, 3.),
     'lifesteal_fraction': ('Existing life-steal percentage multiplier (experimental)', .5, 3.),
+    'overshield_duration': ('Existing overshield duration multiplier (experimental)', .5, 3.),
     'repair_health': ('Repair-kit healing amount multiplier', .5, 5.),
     'damage_taken': ('Damage taken multiplier', .1, 5.),
     'shock_damage': ('Shock damage multiplier', .5, 5.),
@@ -264,6 +265,32 @@ def swap_time(pawn, state):
     return pair(nested(pawn, 'WeaponSwapTimeScale', 'GbxAttributeFloat'))
 
 
+def overshield_manager(pawn):
+    from .weapon_rates import nested
+    if pawn is None or 'Default__' in pawn._path_name():
+        raise ValueError('live local pawn required')
+    manager = nested(pawn, 'OvershieldManager', 'OakOvershieldManager')
+    if manager._type._path_name() != '/Script/OakGame.OakOvershieldManager':
+        raise ValueError('unexpected overshield manager path')
+    return manager
+
+
+def overshield_duration(pawn, state):
+    from .weapon_rates import nested
+    return pair(nested(overshield_manager(pawn), 'OvershieldDuration', 'GbxAttributeFloat'))
+
+
+def validate_overshield(pawn, baseline, targets):
+    from .weapon_rates import nested
+    # Only an existing positive duration and base magnitude. Do not grant a shield.
+    if any(not 0 < v <= 120 for v in (*baseline, *targets)):
+        raise ValueError('overshield duration outside conservative bounds')
+    base = pair(nested(overshield_manager(pawn), 'OvershieldBaseValue', 'GbxAttributeFloat'))
+    if base[0][3] != base[1][3]:
+        raise ValueError('overshield base uncertain')
+    return describe_fields(base)[1:]
+
+
 def lifesteal_rate(pawn, state):
     # Only the existing local rate; do not turn on life-steal, change its cap,
     # or touch any health pool value. Historical OakDamageState declaration.
@@ -349,6 +376,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'swap_time': swap_time,
            'lifesteal_rate': lifesteal_rate,
            'lifesteal_fraction': lifesteal_fraction,
+           'overshield_duration': overshield_duration,
            'damage': lambda p, s: pair(p.DamageCauserData.DamageDealtMultiplier),
            'damage_taken': lambda p, s: pair(p.DamageState.DamageTakenMultiplier),
            'shock_damage': lambda p, s: pair(p.ElementalDamageModifiers.ShockModifier),
