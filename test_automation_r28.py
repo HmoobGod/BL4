@@ -29,7 +29,7 @@ class SwapReload(unittest.TestCase):
     def test_pending_pauses_and_resumes(self):
         r=self.r;self.tick(0,'Firing');r.p.ActiveWeapons.Slots[0].PendingWeapon=r.w;self.tick(state='Active');self.assertFalse(r.calls);self.assertIsNotNone(self.a.record)
         r.p.ActiveWeapons.Slots[0].PendingWeapon=None;self.swap();self.tick();self.tick();self.empty();self.assertEqual(len(r.calls),1)
-    def test_swap_empty_no_dispatch(self):self.swap(0);self.tick();self.assertIsNone(self.a.record);self.assertFalse(self.r.calls)
+    def test_swap_empty_no_dispatch(self):self.swap(0);self.tick();self.assertIsNotNone(self.a.record);self.assertTrue(self.a.swap_paused);self.assertFalse(self.r.calls)
     def test_swap_foreign_stops(self):self.swap(foreign=True);self.tick();self.assertIsNone(self.a.record);self.assertFalse(self.r.calls)
     def test_swap_during_unconfirmed_reload_stops(self):self.empty();self.swap();self.tick();self.assertIsNone(self.a.record);self.assertEqual(len(self.r.calls),1)
     def test_rolling_limit(self):

@@ -173,6 +173,10 @@ from test_requested_cooldown_follow import NamedFollow
 for name in NamedFollow.__dict__:
     if name.startswith('test_'):
         t=NamedFollow(name);unique[t.id()]=t
+from test_requested_reload_wait import ReloadWait
+for name in ReloadWait.__dict__:
+    if name.startswith('test_'):
+        t=ReloadWait(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

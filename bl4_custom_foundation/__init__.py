@@ -427,7 +427,7 @@ def draw():
     if _category == 5:
         panels = visible_action_panels(ui, 5, ('Loot Vacuum', 'Automatic reload'))
         if auto_master.value is True:
-            ui.text_wrapped('Persistent automation: movement, elemental, rarity weights and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload follows supported idle weapon/mode swaps and waits for reserve recovery between requests. Toggle a stopped lane off/on to rearm.')
+            ui.text_wrapped('Persistent automation: movement, elemental, rarity weights and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload waits for a supported loaded idle gun and reserve, including after weapon/mode swaps. Empty guns need a normal reload first; unsupported guns stop the lane. Toggle a stopped lane off/on to rearm.')
             for kind, option in AUTOMATION_OPTIONS.items():
                 if kind not in ('vacuum','reload') or ('Loot Vacuum' if kind == 'vacuum' else 'Automatic reload') not in panels: continue
                 edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
@@ -2122,6 +2122,8 @@ def automation_tick():
                     return
                 if lease.record is None:
                     stop_automation_lane(kind,'lease ended; toggle lane to rearm')
+                elif kind=='reload' and hasattr(lease,'swap_paused'):
+                    _automation_status[kind] = 'Waiting for supported loaded idle gun and reserve' if lease.swap_paused or lease.reserve_paused else 'Armed (gameplay unverified)'
                 elif kind=='skill_duration' and getattr(lease,'event_class',None) is not None:
                     _automation_status[kind] = 'Observed Cross-Fire active (gameplay unverified)' if lease.event_active else 'Waiting for a new local Cross-Fire activation'
                 elif kind in SKILL_FOLLOW and getattr(lease,'follow',False):

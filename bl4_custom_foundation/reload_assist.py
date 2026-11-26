@@ -2,7 +2,7 @@
 from collections import deque
 from .gameplay_fields import identity
 from .health_pulse import enum_name
-from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, live, slot_entries
+from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, live, slot_entries, slots, STATES
 
 PATH = '/Script/GbxWeapon.WeaponStatics:'
 REQUEST = '/Script/GbxWeapon.Weapon:ServerStartReloading'
@@ -77,15 +77,44 @@ class ReloadAssist:
             raise ValueError('bound reload function mismatch')
         return objs,key,bound,loaded,maximum,reserve,str(w.CurrentState)
 
+    def session_owner(self):
+        pc,pawn,state,ok=self.context()
+        if not ok or enum_name(pawn.HealthCondition)!='Healthy' or self.api[2](pawn) is not True:
+            raise ValueError('eligible healthy local weapon authority required')
+        return pc,pawn,state
+
+    def waiting_for_weapon(self,pawn):
+        # Only positively observed empty/transitioning slots are a benign wait.
+        # Ambiguous, foreign, unsupported and malformed active weapons still fail closed.
+        entries=slot_entries(pawn)
+        if any(s.PendingWeapon is not None or s.ClientPredictedPendingWeapon is not None for s in entries):
+            return True
+        states=tuple(str(w.CurrentState) for w in slots(pawn).values())
+        if any(state in STATES for state in states):return False
+        if any(state!='Inactive' for state in states):raise ValueError('unknown weapon state during wait')
+        return True
+
     def begin(self):
         if self.record is not None or self.fault or self.busy:return False
         try:
-            objs,key,_,loaded,_,reserve,state=self.resolve()
-            if state!='Active' or not loaded or min(reserve)<=0:raise ValueError('arm with idle loaded gun and reserve ammo')
+            waiting=False
+            if self.session_mode:
+                owner=self.session_owner()
+                if self.waiting_for_weapon(owner[1]):
+                    objs=owner;key=(tuple(identity(o) for o in owner),None)
+                    loaded=None;waiting=True
+                else:
+                    objs,key,_,loaded,_,reserve,state=self.resolve()
+                    if key[0][:3]!=tuple(identity(o) for o in owner):raise ValueError('session changed during arm')
+                    waiting=state!='Active' or not loaded or min(reserve)<=0
+                if tuple(identity(o) for o in self.session_owner())!=key[0][:3]:raise ValueError('session changed during arm')
+            else:
+                objs,key,_,loaded,_,reserve,state=self.resolve()
+                if state!='Active' or not loaded or min(reserve)<=0:raise ValueError('arm with idle loaded gun and reserve ammo')
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),float("inf") if self.session_mode else now+30,now+.1)
-            self.previous=loaded;self.empty_seen=False
+            self.previous=None if waiting else loaded;self.empty_seen=False
             self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
-            self.recent.clear();self.swap_paused=False;self.reserve_paused=False
+            self.recent.clear();self.swap_paused=waiting;self.reserve_paused=False
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
         self.report('EXPERIMENT: session reload armed (ten requests per rolling 30s; supported idle swaps)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
@@ -106,7 +135,7 @@ class ReloadAssist:
                 or any(r() is None or identity(r())!=i for r,i in zip(refs[:3],key[0][:3],strict=True))
                 or self.api[2](pawn) is not True):
             raise ValueError('original reload session changed')
-        if any(s.PendingWeapon is not None or s.ClientPredictedPendingWeapon is not None for s in slot_entries(pawn)):
+        if self.waiting_for_weapon(pawn):
             if self.waiting:raise ValueError('swap during unconfirmed reload')
             if self.record is snapshot:
                 self.swap_paused=True;self.previous=None;self.empty_seen=False
@@ -116,25 +145,28 @@ class ReloadAssist:
         if self.record is not snapshot:return None
         objs,fresh_key,_,loaded,_,reserve,native_state=sample
         changed=fresh_key!=key
-        if changed and fresh_key[0][3]==key[0][3]:
+        if changed and len(key[0])>3 and fresh_key[0][3]==key[0][3]:
             # A new mode must resolve to distinct native behaviors on the same live weapon.
             # Never adopt a same-mode replacement or a recycled weapon address.
             if (fresh_key[1]==key[1] or refs[3]() is None or identity(refs[3]())!=fresh_key[0][3]
                     or set(fresh_key[0][4:]) & set(key[0][4:])):
                 raise ValueError('same weapon mode or behavior changed without distinct scope')
+        # Even during a benign wait, a recycled same-scope address is not a new weapon.
+        if not changed and any(r() is None or identity(r())!=i for r,i in zip(refs[3:],key[0][3:],strict=True)):
+            raise ValueError('original weapon identity lost')
         if changed or self.swap_paused:
             if self.waiting:raise ValueError('swap during unconfirmed reload')
-            if native_state!='Active' or not loaded or min(reserve)<=0:
-                raise ValueError('replacement must be idle loaded with reserve')
+            if native_state not in STATES:raise ValueError('unsupported replacement state')
             new_refs=tuple(self.weak(o) for o in objs)
             if self.record is not snapshot:return None
+            if tuple(identity(o) for o in self.session_owner())!=fresh_key[0][:3]:raise ValueError('session changed during weapon admission')
+            if self.record is not snapshot:return None
+            ready=native_state=='Active' and loaded>0 and min(reserve)>0
             self.record=(new_refs,fresh_key,tid,end,self.clock()+.1)
-            self.previous=None;self.empty_seen=False;self.swap_paused=False;self.reserve_paused=False
-            self.report('EXPERIMENT: supported idle weapon admitted; awaiting fresh positive magazine sample')
+            self.previous=None;self.empty_seen=False;self.swap_paused=not ready;self.reserve_paused=False
+            if ready:self.report('EXPERIMENT: supported idle weapon admitted; awaiting fresh positive magazine sample')
+            elif changed:self.report('PAUSE: supported replacement not ready; waiting for loaded idle magazine and reserve')
             return None
-        # Verify full original weak identities even when the address tuple matches.
-        if any(r() is None or identity(r())!=i for r,i in zip(refs[3:],key[0][3:],strict=True)):
-            raise ValueError('original weapon identity lost')
         return sample
 
     def tick(self,permitted):
