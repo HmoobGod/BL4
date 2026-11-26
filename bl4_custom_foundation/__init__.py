@@ -11,7 +11,7 @@ from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 from .inventory_capacity import KEYS as CAPACITY_KEYS
 
-TITLE = 'BL4 Custom - Community Integration v0.7.22-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.23-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -82,6 +82,8 @@ _auto_edits = {}
 _auto_edit_at = 0.0
 _auto_last_diagnostic = ''
 
+_vacuum_filters = {k: False for k in ('ammo','cash','eridium','health','gear')}
+_vacuum_radius = 30.0
 _pending = {}
 _category = 0
 _status = 'No unapplied changes.'
@@ -116,7 +118,9 @@ def apply(values):
 
 
 def reset(_option=None):
-    global _status
+    global _status, _vacuum_radius
+    for key in _vacuum_filters: _vacuum_filters[key] = False
+    _vacuum_radius = 30.0
     pause_auto("vanilla reset requested")
     cancel_activation("vanilla reset requested")
     stop_health_pulse('vanilla reset requested')
@@ -221,7 +225,7 @@ def persistent_feature_status(key):
 
 
 def draw():
-    global _category, _status, _compact_view
+    global _category, _status, _compact_view, _vacuum_radius
     if _backend is None or not mod.is_enabled:
         return
     if sync_window_close():
@@ -232,7 +236,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.22-experimental')
+    ui.text('BL4 CUSTOM | v0.7.23-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -268,7 +272,7 @@ def draw():
             request_stop('F8 restore all', immediate=True)
     if health_active():
         ui.text_wrapped('Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.')
-        if ui.button('Stop health recovery / Restore ALL'):
+        if ui.button('Stop experimental action / Restore ALL'):
             request_stop('F8 restore all', immediate=True)
     ui.separator()
     for i, (_, name, _) in enumerate(CATEGORIES):
@@ -303,6 +307,17 @@ def draw():
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
     if _category == 5:
+        ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm for 30 seconds. Gear moves nearby for manual pickup; completed moves are not reversed.')
+        if not health_active():
+            for kind in _vacuum_filters:
+                edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
+                if edited:
+                    _vacuum_filters[kind] = selected is True
+            edited, radius = ui.slider_float('Pickup radius##vacuum_radius', _vacuum_radius, 5., 100., '%.0f m')
+            if edited and type(radius) in (int,float) and math.isfinite(radius):
+                _vacuum_radius = max(5., min(100., radius))
+            if not health_fault() and auto_master.value is not True and ui.button('Arm experimental Loot Vacuum (30 sec)'):
+                activate_feature('loot_vacuum', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius))
         ui.text_wrapped('Experimental automatic reload: one ordinary native reload request after observed magazine depletion, within 30 seconds.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm experimental automatic reload (30 sec)'):
             activate_feature('reload_assist', 1.0)
@@ -492,7 +507,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.22-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.23-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -722,7 +737,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.22-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.23-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -758,7 +773,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0722exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0723exp'
 
 
 def monitor_status():
@@ -792,7 +807,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.22-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.23-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -818,7 +833,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.22-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.23-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -862,7 +877,7 @@ def conflicting_mods():
     # Do not import third-party mods or invoke their private APIs.
     known = {'loottreadmill', 'rarityremover', 'damageandmore', 'bl4damageandmore',
              'resourcesandcooldowns', 'bl4resourcesandcooldowns', 'bl4playermovement',
-             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank'}
+             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank', 'lootvacuum', 'lootmagnet'}
     for name, module in tuple(sys.modules.items()):
         if '.' in name or name.replace('_', '').casefold() not in known:
             continue
@@ -912,6 +927,19 @@ def begin_skill_pulse(mode):
     _health_pulse.begin()
 
 
+def begin_loot_vacuum(selection):
+    global _health_pulse
+    from .loot_vacuum import Vacuum
+    if health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
+        raise ValueError('restore active modifiers before isolated vacuum')
+    sdk = sys.modules['unrealsdk']
+    session = bound_session(sdk)
+    categories, radius = selection
+    _health_pulse = Vacuum(lambda: current_session(session), sdk.unreal.WeakPointer, sdk.find_all,
+                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius)
+    _health_pulse.begin()
+
+
 def begin_reload_assist(continuous=False):
     global _health_pulse
     from .reload_assist import ReloadAssist, bind, SPECS
@@ -954,7 +982,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0722exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0723exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1147,7 +1175,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in ('health_pulse','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous') and _controller is not None and _controller.records:
+        if key in ('health_pulse','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum') and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1180,6 +1208,9 @@ def activate_feature(key, selection):
 def execute_activation(key, selection):
     global _controller
     # Called exclusively by monitor_tick after the explicit queued F8 action.
+    if key == 'loot_vacuum':
+        begin_loot_vacuum(selection)
+        return
     if key in ('reload_assist','reload_continuous'):
         begin_reload_assist(key=='reload_continuous')
         return
@@ -1433,7 +1464,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.22-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.23-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
