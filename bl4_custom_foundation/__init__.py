@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.54-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.55-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -313,7 +313,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.54-experimental')
+    ui.text('BL4 CUSTOM | v0.7.55-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -465,6 +465,9 @@ def draw():
         ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
             activate_feature('health_pulse', 1.0)
+        ui.text_wrapped('Native timed flesh experiment: one small engine-timed refill per game process. Timer cancellation/expiry unverified; stay offline, do not travel, and exit game after this test.')
+        if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native timed flesh recovery (2 sec)'):
+            activate_feature('health_overtime', 1.0)
         ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
             activate_feature('shield_pulse', 1.0)
@@ -649,7 +652,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.54-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.55-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -792,6 +795,7 @@ _monitor_seen = 0.0
 _monitor_error = "not registered"
 _activation_request = None
 _health_pulse = None
+_native_overtime_used = False
 _live_lines = []
 _loot_status = 'Optional read-only rarity check; activation validates its own field.'
 _LOOT_BOOL_SIG = (('WorldContextObject', 'ZObjectProperty'), ('ReturnValue', 'ZBoolProperty'))
@@ -879,7 +883,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.54-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.55-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -949,7 +953,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.54-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.55-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -975,7 +979,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.54-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.55-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1068,6 +1072,32 @@ def begin_health_pulse(mode='flesh'):
     session = bound_session(sdk)
     _health_pulse = Pulse(lambda: current_session(session), sdk.unreal.WeakPointer,
                          sdk.unreal.FGameDataHandle, api, time.monotonic, threading.get_ident, report_live, mode=mode)
+    _health_pulse.begin()
+
+
+def claim_native_overtime():
+    global _native_overtime_used
+    if _native_overtime_used:return False
+    _native_overtime_used=True
+    return True
+
+
+def begin_native_overtime():
+    global _health_pulse
+    from .health_pulse import NativeOvertime, bind_overtime, SPECS, OVERTIME_NAME
+    if _native_overtime_used or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
+        raise ValueError('native timed recovery unavailable; restore existing features or restart after prior attempt')
+    sdk=sys.modules['unrealsdk']
+    functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)==OVERTIME_NAME]
+    api=bind_overtime(functions,loot_bound);session=bound_session(sdk)
+    def timed_context():
+        pc,pawn,state,eligible=current_session(session)
+        hooks=sdk.hooks
+        permitted=(mod.is_enabled is True and _offline_confirmed and auto_master.value is not True and not _auto_owned
+                   and not conflicting_mods() and _monitor_registered
+                   and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
+        return pc,pawn,state,eligible and permitted
+    _health_pulse=NativeOvertime(timed_context,sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,claim_native_overtime)
     _health_pulse.begin()
 
 
@@ -1339,7 +1369,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in ('health_pulse','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous') and _controller is not None and _controller.records:
+        if key in ('health_pulse','health_overtime','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous') and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1380,6 +1410,10 @@ def execute_activation(key, selection):
         return
     if key in ('skill_cooldown','skill_duration'):
         begin_skill_pulse(key.split('_',1)[1])
+        return
+    if key == 'health_overtime':
+        if selection != 1.0:raise ValueError('invalid native overtime selection')
+        begin_native_overtime()
         return
     if key in ('health_pulse','shield_pulse'):
         begin_health_pulse('flesh' if key=='health_pulse' else 'shield')
@@ -1980,7 +2014,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.54-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.55-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

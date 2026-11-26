@@ -136,6 +136,10 @@ from test_vacuum_dlc_r56 import DlcGear
 for name in DlcGear.__dict__:
     if name.startswith('test_'):
         t=DlcGear(name);unique[t.id()]=t
+from test_health_overtime_r57 import NativeTimedHealth
+for name in NativeTimedHealth.__dict__:
+    if name.startswith('test_'):
+        t=NativeTimedHealth(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

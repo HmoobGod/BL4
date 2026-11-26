@@ -1,5 +1,6 @@
 """Opt-in bounded local flesh/energy-shield recovery using existing native health-type handles.
-No native timer, no constructed tags, no raw pointers or shared definition edits.
+Legacy pulse has no native timer; NativeOvertime is a separate one-shot native timer experiment.
+No constructed tags, raw pointers or shared definition edits.
 Historical declarations and SDK wrapper evidence: SOURCES.md.
 """
 import math
@@ -209,3 +210,96 @@ class Pulse:
                 self.report('FAULT: health pulse native dispatch uncertain. Exit game immediately.')
         finally:
             self.busy=False
+
+# Separate native engine-timed experiment; not the existing Python pulse loop.
+OVERTIME_NAME = 'RefillHealthPercentOvertime'
+OVERTIME_SPEC = (ACTOR,HANDLE,('Percent','ZFloatProperty'),('MaxPercent','ZFloatProperty'),('Duration','ZFloatProperty'),('TickRate','ZFloatProperty'),('ReturnValue','ZIntProperty'))
+
+
+def bind_overtime(functions, bind_existing):
+    out=[]
+    for name,spec in tuple(SPECS.items())[:2]+((OVERTIME_NAME,OVERTIME_SPEC),):
+        matches=[f for f in functions if f._path_name()==PATH+name]
+        if len(matches)!=1: raise ValueError('health overtime function unavailable')
+        fn=matches[0]; ps=tuple(fn._properties())
+        if not ps or any(p.ArrayDim!=1 for p in ps) or ps[0].PropertyClass._path_name()!='/Script/Engine.Actor' or fn.Outer._path_name()!=PATH[:-1]:
+            raise ValueError('health overtime descriptor mismatch')
+        out.append(bind_existing(functions,PATH+name,spec))
+    return tuple(out)
+
+
+class NativeOvertime(Pulse):
+    """Single small native timed refill, no assumed cancellation/ID mapping.
+
+    The requested native duration and cap are experimental, not proof of expiry.
+    Never reissue, never call StopHealthRegen on an unproven ID namespace.
+    """
+    def __init__(self,context,weak,handle_type,api,clock,thread,report,claim):
+        super().__init__(context,weak,handle_type,api,clock,thread,report)
+        self.claim=claim; self.dispatched=False; self.native_id=None; self.before=None; self.cap=None; self.verify_at=None
+
+    def begin(self):
+        if self.record is not None or self.fault or self.busy or self.dispatched:return False
+        try:
+            objs,_,key,p=self.resolve(); now=self.clock()
+            if not 0<p<.99:raise ValueError('naturally missing flesh health required')
+            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+5,now+1,key)
+        except Exception as e:
+            self.report('HOLD: native overtime '+str(e)[:100]);return False
+        self.report('EXPERIMENT: one native 2-second flesh refill armed; timer cancellation is unverified.');return True
+
+    def stop(self,reason):
+        if self.record is None:return
+        self.record=None
+        if self.dispatched:
+            self.fault=True
+            self.report('FAULT: native overtime stopped before verification; timer cancellation unverified. Exit game. '+reason)
+        else:self.report('STOP: native overtime before dispatch: '+reason)
+
+    def tick(self,permitted):
+        if self.record is None or self.busy:return
+        snapshot=self.record;refs,ids,tid,end,due,key=snapshot;now=self.clock()
+        if not permitted or self.thread()!=tid or now>=end:
+            self.stop('permission/thread/observation window ended');return
+        if now<due:return
+        self.busy=True
+        try:
+            try:
+                objs,h,_,p=self.resolve()
+                if self.record is not snapshot:return
+                fresh=self.context()
+                if not fresh[3] or tuple(identity(x) for x in fresh[:3])!=ids or self.thread()!=tid:raise ValueError('session changed')
+                fh,fk,ratio=select_flesh(fresh[1],self.handle_type)
+                if fk!=key[0] or abs(p-ratio)>.005:raise ValueError('health identity/value changed')
+                last=self.context()
+                if not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid or self.clock()>=end:raise ValueError('session changed after final read')
+                if self.record is not snapshot:return
+            except Exception as e:
+                self.stop(str(e)[:100]);return
+            if self.dispatched:
+                if max(p,ratio)>self.cap+.005:
+                    self.stop('readback exceeded requested cap (external healing also possible)');return
+                if now<self.verify_at:return
+                self.record=None
+                if min(p,ratio)<=self.before:
+                    self.fault=True;self.report('FAULT: no positive native overtime readback; exit game.');return
+                self.report('EXPERIMENT: positive bounded health readback; native timer expiry and causation unverified. No repeat this process.');return
+            if not 0<min(p,ratio) or max(p,ratio)>=.99:
+                self.stop('missing health no longer available');return
+            # Do not start a timer if the callback arrived too late to observe it.
+            if self.clock()+3>=end:
+                self.stop('insufficient observation window');return
+            if not self.claim():
+                self.stop('one native timed attempt per process');return
+            self.before=max(p,ratio); self.cap=min(1.,self.before+.01)
+            self.dispatched=True;self.verify_at=self.clock()+2.5
+            try:
+                result=self.api[2](fresh[1],fh,min(.01,self.cap-self.before),self.cap,2.,.5)
+                if type(result) is not int or not 0<result<=2**31-1:
+                    raise ValueError('native timer ID not positive')
+                self.native_id=result
+                if self.record is not snapshot:return
+                self.report('EXPERIMENT: native timed refill dispatched; no further call will be issued.')
+            except Exception:
+                self.fault=True;self.record=None;self.report('FAULT: native overtime dispatch/ID uncertain. Exit game.')
+        finally:self.busy=False
