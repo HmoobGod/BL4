@@ -48,7 +48,7 @@ def toggle(identifier, label):
 
 
 CATEGORIES = [
-    ('combat', 'Combat', [slider('damage', 'Damage multiplier'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Experimental native weapon rate; persistent mode follows supported idle weapons.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Experimental stock reload duration; persistent mode follows supported idle weapons. 1x restores.'), SliderOption('swap_time', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['swap_time'][0], description='Local native time scale candidate; manual or persistent opt-in; direction of gameplay effect unverified. 1x restores.'), *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental weapon field; persistent mode follows supported idle weapons. Lower scales the field down. Native effect unverified. 1x restores.') for k in ('weapon_spread', 'weapon_recoil')], slider('fire_damage', 'Fire damage multiplier'),
+    ('combat', 'Combat', [SliderOption('damage', 1., .5, 5., step=.1, is_integer=False, display_name='Damage multiplier', description='Experimental equipped ordinary gun damage; 1x restores. Not a global damage multiplier.'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Experimental native weapon rate; persistent mode follows supported idle weapons.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Experimental stock reload duration; persistent mode follows supported idle weapons. 1x restores.'), SliderOption('swap_time', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['swap_time'][0], description='Local native time scale candidate; manual or persistent opt-in; direction of gameplay effect unverified. 1x restores.'), *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental weapon field; persistent mode follows supported idle weapons. Lower scales the field down. Native effect unverified. 1x restores.') for k in ('weapon_spread', 'weapon_recoil')], slider('fire_damage', 'Fire damage multiplier'),
         slider('damage_taken', 'Damage taken multiplier', minimum=0.1), slider('shock_damage', 'Shock damage multiplier'),
         slider('corrosive_damage', 'Corrosive damage multiplier'), slider('cryo_damage', 'Cryo damage multiplier'),
         slider('radiation_damage', 'Radiation damage multiplier')]),
@@ -91,7 +91,7 @@ _JUMP_EVENT_PATH = '/Script/Engine.Character:OnJumped'
 _JUMP_EVENT_ID = 'bl4_custom_second_jump_event_v0751exp'
 _jump_event_attempted = False
 _jump_event_owned = False
-_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY} | RARITY_KEYS
+_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY} | RARITY_KEYS | {'damage'}
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_HIGH_PREF = BoolOption('vacuum_pref_high_gear', False, display_name='Saved vacuum legendary/pearlescent beams only')
@@ -398,7 +398,7 @@ def draw():
         if not options:
             ui.text('No supported gameplay controls here; turn off Compact menu to view previews.')
     if _category == 0 and not compact:
-        ui.text_wrapped('General damage HOLD. Elemental and incoming damage are EXPERIMENTAL; actual hit effects unverified.')
+        ui.text_wrapped('Damage applies to the equipped ordinary gun fire behavior only. Elemental and incoming modifiers are separate; actual hit effects unverified.')
     if _category == 1 and not compact:
         ui.text_wrapped('HOLD: all six reward hooks are unverified. These sliders only save preview values.')
         ui.text_wrapped(_reward_summary)
@@ -557,6 +557,8 @@ def draw():
         if key not in FEATURES or key in DAMAGE_HOLD:
             continue
         name = FEATURES[key][0]
+        if key == 'damage':
+            ui.text_wrapped('Experimental equipped gun damage, not skill/melee/global damage. Apply while idle; 1x restores. Actual hit effects unverified.')
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
         if key == 'gravity':

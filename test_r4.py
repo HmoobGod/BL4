@@ -39,11 +39,11 @@ class R4(unittest.TestCase):
     def test_compact_persistent_hides_held_controls(self):
         self.p.configure(damage_taken=.5); self.m.open_key.callback(); self.m._category=0
         ui=self.p.b.gui.imgui; ui.labels=[]; self.m.draw(); compact_count=len(ui.labels)
-        self.assertNotIn('Damage multiplier##damage',ui.labels)
+        self.assertIn('Damage multiplier##damage',ui.labels)
         self.assertIn('Damage taken multiplier##damage_taken',ui.labels)
         self.assertIn('Auto-enable Damage taken multiplier##persistent_damage_taken',ui.labels)
         ui.edits={'Compact menu (hide preview-only controls)':False}; ui.labels=[]; self.m.draw()
-        self.assertIn('Damage multiplier##damage',ui.labels); self.assertGreater(len(ui.labels),compact_count)
+        self.assertIn('Damage multiplier##damage',ui.labels); self.assertGreaterEqual(len(ui.labels),compact_count)
     def test_status_does_not_query_sdk(self):
         self.p.configure(legendary_weight=3); self.p.tick()
         self.m._controller.context=lambda:self.fail('UI must not query game')

@@ -5,7 +5,7 @@ consumption and reflection remain unverified. Identity tokens are not dereferenc
 import re
 
 AMMO_KEYS = frozenset(('ammo_regen_rate', 'ammo_regen_delay'))
-FIRE_KEYS = frozenset(('fire_rate', 'weapon_spread', 'weapon_recoil'))
+FIRE_KEYS = frozenset(('damage', 'fire_rate', 'weapon_spread', 'weapon_recoil'))
 WEAPON_KEYS = FIRE_KEYS | frozenset(('reload',)) | AMMO_KEYS
 STATES = frozenset(('Active', 'Using', 'Firing', 'Reloading'))
 
@@ -127,7 +127,7 @@ def matching_behavior(w, key, index):
 
 def fields(b, key):
     from .gameplay_fields import pair
-    name = {'fire_rate': 'firerate', 'weapon_spread': 'spread',
+    name = {'damage': 'damage', 'fire_rate': 'firerate', 'weapon_spread': 'spread',
             'weapon_recoil': 'RecoilScale', 'reload': 'ReloadTime',
             'ammo_regen_rate': 'RegenRate', 'ammo_regen_delay': 'ConsumeRegenDelay'}[key]
     return pair(nested(b, name, 'GbxAttributeFloat'))
@@ -139,6 +139,9 @@ def capture(pawn, key, weak):
         raise ValueError('activate with weapon idle')
     index = mode(w)
     b = matching_behavior(w, key, index)
+    if key == 'damage':
+        # Restrict to ordinary stock-reloading guns, not gadget/unknown fire modes.
+        matching_behavior(w, 'reload', index)
     if key in AMMO_KEYS:
         # Require ordinary stock-reload behavior and existing positive native regen.
         matching_behavior(w, 'reload', index)
@@ -155,6 +158,8 @@ def resolve(pawn, scope):
     current = matching_behavior(w, scope['key'], scope['mode'])
     if live(current) != live(b):
         raise ValueError('original behavior changed')
+    if scope['key'] == 'damage':
+        matching_behavior(w, 'reload', scope['mode'])
     # Restore only the old, still-owned instance when mode/active weapon changes.
     # If ownership or slots disappear, fail closed and never write replacement.
     try:

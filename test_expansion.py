@@ -29,7 +29,7 @@ class Expansion(unittest.TestCase):
         self.assertEqual((attr.Value,attr.BaseValue),(base*multiplier,)*2)
         self.b.activate(key,3.); self.assertEqual((attr.Value,attr.BaseValue),(base*3,)*2)
         self.b.activate(key,1.); self.assertEqual((attr.Value,attr.BaseValue),(base,)*2)
-    def test_outgoing_hold(self): self.b.activate('damage',2.); self.assertEqual(self.p.DamageCauserData.DamageDealtMultiplier.writes,[]); self.assertIn('feature HOLD',self.b.report())
+    def test_outgoing_no_pawn_fallback(self): self.b.activate('damage',2.); self.assertEqual(self.p.DamageCauserData.DamageDealtMultiplier.writes,[]); self.assertNotIn('damage',self.m._controller.records)
     def test_incoming_experimental(self): self.pair_cycle('damage_taken',self.p.DamageState.DamageTakenMultiplier, multiplier=.5)
     def test_shock_experimental(self): self.pair_cycle('shock_damage',self.p.ElementalDamageModifiers.ShockModifier)
     def test_corrosive_experimental(self): self.pair_cycle('corrosive_damage',self.p.ElementalDamageModifiers.CorrosiveModifier)

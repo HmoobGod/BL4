@@ -50,6 +50,6 @@ class ElementalExperiments(unittest.TestCase):
         self.assertEqual(self.values('cryo_damage'),(1.,1.)); self.assertFalse(self.m._controller.fault)
     def test_mismatched_baseline(self):
         self.attrs['corrosive_damage']._values['Value']=1.5; self.p.configure(corrosive_damage=2.); self.p.tick(); self.assert_unmodified()
-    def test_general_damage_still_held(self):
-        self.assertIn('damage',self.m.DAMAGE_HOLD); self.assertNotIn('damage',self.m.AUTO_OPTIONS)
+    def test_general_damage_not_enabled_by_preview(self):
+        self.assertFalse(self.m.AUTO_OPTIONS['damage'].value)
         self.p.configure(shock_damage=2.); self.m.apply({'damage':4.}); self.p.tick(); self.assert_unmodified(('shock_damage',))

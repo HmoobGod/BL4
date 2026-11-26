@@ -160,6 +160,11 @@ from test_native_regen_r62 import NativeRegenTest
 for name in NativeRegenTest.__dict__:
     if name.startswith('test_'):
         t=NativeRegenTest(name);unique[t.id()]=t
+from test_requested_damage import Damage, PersistentDamage
+for cls in (Damage, PersistentDamage):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

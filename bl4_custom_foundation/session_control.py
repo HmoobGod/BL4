@@ -7,8 +7,8 @@ from . import weapon_rates, inventory_capacity, shield_rates, gadget_rates
 
 from .ground_speed import floor_target
 
-# R7: explicit elemental-only experiments; general damage remains HOLD.
-DAMAGE_HOLD = frozenset(('damage',))
+# Legacy pawn-wide damage path stays excluded; damage now uses equipped weapon scope.
+DAMAGE_HOLD = frozenset()
 GROUND_KEYS = frozenset(('walk_speed', 'sprint'))
 
 class Controller:
