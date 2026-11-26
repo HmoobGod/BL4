@@ -17,6 +17,7 @@ FEATURES = {
     'damage': ('Damage multiplier', .5, 5.),
     'fire_rate': ('Weapon fire rate multiplier (experimental)', .5, 3.),
     'reload': ('Weapon reload speed multiplier (experimental)', .5, 3.),
+    'swap_time': ('Weapon swap time scale (experimental)', .5, 3.),
     'ammo_regen_rate': ('Existing ammo regeneration rate (experimental)', .5, 3.),
     'ammo_regen_delay': ('Existing ammo regeneration delay speed (experimental)', .5, 3.),
     'lifesteal_rate': ('Existing life-steal rate (experimental)', .5, 3.),
@@ -139,6 +140,14 @@ def repair_health(pawn, state):
     return pair(nested(health, 'RepairKitHealth', 'GbxAttributeFloat'))
 
 
+def swap_time(pawn, state):
+    # Pawn-owned native time scale, not a shared weapon definition.
+    from .weapon_rates import nested
+    if pawn is None or 'Default__' in pawn._path_name():
+        raise ValueError('live player pawn required')
+    return pair(nested(pawn, 'WeaponSwapTimeScale', 'GbxAttributeFloat'))
+
+
 def lifesteal_rate(pawn, state):
     # Only the existing local rate; do not turn on life-steal, change its cap,
     # or touch any health pool value. Historical OakDamageState declaration.
@@ -195,6 +204,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
            'repair_health': repair_health,
+           'swap_time': swap_time,
            'lifesteal_rate': lifesteal_rate,
            'damage': lambda p, s: pair(p.DamageCauserData.DamageDealtMultiplier),
            'damage_taken': lambda p, s: pair(p.DamageState.DamageTakenMultiplier),
