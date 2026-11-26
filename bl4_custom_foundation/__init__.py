@@ -91,7 +91,7 @@ _JUMP_EVENT_PATH = '/Script/Engine.Character:OnJumped'
 _JUMP_EVENT_ID = 'bl4_custom_second_jump_event_v0751exp'
 _jump_event_attempted = False
 _jump_event_owned = False
-_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY}
+_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY} | RARITY_KEYS
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_HIGH_PREF = BoolOption('vacuum_pref_high_gear', False, display_name='Saved vacuum legendary/pearlescent beams only')
@@ -427,7 +427,7 @@ def draw():
     if _category == 5:
         panels = visible_action_panels(ui, 5, ('Loot Vacuum', 'Automatic reload'))
         if auto_master.value is True:
-            ui.text_wrapped('Persistent automation: movement, elemental and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload follows supported idle weapon/mode swaps and waits for reserve recovery between requests. Toggle a stopped lane off/on to rearm.')
+            ui.text_wrapped('Persistent automation: movement, elemental, rarity weights and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload follows supported idle weapon/mode swaps and waits for reserve recovery between requests. Toggle a stopped lane off/on to rearm.')
             for kind, option in AUTOMATION_OPTIONS.items():
                 if kind not in ('vacuum','reload') or ('Loot Vacuum' if kind == 'vacuum' else 'Automatic reload') not in panels: continue
                 edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
