@@ -386,7 +386,7 @@ def draw():
     if _native_overtime_used:
         ui.text_wrapped('Native timed flesh test attempted: stay offline, do not travel, and exit game after the test.')
     if health_active():
-        ui.text_wrapped('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.')
+        ui.text_wrapped('Native rate trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
         if ui.button('Stop experimental action / Restore ALL'):
             request_stop('F8 restore all', immediate=True)
     ui.separator()
@@ -520,12 +520,18 @@ def draw():
             ui.text_wrapped('Native regeneration start/stop test: uses a distinct constant-rate initializer and existing flesh tags. Rate units and stop/expiry are unverified; share one timed attempt per process. Exit after testing.')
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native regeneration start/stop (2 sec)'):
                 activate_feature('health_regen_native', 1.0)
+            ui.text_wrapped('Native passive regeneration rate trial: small additive native rate, not a refill. Ten-second maximum; restore before travel. Rate units and actual healing unverified.')
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native passive health rate (10 sec)'):
+                activate_feature('native_rate_health', 1.0)
             ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
                 activate_feature('shield_pulse', 1.0)
         if 'Action skills' in panels:
             ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
+            ui.text_wrapped('Native resource-rate trials: 2x cooldown regeneration or half duration consumption, one at a time. Exact runtime property path and reversible readback required; no refill. Restore before skill changes.')
             for mode in ('cooldown','duration'):
+                if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
+                    activate_feature('native_rate_'+mode, 1.0)
                 if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental skill '+mode+' assist (30 sec)'):
                     activate_feature('skill_'+mode, 1.0)
     if _category == 8:
@@ -1184,6 +1190,38 @@ def begin_native_regen():
     _health_pulse.begin()
 
 
+def begin_native_resource_rate(mode):
+    global _health_pulse
+    from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
+                                        TARGETS, bind_health_readers, make_local_resolver, original_pool_identity)
+    from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
+    if mode not in TARGETS or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
+        raise ValueError('restore active features before native resource-rate trial')
+    sdk=sys.modules['unrealsdk'];u=sdk.unreal
+    names=set(RATE_SPECS)|set(POOL_SPECS)|set(ACTION_NAMES)|{'GetResourcePoolValue','GetResourcePoolPercent'}
+    functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in names]
+    binding=NativeBinding(functions,loot_bound,u.FGbxDefPtr,u.WrappedStruct)
+    session=bound_session(sdk)
+    def context():return current_session(session)
+    def permitted():
+        hooks=sdk.hooks
+        return (mod.is_enabled is True and _offline_confirmed and auto_master.value is not True and not _auto_owned
+                and not _automation_leases and not conflicting_mods() and _monitor_registered
+                and _monitor_thread==threading.get_ident()
+                and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
+    readers=None;skill=None
+    if mode=='health':readers=bind_health_readers(functions,loot_bound)
+    else:
+        ref,api=bind(functions,loot_bound)
+        adaptive=bind_action_percent(functions,loot_bound,mode,ref)
+        skill=SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,
+                         lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
+                         adaptive_api=adaptive,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
+    resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill)
+    _health_pulse=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key))
+    _health_pulse.begin()
+
+
 def begin_skill_pulse(mode):
     global _health_pulse
     from .skill_pulse import SkillPulse, bind, SPECS
@@ -1452,7 +1490,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in ('health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous') and _controller is not None and _controller.records:
+        if key in ('native_rate_health','native_rate_cooldown','native_rate_duration','health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous') and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1493,6 +1531,10 @@ def execute_activation(key, selection):
         return
     if key in ('skill_cooldown','skill_duration'):
         begin_skill_pulse(key.split('_',1)[1])
+        return
+    if key in ('native_rate_health','native_rate_cooldown','native_rate_duration'):
+        if selection != 1.0:raise ValueError('invalid native rate trial selection')
+        begin_native_resource_rate(key.rsplit('_',1)[1])
         return
     if key == 'health_regen_native':
         if selection != 1.0:raise ValueError('invalid native regeneration selection')
