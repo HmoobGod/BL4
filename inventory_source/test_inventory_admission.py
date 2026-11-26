@@ -22,7 +22,7 @@ class Struct(Obj):
 
 
 def prop(name, kind, **kw):
-    return type(kind, (N,), {})(Name=name, ArrayDim=1, **kw)
+    return type(kind, (Obj,), {})(Name=name, ArrayDim=1, **kw)
 
 
 def st(name, **props): return Struct(Name=name, props=props)
@@ -46,23 +46,28 @@ class Fixture:
                 BaseValue=prop('BaseValue','ZIntProperty'))
         ct = st('GbxItemContainer', MaxSize=prop('MaxSize','ZStructProperty',Struct=at),
                 ProfileId=prop('ProfileId','ZByteProperty'))
-        slot = st('GbxItemContainerSlot')
+        ht = st('InventoryItemHandle', Handle=prop('Handle','ZIntProperty'))
+        it = st('InventoryItem', Handle=prop('Handle','ZStructProperty',Struct=ht),
+                EquipSlot=prop('EquipSlot','ZInt8Property'))
+        slot = st('GbxItemContainerSlot', InventoryItem=prop('InventoryItem','ZStructProperty',Struct=it))
         slots = st('GbxItemSlotsContainer', items=prop('items','ZArrayProperty',
                    Inner=prop('Inner','ZStructProperty',Struct=slot)))
         psclass = st('OakPlayerState', BackpackContainer=prop('BackpackContainer','ZStructProperty',Struct=ct),
                      BackpackItems=prop('BackpackItems','ZStructProperty',Struct=slots))
         self.field=Obj(_type=at, Value=70, BaseValue=16)
         self.ps=Obj(Class=psclass, BackpackContainer=Obj(_type=ct,MaxSize=self.field,ProfileId=1),
-                    BackpackItems=Obj(_type=slots,items=[Obj(InventoryItem=N(Handle=N(Handle=i),EquipSlot=-1)) for i in range(4)]))
-        self.state=Obj(PlayerArray=[self.ps])
+                    BackpackItems=Obj(_type=slots,items=[Obj(_type=slot,InventoryItem=Obj(_type=it,Handle=Obj(_type=ht,Handle=i),EquipSlot=-1)) for i in range(4)]))
+        def op(name, target): return prop(name,'ZObjectProperty',PropertyClass=N(Name=target))
+        def arr(name, target): return prop(name,'ZArrayProperty',Inner=op('Inner',target))
+        self.state=Obj(Class=st('OakGameState',PlayerArray=arr('PlayerArray','PlayerState')),PlayerArray=[self.ps])
         self.pawn=Obj()
         self.pc=Obj(PlayerState=self.ps)
         self.manager=Obj(PCOwner=self.pc);self.pc.PlayerCameraManager=self.manager
         self.camera=Obj(CameraOwner=self.manager)
-        self.lp=Obj(PlayerController=self.pc)
-        self.gi=Obj(Class=N(Name='OakGameInstance'),LocalPlayers=[self.lp])
-        self.world=Obj(Class=N(Name='World'),GameState=self.state,OwningGameInstance=self.gi)
-        self.viewport=Obj(World=self.world)
+        self.lp=Obj(Class=st('LocalPlayer',PlayerController=op('PlayerController','PlayerController')),PlayerController=self.pc)
+        self.gi=Obj(Class=st('OakGameInstance',LocalPlayers=arr('LocalPlayers','LocalPlayer')),LocalPlayers=[self.lp])
+        self.world=Obj(Class=st('World',GameState=op('GameState','GameStateBase'),OwningGameInstance=op('OwningGameInstance','GameInstance')),GameState=self.state,OwningGameInstance=self.gi)
+        self.viewport=Obj(Class=st('GameViewportClient',World=op('World','World')),World=self.world)
         self.mods=N(ENGINE=N(GameViewport=self.viewport))
         self.standalone=True;self.eligible=True
         self.api=(lambda _:self.standalone,None,None,None,lambda _:self.state)
@@ -196,5 +201,32 @@ class Tests(unittest.TestCase):
             if calls==1: ps.BackpackItems.items[0].InventoryItem.Handle.Handle=888
             return v
         with patch.object(a,'occupancy_stamp',side_effect=changed): self.reject()
+
+    def test_world_descriptor_wrong(self):
+        self.arm();self.x.world.Class.props['GameState'].PropertyClass.Name='Wrong';self.reject()
+
+    def test_nested_handle_descriptor_wrong(self):
+        self.arm();self.x.ps.BackpackItems.items[0].InventoryItem.Handle._type.props['Handle'].ArrayDim=2;self.reject()
+
+    def test_nested_wrapper_wrong(self):
+        self.arm();self.x.ps.BackpackItems.items[0]._type=st('GbxItemContainerSlot');self.reject()
+
+    def test_equipment_must_be_signed_integer(self):
+        self.arm();self.x.ps.BackpackItems.items[0].InventoryItem.EquipSlot='-1';self.reject()
+
+    def test_bank_readback_with_distinct_structs(self):
+        x=self.x;ps=x.ps;ct=ps.BackpackContainer._type;stt=ps.BackpackItems._type
+        ps.Class.props['BankContainer']=prop('BankContainer','ZStructProperty',Struct=ct)
+        ps.Class.props['BankItems']=prop('BankItems','ZStructProperty',Struct=stt)
+        field=Obj(_type=x.field._type, Value=100, BaseValue=25)
+        ps.BankContainer=Obj(_type=ct,MaxSize=field,ProfileId=2)
+        ps.BankItems=Obj(_type=stt,items=list(ps.BackpackItems.items))
+        self.assertTrue(x.shot.arm('bank',CONFIRM));x.fire()
+        self.assertEqual(x.shot.result,(100,101,100));self.assertEqual(x.field.Value,70)
+
+    def test_bank_occupied_equip_rejected(self):
+        ps=self.x.ps;ps.BankItems=ps.BackpackItems
+        ps.BankItems.items[0].InventoryItem.EquipSlot=0
+        with self.assertRaises(a.CapacityFault): a.occupancy_stamp(ps,'bank')
 
 if __name__=='__main__': unittest.main()

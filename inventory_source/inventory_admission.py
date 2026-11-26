@@ -94,7 +94,17 @@ def reflection_stamp(ps, kind):
     inner = array.Inner
     require(type(inner).__name__ == 'ZStructProperty' and inner.ArrayDim == 1 and
             str(inner.Struct.Name) == 'GbxItemContainerSlot', 'slot element reflection mismatch')
-    return tuple(identity(x) for x in (container, slots, capacity, ct, st, at, inner.Struct))
+    # Historical GbxGame declarations: InventoryItem and InventoryItemHandle,
+    # signed int32 Handle and signed int8 EquipSlot. Validate the actual SDK
+    # descriptors and each live wrapper before reading any of these fields.
+    it = property_of(inner.Struct, 'InventoryItem', 'ZStructProperty').Struct
+    ht = property_of(it, 'Handle', 'ZStructProperty').Struct
+    require(str(it.Name) == 'InventoryItem' and str(ht.Name) == 'InventoryItemHandle',
+            'nested inventory struct reflection mismatch')
+    hp = property_of(ht, 'Handle', 'ZIntProperty')
+    ep = property_of(it, 'EquipSlot', 'ZInt8Property')
+    return tuple(identity(x) for x in (container, slots, capacity, ct, st, at,
+                                      inner.Struct, it, ht, hp, ep))
 
 
 def occupancy_stamp(ps, kind):
@@ -108,12 +118,22 @@ def occupancy_stamp(ps, kind):
     items = getattr(ps, FIELDS[kind][1]).items
     require(1 <= len(items) <= 10000, 'slot count unavailable')
     entries = []
+    declared_slot = property_of(getattr(ps, FIELDS[kind][1])._type, 'items', 'ZArrayProperty').Inner.Struct
     for i in range(len(items)):
-        item = items[i].InventoryItem
-        handle = item.Handle.Handle
+        slot = items[i]
+        require(identity(slot._type) == identity(declared_slot), 'slot wrapper mismatch')
+        item = slot.InventoryItem
+        it = embedded(declared_slot, 'InventoryItem', 'InventoryItem', item)
+        h = item.Handle
+        embedded(it, 'Handle', 'InventoryItemHandle', h)
+        handle = h.Handle
         require(type(handle) is int and -1 <= handle < 2**31, 'invalid inventory handle')
-        equipped = int(item.EquipSlot) if kind == 'backpack' else None
-        require(equipped is None or -1 <= equipped <= 255, 'invalid equip slot')
+        equipped = item.EquipSlot
+        require(type(equipped) is int and -1 <= equipped <= 127, 'invalid equip slot')
+        # No independent evidence establishes a bank equipped-item exemption.
+        # Refuse unexpected equipped live bank entries rather than assume one.
+        require(kind != 'bank' or handle == -1 or equipped == -1,
+                'unexpected live equipped bank entry')
         entries.append((handle, equipped))
     live = [handle for handle, _ in entries if handle != -1]
     require(len(set(live)) == len(live), 'duplicate live inventory handle')
@@ -126,6 +146,32 @@ def bound_camera(sdk, func, camera):
             isinstance(func.func, sdk.unreal.UFunction) and
             func.func._path_name() == PATH and identity(func.object) == identity(camera),
             'camera BoundFunction identity mismatch')
+
+
+def object_property(owner, name, expected):
+    p = property_of(owner.Class, name, 'ZObjectProperty')
+    require(str(p.PropertyClass.Name) == expected, 'object property class mismatch: ' + name)
+    return identity(p)
+
+
+def object_array(owner, name, expected):
+    p = property_of(owner.Class, name, 'ZArrayProperty')
+    inner = p.Inner
+    require(type(inner).__name__ == 'ZObjectProperty' and inner.ArrayDim == 1 and
+            str(inner.PropertyClass.Name) == expected, 'object array reflection mismatch: ' + name)
+    return identity(p), identity(inner)
+
+
+def world_reflection(objects):
+    _, _, state, _, viewport, world, gi, lp, _, _ = objects
+    # Engine historical declarations and UPlayer inheritance; current runtime
+    # must agree. No raw offsets or pointer reads.
+    return (object_property(viewport, 'World', 'World'),
+            object_property(world, 'GameState', 'GameStateBase'),
+            object_property(world, 'OwningGameInstance', 'GameInstance'),
+            *object_array(gi, 'LocalPlayers', 'LocalPlayer'),
+            *object_array(state, 'PlayerArray', 'PlayerState'),
+            object_property(lp, 'PlayerController', 'PlayerController'))
 
 
 def live_objects(f, sdk, api, camera, thread):
@@ -206,6 +252,7 @@ class OneShot:
             original = live_objects(f, sdk, api, camera, thread)
             tokens = tuple(identity(x) for x in original)
             weak = tuple(sdk.unreal.WeakPointer(x) for x in original)
+            world_stamp = world_reflection(original)
             stamp = reflection_stamp(original[3], kind)
             occupancy = occupancy_stamp(original[3], kind)
 
@@ -216,6 +263,8 @@ class OneShot:
                 for ref, token, obj in zip(weak, tokens, objects, strict=True):
                     require(identity(ref()) == token and identity(obj) == token,
                             'original weak identity lost')
+                require(world_reflection(objects) == world_stamp,
+                        'active world reflection changed')
                 require(reflection_stamp(objects[3], kind) == stamp,
                         'embedded inventory identity changed')
                 require(occupancy_stamp(objects[3], kind) == occupancy,
