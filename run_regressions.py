@@ -10,6 +10,11 @@ from test_vacuum_r26 import Continuous
 for name in Continuous.__dict__:
     if name.startswith('test_'):
         t=Continuous(name);unique[t.id()]=t
+from test_automation_r28 import SwapReload, LiveVacuum, Coexist
+for cls in (SwapReload, LiveVacuum, Coexist):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

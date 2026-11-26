@@ -144,6 +144,18 @@ class Vacuum:
         if self.record is not None:
             self.record=None;self.report(f'STOP: vacuum {reason}; {self.moved} native relocation successes, not confirmed pickups; moved items not restored')
 
+    def update_preferences(self,categories,radius):
+        """Committed persistent preferences only; preserve the original lease and ledger.
+        Empty filters pause scanning, but not session validation.
+        """
+        if self.record is None or self.busy or self.fault or not self.continuous:return False
+        if self.thread()!=self.record[2]:return False
+        categories=frozenset(categories)
+        if not categories<=CATEGORIES or type(radius) not in (float,int) or not math.isfinite(radius) or not 5<=radius<=100:
+            raise ValueError('invalid vacuum preferences')
+        self.categories,self.radius=categories,radius
+        return True
+
     def vendors(self,pc,lev):
         out=[];display=set();machines=self.find('OakVendingMachine',exact=False)
         if len(machines)>256:raise ValueError('too many vending machines')
@@ -180,6 +192,7 @@ class Vacuum:
             if self.continuous:
                 while self.recent and self.recent[0]<=now-30:self.recent.popleft()
                 if len(self.recent)>=24:return
+            if not self.categories:return
             vendors=self.vendors(pc,lev)
             actors=self.find('InventoryPickup',exact=True)
             if len(actors)>1024:raise ValueError('pickup scan exceeds limit')

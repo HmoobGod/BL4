@@ -11,7 +11,7 @@ from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
 from .inventory_capacity import KEYS as CAPACITY_KEYS
 
-TITLE = 'BL4 Custom - Community Integration v0.7.25-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.26-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -78,7 +78,7 @@ _automation_attempted = set()
 _automation_status = {}
 _automation_next = 0.0
 _automation_busy = False
-_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity'))
+_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration'))
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., is_integer=False, display_name='Saved vacuum radius (m)')
@@ -259,7 +259,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.25-experimental')
+    ui.text('BL4 CUSTOM | v0.7.26-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -336,7 +336,7 @@ def draw():
         ui.text('Ground speed is a reference floor; 1x restores.')
     if _category == 5:
         if auto_master.value is True:
-            ui.text_wrapped('Persistent automation: movement-compatible; vacuum uses saved filters/radius. Reload remains tied to the original weapon. Toggle a stopped lane off/on to rearm.')
+            ui.text_wrapped('Persistent automation: movement and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload follows supported idle weapon swaps between requests. Toggle a stopped lane off/on to rearm.')
             for kind, option in AUTOMATION_OPTIONS.items():
                 edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
                 if edited: set_auto_setting(option, selected)
@@ -352,7 +352,7 @@ def draw():
                 _vacuum_radius = max(5., min(100., radius))
             if ui.button('Save vacuum preferences'):
                 try:
-                    save_vacuum_preferences(); _status = 'Vacuum preferences saved; no activation.'
+                    save_vacuum_preferences(); _status = 'Vacuum preferences saved; active persistent vacuum updates on gameplay callback.'
                 except Exception:
                     _status = 'Vacuum preferences save failed.'
             if ui.button('Load saved vacuum preferences'):
@@ -550,7 +550,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.25-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.26-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -780,7 +780,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.25-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.26-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -816,7 +816,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0725exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0726exp'
 
 
 def monitor_status():
@@ -850,7 +850,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.25-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.26-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -876,7 +876,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.25-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.26-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1026,7 +1026,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0725exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0726exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1599,6 +1599,8 @@ def automation_tick():
                 return
             lease = _automation_leases.get(kind)
             if lease is not None:
+                if kind == 'vacuum' and callable(getattr(lease,'update_preferences',None)):
+                    lease.update_preferences(tuple(k for k,o in VACUUM_PREFS.items() if o.value is True), normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value))
                 lease.tick(True)
                 if lease.fault:
                     _automation_leases[kind] = lease  # retain late fault even after reentrant stop
@@ -1640,7 +1642,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.25-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.26-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

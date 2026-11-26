@@ -1,7 +1,8 @@
 """Bounded opt-in normal reload request; no ammo writes, grants or input injection."""
+from collections import deque
 from .gameplay_fields import identity
 from .health_pulse import enum_name
-from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, live
+from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, live, slot_entries
 
 PATH = '/Script/GbxWeapon.WeaponStatics:'
 REQUEST = '/Script/GbxWeapon.Weapon:ServerStartReloading'
@@ -46,9 +47,10 @@ class ReloadAssist:
         self.session_mode=session_mode and continuous
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
+        self.recent=deque();self.swap_paused=False
         self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
 
-    def resolve(self):
+    def resolve(self, check_weapon=True):
         pc,pawn,state,ok=self.context()
         if not ok or enum_name(pawn.HealthCondition)!='Healthy' or self.api[2](pawn) is not True:
             raise ValueError('eligible healthy local weapon authority required')
@@ -60,7 +62,7 @@ class ReloadAssist:
         key=(tuple(identity(o) for o in objs),index)
         if self.record is not None:
             refs,original,tid,end,due=self.record
-            if self.thread()!=tid or key!=original or any(r() is None or identity(r())!=i for r,i in zip(refs,key[0],strict=True)):
+            if self.thread()!=tid or key[0][:3]!=original[0][:3] or any(r() is None or identity(r())!=i for r,i in zip(refs[:3],key[0][:3],strict=True)) or (check_weapon and (key!=original or any(r() is None or identity(r())!=i for r,i in zip(refs[3:],key[0][3:],strict=True)))):
                 raise ValueError('original weapon/mode/behavior/session changed')
         for n in ('LoadedAmmo','StoredAmmo','SpareAmmo','ServerSyncedLoadedAmmo'):
             prop(pool.Class,n,'ZIntProperty')
@@ -83,13 +85,52 @@ class ReloadAssist:
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),float("inf") if self.session_mode else now+30,now+.1)
             self.previous=loaded;self.empty_seen=False
             self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
+            self.recent.clear();self.swap_paused=False
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
-        self.report('EXPERIMENT: session reload armed (max ten requests, original weapon)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
+        self.report('EXPERIMENT: session reload armed (ten requests per rolling 30s; supported idle swaps)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
     def stop(self,reason):
         if self.record is not None:
             self.record=None;self.previous=None;self.empty_seen=False
             self.report('STOP: auto reload '+reason+'; an already started normal reload is not cancelled')
+
+    def session_sample(self, snapshot):
+        """Only retarget between requests, in the same weakly pinned player/session.
+        A pending transition suppresses all requests; a replacement must be idle
+        and loaded. Never transfer an empty-magazine or completion witness.
+        """
+        refs,key,tid,end,due=snapshot
+        pc,pawn,state,ok=self.context()
+        if (not ok or self.thread()!=tid or enum_name(pawn.HealthCondition)!='Healthy'
+                or tuple(identity(o) for o in (pc,pawn,state))!=key[0][:3]
+                or any(r() is None or identity(r())!=i for r,i in zip(refs[:3],key[0][:3],strict=True))
+                or self.api[2](pawn) is not True):
+            raise ValueError('original reload session changed')
+        if any(s.PendingWeapon is not None or s.ClientPredictedPendingWeapon is not None for s in slot_entries(pawn)):
+            if self.waiting:raise ValueError('swap during unconfirmed reload')
+            if self.record is snapshot:
+                self.swap_paused=True;self.previous=None;self.empty_seen=False
+                self.record=(refs,key,tid,end,self.clock()+.1)
+            return None
+        sample=self.resolve(check_weapon=False)
+        if self.record is not snapshot:return None
+        objs,fresh_key,_,loaded,_,reserve,native_state=sample
+        changed=fresh_key!=key
+        if changed and fresh_key[0][3]==key[0][3]:raise ValueError('same weapon mode or behavior changed')
+        if changed or self.swap_paused:
+            if self.waiting:raise ValueError('swap during unconfirmed reload')
+            if native_state!='Active' or not loaded or min(reserve)<=0:
+                raise ValueError('replacement must be idle loaded with reserve')
+            new_refs=tuple(self.weak(o) for o in objs)
+            if self.record is not snapshot:return None
+            self.record=(new_refs,fresh_key,tid,end,self.clock()+.1)
+            self.previous=None;self.empty_seen=False;self.swap_paused=False
+            self.report('EXPERIMENT: supported idle weapon admitted; awaiting fresh positive magazine sample')
+            return None
+        # Verify full original weak identities even when the address tuple matches.
+        if any(r() is None or identity(r())!=i for r,i in zip(refs[3:],key[0][3:],strict=True)):
+            raise ValueError('original weapon identity lost')
+        return sample
 
     def tick(self,permitted):
         if self.record is None or self.busy:return
@@ -98,7 +139,10 @@ class ReloadAssist:
         if now<due:return
         snapshot=self.record;self.busy=True
         try:
-            try:_,_,_,loaded,maximum,reserve,state=self.resolve()
+            try:
+                sample=self.session_sample(snapshot) if self.session_mode else self.resolve()
+                if sample is None:return
+                _,_,_,loaded,maximum,reserve,state=sample
             except Exception as e:self.stop(str(e)[:120]);return
             if self.record is not snapshot:return
             self.record=(refs,key,tid,end,now+.1)
@@ -125,6 +169,9 @@ class ReloadAssist:
             if self.previous and loaded==0:
                 self.empty_seen=True;self.previous=0;return
             if not self.empty_seen or state!='Active':return
+            if self.session_mode:
+                while self.recent and self.recent[0]<=now-30:self.recent.popleft()
+                if len(self.recent)>=10:return
             try:
                 fresh=self.resolve()
                 last=self.context()
@@ -138,13 +185,14 @@ class ReloadAssist:
                 if self.continuous:
                     self.waiting=True;self.saw_reload=False;self.completion_samples=0
                     self.completion_deadline=min(end,self.clock()+10.)
+                if self.session_mode:self.recent.append(self.clock())
                 fresh[2](key[1],0)
                 if self.record is None:return
                 self.completed+=1
                 if not self.continuous:
                     self.stop('one native request completed')
                     self.report('EXPERIMENT: normal reload requested once; actual outcome unverified')
-                elif self.completed>=10:
+                elif not self.session_mode and self.completed>=10:
                     self.stop('maximum ten distinct requests reached')
                 else:
                     # A fast reload can start and end between camera samples.
