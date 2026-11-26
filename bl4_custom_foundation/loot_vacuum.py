@@ -55,11 +55,62 @@ def body_kind(path):
     return next(iter(matches)) if len(matches)==1 and words.intersection({'pickup','pickups','consumable','consumables'}) else None
 
 
+# The DLC namespace has an extra content-pack segment. Restrict new admission
+# to concrete equipment families; require matching reflected body and package
+# identities rather than accepting arbitrary DLC names or beam color alone.
+DLC_GEAR_FAMILIES = frozenset(('Weapons', 'GrenadeGadgets', 'Gadgets',
+                              'RepairKits', 'Enhancements', 'Shields', 'ClassMods'))
+DLC_BODY_TYPE = '/Script/GbxGame.InventoryBodyData'
+
+
+def is_dlc_gear_path(path):
+    if type(path) is not str:return False
+    segments=path.split('/')
+    return len(segments)>4 and segments[:3]==['', 'Game', 'DLC'] and segments[4]=='Gear'
+
+
+def dlc_gear_witness(actor, body=None):
+    body = actor.BodyData if body is None else body
+    path = body._path_name()
+    if not is_dlc_gear_path(path):
+        return None
+    package, dot, object_name = path.rpartition('.')
+    parts = package.split('/')
+    # Exact package/object form, not arbitrary nested objects or generated assets.
+    if (not dot or len(parts) < 7 or parts[:3] != ['', 'Game', 'DLC']
+            or parts[4] != 'Gear' or parts[5] not in DLC_GEAR_FAMILIES
+            or not all(re.fullmatch(r'[A-Za-z0-9_]+', x) for x in parts[3:])
+            or object_name != parts[-1]
+            or (parts[5]=='Gadgets' and (len(parts)<8 or parts[6]!='HeavyWeapons'))):
+        raise ValueError('unsupported DLC gear namespace')
+    if body_kind('/Game/' + '/'.join(parts[4:]) + '.' + object_name) != 'gear':
+        raise ValueError('excluded DLC gear namespace')
+    # Include the DLC pack name in the exclusions too.
+    if body_kind('/Game/Gear/' + parts[3] + '/Body.Body') != 'gear':
+        raise ValueError('excluded DLC pack namespace')
+    descriptor = prop(actor.Class, 'BodyData', 'ZObjectProperty')
+    if (descriptor.PropertyClass._path_name() != DLC_BODY_TYPE
+            or body.Class._path_name() != DLC_BODY_TYPE
+            or identity(descriptor.PropertyClass) != identity(body.Class)):
+        raise ValueError('DLC body descriptor mismatch')
+    outer = body.Outer
+    if (outer is None or outer.Class._path_name() != '/Script/CoreUObject.Package'
+            or outer._path_name() != package):
+        raise ValueError('DLC body package mismatch')
+    return (path, identity(body), identity(outer), identity(body.Class))
+
+
 def classify(actor, high_gear_only=False):
     body=actor.BodyData
     if body is None:
         return None  # material-only names are ambiguous
-    k=body_kind(body._path_name())
+    path=body._path_name()
+    if is_dlc_gear_path(path):
+        try:
+            if dlc_gear_witness(actor,body) is None:return None
+        except Exception:return None
+        k='gear'
+    else:k=body_kind(path)
     if k is None:return None
     effect=actor.AttractEffectComponent
     if effect is None:return None
@@ -255,7 +306,8 @@ class Vacuum:
         if kind not in self.categories:return None
         native = native_gear_identity(a) if kind == 'gear' else None
         if native is not None and native[0] in self.gear_ids:return None
-        return dist,key+(native,),kind
+        dlc = dlc_gear_witness(a) if kind == 'gear' else None
+        return dist,key+(native,dlc),kind
 
     def tick(self,permitted):
         if self.record is None or self.busy:return
@@ -328,6 +380,8 @@ class Vacuum:
                     try:
                         native = native_gear_identity(a)
                         if native != item_key[2] or (native is not None and native[0] in self.gear_ids):continue
+                        if dlc_gear_witness(a) != item_key[3]:continue
+                        if item_key[3] is not None and classify(a,self.high_gear_only) != 'gear':continue
                     except Exception:continue
                     if native is not None:self.gear_ids.add(native[0])
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1

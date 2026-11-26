@@ -132,6 +132,10 @@ from test_overshield_r55 import Overshield
 for name in Overshield.__dict__:
     if name.startswith('test_'):
         t=Overshield(name);unique[t.id()]=t
+from test_vacuum_dlc_r56 import DlcGear
+for name in DlcGear.__dict__:
+    if name.startswith('test_'):
+        t=DlcGear(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
