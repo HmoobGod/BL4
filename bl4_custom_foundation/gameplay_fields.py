@@ -7,6 +7,8 @@ import struct
 
 # Distinct owners and meanings; no aliases between features.
 FEATURES = {
+    'backpack_capacity': ('Backpack capacity (slots; 1 restores)', 1., 1000.),
+    'bank_capacity': ('Bank capacity (slots; 1 restores)', 1., 1000.),
     'legendary_weight': ('Legendary rarity weight', .1, 10.),
     'common_weight': ('Common rarity weight', 0., 10.),
     'uncommon_weight': ('Uncommon rarity weight', 0., 10.),
@@ -241,6 +243,10 @@ def target_values(key, baseline, tokens, selection):
     _, low, high = FEATURES[key]
     if type(selection) not in (int, float) or not math.isfinite(selection) or not low <= selection <= high:
         raise ValueError('invalid multiplier')
+    if key in ('backpack_capacity', 'bank_capacity'):
+        if selection != int(selection):
+            raise ValueError('capacity requires whole slots')
+        return tuple(int(selection) for _ in baseline)
     # Exact representable native targets, not fuzzy comparisons with foreign writes.
     if key in RARITY_KEYS and selection != round(selection, 1):
         raise ValueError('rarity weight uses 0.1 increments')

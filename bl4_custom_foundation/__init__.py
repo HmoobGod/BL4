@@ -9,8 +9,9 @@ from .gameplay_fields import FEATURES, RARITY_KEYS
 from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity
+from .inventory_capacity import KEYS as CAPACITY_KEYS
 
-TITLE = 'BL4 Custom - Community Integration v0.7.19-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.20-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -54,7 +55,7 @@ CATEGORIES = [
         progression_slider('progress_enemy_xp', 'Enemy kill XP'),
         progression_slider('progress_mission_xp', 'Mission XP')]),
     ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), progression_slider('overall_loot_luck', 'Overall loot luck'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
-    ('inventory', 'Inventory', [slider('capacity', 'Capacity multiplier')]),
+    ('inventory', 'Inventory', [SliderOption(k, 1., 1., 1000., step=1, is_integer=True, display_name=FEATURES[k][0], description='Experimental absolute slots; 1 restores captured original. Never fill above original capacity during testing.') for k in ('backpack_capacity','bank_capacity')]),
     ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
     ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Manual experimental: existing positive native rate only; 1x restores.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate')]]),
@@ -65,7 +66,7 @@ PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Persistent gameplay (experimental)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
-MANUAL_ONLY = frozenset(('sprint', 'fire_rate', 'reload', 'repair_health', 'ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'swap_time', 'weapon_spread', 'weapon_recoil'))
+MANUAL_ONLY = CAPACITY_KEYS | frozenset(('sprint', 'fire_rate', 'reload', 'repair_health', 'ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'swap_time', 'weapon_spread', 'weapon_recoil'))
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values()]
@@ -95,7 +96,8 @@ def normalize(option, value):
         return value if type(value) is bool else option.default_value
     if type(value) not in (int, float) or not math.isfinite(value):
         return option.default_value
-    return round(max(option.min_value, min(option.max_value, value)), 1)
+    bounded = max(option.min_value, min(option.max_value, value))
+    return round(bounded) if option.identifier in CAPACITY_KEYS else round(bounded, 1)
 
 
 def apply(values):
@@ -230,7 +232,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.19-experimental')
+    ui.text('BL4 CUSTOM | v0.7.20-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -258,7 +260,9 @@ def draw():
     if health_fault() or (_controller is not None and _controller.fault):
         ui.text_wrapped('FAULT LATCHED: exit game immediately; do not play.')
     if _controller is not None:
-        ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' ' + str(r.get('selection', '?')) + 'x' for k, r in _controller.records.items()) or 'None / vanilla'))
+        ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' ' + str(r.get('selection', '?')) + (' slots' if k in CAPACITY_KEYS else 'x') for k, r in _controller.records.items()) or 'None / vanilla'))
+        if any(r.get('overfull_warning') for r in _controller.records.values()):
+            ui.text_wrapped('CAPACITY RESTORE HOLD: remove excess items in this offline session, then restore. Do not travel, buy SDUs or exit while over capacity.')
         if _controller.records and not _controller.fault and ui.button('Restore ALL active gameplay values'):
             pause_auto('F8 restore all')
             request_stop('F8 restore all', immediate=True)
@@ -327,7 +331,7 @@ def draw():
         if isinstance(o, BoolOption):
             edited, value = ui.checkbox(label, value)
         else:
-            edited, value = ui.slider_float(label, value, o.min_value, o.max_value, '%.1fx')
+            edited, value = ui.slider_float(label, float(value), o.min_value, o.max_value, '%.0f slots' if o.identifier in CAPACITY_KEYS else '%.1fx')
             if o.identifier in RARITY_KEYS or o.identifier.startswith('progress_') or o.identifier == 'overall_loot_luck':
                 # Older bindings may omit input_float; slider remains available.
                 numeric = getattr(ui, 'input_float', None)
@@ -358,6 +362,8 @@ def draw():
             if auto_master.value is True:
                 ui.text('Disable persistent master to use sprint-only mode.')
                 continue
+        if key in CAPACITY_KEYS:
+            ui.text_wrapped('EXPERIMENTAL: absolute slots, 1 restores original. Use a backup character; do not fill beyond original capacity. Restore before SDU purchase, travel or exit.')
         if key in MANUAL_ONLY - {'sprint'}:
             ui.text_wrapped('Experimental local instance control; gameplay effect unverified. 1x restores. Restore before switching gear or travel.')
             if auto_master.value is True:
@@ -486,7 +492,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.19-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.20-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -716,7 +722,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.19-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.20-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -752,7 +758,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0718exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0720exp'
 
 
 def monitor_status():
@@ -786,7 +792,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.19-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.20-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -812,7 +818,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.19-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.20-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -856,7 +862,7 @@ def conflicting_mods():
     # Do not import third-party mods or invoke their private APIs.
     known = {'loottreadmill', 'rarityremover', 'damageandmore', 'bl4damageandmore',
              'resourcesandcooldowns', 'bl4resourcesandcooldowns', 'bl4playermovement',
-             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload'}
+             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank'}
     for name, module in tuple(sys.modules.items()):
         if '.' in name or name.replace('_', '').casefold() not in known:
             continue
@@ -948,7 +954,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0718exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0720exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1162,7 +1168,7 @@ def activate_feature(key, selection):
         expire_activation()
         if _activation_request is not None:
             raise ValueError('another activation is already queued')
-        if not report_live('QUEUED ' + key + ': ' + repr(selection) + 'x; ' + monitor_status()):
+        if not report_live('QUEUED ' + key + ': ' + repr(selection) + (' slots; ' if key in CAPACITY_KEYS else 'x; ') + monitor_status()):
             return
         _activation_request = (key, selection, threading.get_ident(), time.monotonic() + 3.0)
     except Exception as exc:
@@ -1427,7 +1433,7 @@ def auto_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.19-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.20-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

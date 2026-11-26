@@ -2,7 +2,7 @@
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
 from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal
-from . import weapon_rates
+from . import weapon_rates, inventory_capacity
 
 
 from .ground_speed import floor_target
@@ -34,7 +34,11 @@ class Controller:
         if not eligible:
             raise ValueError('eligible authoritative one-player session required')
         scope = weapon_rates.capture(pawn, key, self.weak_pointer) if key in weapon_rates.WEAPON_KEYS else None
-        if scope is not None:
+        inv = inventory_capacity.capture(pc, pawn, key, self.weak_pointer) if key in inventory_capacity.KEYS else None
+        if inv is not None:
+            resolved, _ = inventory_capacity.resolve(pc, pawn, inv)
+            _, tokens, baseline = describe_fields(resolved)
+        elif scope is not None:
             resolved, active = weapon_rates.resolve(pawn, scope)
             if not active:
                 raise ValueError('weapon no longer active')
@@ -54,7 +58,7 @@ class Controller:
         return dict(key=key, pc=self.weak_pointer(pc), pawn=self.weak_pointer(pawn),
                     state=self.weak_pointer(state), pc_id=identity(pc), pawn_id=identity(pawn),
                     state_id=identity(state), tokens=tokens, baseline=baseline,
-                    weapon_scope=scope, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
+                    weapon_scope=scope, inventory_scope=inv, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
 
     def resolve(self, record, *, observed=None):
         if self.thread() != record['thread']:
@@ -72,7 +76,11 @@ class Controller:
         if record['key'] not in RARITY_KEYS and not same_pawn:
             raise ValueError('original pawn no longer identifiable')
         scope = record.get('weapon_scope')
-        if scope is not None:
+        inv = record.get('inventory_scope')
+        if inv is not None:
+            resolved, _ = inventory_capacity.resolve(pc, pawn, inv)
+            fields, tokens, values = describe_fields(resolved)
+        elif scope is not None:
             resolved, active = weapon_rates.resolve(pawn, scope)
             fields, tokens, values = describe_fields(resolved)
             eligible = eligible and active
@@ -88,6 +96,13 @@ class Controller:
             raise ValueError('session became ineligible')
         if any(v not in allowed for v, allowed in zip(values, record['owned'], strict=True)):
             raise ValueError('unexpected foreign value; refused to overwrite')
+        inv = record.get('inventory_scope')
+        if inv is not None:
+            pc, pawn, _, eligible_now = self.context()
+            _, count = inventory_capacity.resolve(pc, pawn, inv)
+            if applying and not eligible_now:
+                raise ValueError('inventory session became ineligible')
+            inventory_capacity.validate(inv, count, value, applying=applying)
         if values[index] != value:
             owner, field, _, _ = fields[index]
             setattr(owner, field, value)  # exact allowlisted reflected property only
@@ -101,9 +116,19 @@ class Controller:
         if record is None:
             return True
         try:
-            _, values, _ = self.resolve(record)
+            _, values, eligible = self.resolve(record)
             if any(v not in allowed for v, allowed in zip(values, record['owned'], strict=True)):
                 raise ValueError('unexpected foreign value; refused to overwrite')
+            inv = record.get('inventory_scope')
+            if inv is not None:
+                pc, pawn, _, eligible_now = self.context()
+                _, count = inventory_capacity.resolve(pc, pawn, inv)
+                if count > record['baseline'][0] and eligible and eligible_now:
+                    if not record.get('overfull_warning'):
+                        self.log('HOLD ' + key + ': remove excess items before restoring; original capacity retained in record. Stay offline in original session.')
+                    record['overfull_warning'] = True
+                    return False
+                record.pop('overfull_warning', None)
             for i, base in enumerate(record['baseline']):
                 self.write_one(record, i, base, applying=False)
             _, values, _ = self.resolve(record)
@@ -120,7 +145,7 @@ class Controller:
         if self.fault or self.busy:
             return False
         result = self.restore(key, reason)
-        if not result:
+        if not result and self.fault:
             for other in tuple(self.records):
                 if other != key:
                     self.restore(other, 'another feature faulted')
@@ -148,7 +173,7 @@ class Controller:
             target_values(key, (1.,), ((1, 'dummy', 'ZDoubleProperty'),), selection)
             if selection == 1:
                 result = self.restore(key, '1x selected')
-                if not result:
+                if not result and self.fault:
                     for other in tuple(self.records):
                         if other != key:
                             self.restore(other, 'another feature faulted')
@@ -165,6 +190,12 @@ class Controller:
                 raise ValueError('session or owned value changed')
             targets = (floor_target(record['baseline'], record['tokens'], selection, ground_sprinting, sprint_only=key == 'sprint')
                        if key in GROUND_KEYS else target_values(key, record['baseline'], record['tokens'], selection))
+            if record.get('inventory_scope') is not None:
+                pc, pawn, _, eligible_now = self.context()
+                _, count = inventory_capacity.resolve(pc, pawn, record['inventory_scope'])
+                if not eligible_now:
+                    raise ValueError('inventory session became ineligible')
+                inventory_capacity.validate(record['inventory_scope'], count, targets[0], applying=True)
             if key == 'lifesteal_rate':
                 validate_lifesteal(record['pawn'](), targets)
             if record.get('weapon_scope') is not None:
