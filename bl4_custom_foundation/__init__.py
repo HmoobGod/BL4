@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.43-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.44-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -100,6 +100,7 @@ _auto_status = 'Not active; opt in to persistent gameplay.'
 _auto_ground = None
 _auto_api = None
 _auto_next = 0.0
+_slide_next = 0.0
 _auto_edits = {}
 _auto_edit_at = 0.0
 _auto_last_diagnostic = ''
@@ -281,7 +282,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.43-experimental')
+    ui.text('BL4 CUSTOM | v0.7.44-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -595,7 +596,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.43-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.44-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -825,7 +826,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.43-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.44-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -895,7 +896,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.43-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.44-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -921,7 +922,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.43-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.44-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1467,11 +1468,39 @@ def report_auto_status_change():
             report_live('Persistent status: ' + diagnostic)
 
 
+def pending_slide_selection():
+    # Only a committed, explicitly opted-in, currently inactive slide may use
+    # the faster lane. Active values and edits remain on the normal schedule.
+    if (not _auto_owned or _controller is None or 'slide_speed' in _controller.records
+            or 'slide_speed' in _auto_edits or not auto_allowed()):
+        return None
+    return raw_auto_desired(('slide_speed',)).get('slide_speed')
+
+
+def fast_slide_admission(selection):
+    global _auto_blocked, _auto_ground
+    if _controller.stop_pending is not None or pending_slide_selection() != selection:
+        return
+    try:
+        rec = _controller.capture('slide_speed')
+        _, values, eligible = _controller.resolve(rec)
+        if not eligible or values != rec['expected']:
+            return
+        target_values('slide_speed', rec['baseline'], rec['tokens'], selection)
+    except (AttributeError, TypeError, ValueError):
+        return  # missing/inactive native movement: no write
+    if _controller.stop_pending is not None or pending_slide_selection() != selection:
+        return
+    if not _controller.activate('slide_speed', selection):
+        _auto_ground = None
+        _auto_blocked = 'Activation failed: slide_speed; toggle master to retry'
+
+
 def auto_tick():
     """Camera callback only. Reconcile saved desired settings in owner-confirmed offline solo mode (R2 admission).
     No implicit legacy migration, no retry after unexpected drift or failed write.
     """
-    global _controller, _auto_owned, _auto_blocked, _auto_ground, _auto_next, _auto_api, _auto_status
+    global _controller, _auto_owned, _auto_blocked, _auto_ground, _auto_next, _auto_api, _auto_status, _slide_next
     now = time.monotonic()
     if _activation_request is not None:
         cancel_activation('persistent mode selected')
@@ -1481,7 +1510,8 @@ def auto_tick():
         if _controller is not None and _controller.records:
             _controller.restore_all("automation fault")
         return
-    if not (_controller is not None and _controller.records) and _auto_ground is None and now < _auto_next:
+    slide_selection = pending_slide_selection() if now >= _slide_next else None
+    if not (_controller is not None and _controller.records) and _auto_ground is None and now < _auto_next and slide_selection is None:
         return  # idle only: no owned values or queued animation to protect
     if not _auto_owned and _controller is not None and _controller.records:
         # Never adopt active manual baselines into a new automatic session.
@@ -1537,7 +1567,14 @@ def auto_tick():
             _auto_blocked = 'Unexpected active field change; toggle master to retry'
             return
     if now < _auto_next:
+        if slide_selection is not None:
+            _slide_next = now + .05
+            # Never shorten the loading/reflection backoff or change the normal
+            # 250ms cadence; all active monitoring and permission checks ran above.
+            if _auto_next - now <= .25 and (_auto_ground is None or now < _auto_ground[1]):
+                fast_slide_admission(slide_selection)
         return
+    _slide_next = now + .05
     _auto_next = now + .25
     desired = auto_desired()
     if not desired and not (_controller is not None and _controller.records):
@@ -1568,7 +1605,7 @@ def auto_tick():
                 return
     except Exception:
         _auto_status = 'Waiting for loaded solo character or compatible SDK reflection'
-        _auto_next = now + 1.0  # loading screen or missing reflection: bounded retry, no writes
+        _auto_next = _slide_next = now + 1.0  # loading screen or missing reflection: bounded retry, no writes
         return
     if _controller.stop_pending is not None:
         _controller.restore_all('persistent stop pending')
@@ -1826,7 +1863,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.43-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.44-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
