@@ -141,13 +141,14 @@ def candidates(skill,pawn,ht,inline,soft_identifier=None):
     return out
 
 class SkillPulse:
-    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None):
+    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
         self.context,self.weak,self.ht,self.inline,self.construct,self.ref_type,self.api,self.find=context,weak,ht,inline,construct,ref_type,api,find
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
         self.continuous=continuous is True
+        self.follow=self.continuous and follow is True
         self.soft_identifier=soft_identifier
-        self.record=None;self.fault=False;self.busy=False;self.prev=None;self.pending=None;self.rises=0
+        self.record=None;self.fault=False;self.busy=False;self.prev=None;self.pending=None;self.rises=0;self.follow_candidate=None
         if adaptive_api is not None and (not self.continuous or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
         self.adaptive_api=adaptive_api;self.rate=2.;self.sample_at=None;self.last_delta=None
         self.update_adaptive_rate(rate)
@@ -155,21 +156,66 @@ class SkillPulse:
         if type(rate) not in (int,float) or not math.isfinite(rate) or not 1.<=rate<=3.: raise ValueError('adaptive skill rate out of range')
         if rate!=self.rate:
             self.rate=rate;self.rises=0;self.last_delta=None;self.sample_at=None
+    def owned_skills(self,pawn):
+        skills=self.find()
+        if len(skills)>256: raise ValueError('skill search exceeds bound')
+        return [s for s in skills if s.SkillOwner is not None and identity(s.SkillOwner)==identity(pawn)]
+    def scope(self,snapshot):
+        refs,ids,tid,end,_,_=snapshot
+        pc,pawn,state,ok=self.context()
+        if (not ok or self.thread()!=tid or self.clock()>=end or enum_name(pawn.HealthCondition)!='Healthy'
+                or tuple(identity(x) for x in (pc,pawn,state))!=ids[:3]
+                or any(r() is None or identity(r())!=i for r,i in zip(refs[:3],ids[:3],strict=True))):
+            raise ValueError('original skill session changed')
+        return pc,pawn,state
+    def follow_replacement(self,snapshot):
+        """Persistent only: observe a distinct replacement twice, never carry a trend.
+        Absence, ambiguous layouts, a returning original, or a pending readback stop.
+        No mutation or native refill is performed by this transition.
+        """
+        if not self.follow:return False
+        refs,ids,tid,end,_,key=snapshot
+        _,pawn,_=self.scope(snapshot)
+        owned=self.owned_skills(pawn)
+        if self.record is not snapshot:return True
+        if any(identity(s)==ids[3] for s in owned):
+            if self.follow_candidate is not None:raise ValueError('original skill reappeared during replacement')
+            return False
+        if self.pending is not None:raise ValueError('skill replaced with pending refill readback')
+        if not owned:raise ValueError('unique ordinary replacement unavailable')
+        objs,newkey,_,_,values=self.resolve(initial=True,refresh=True)
+        self.scope(snapshot)
+        if self.record is not snapshot:return True
+        newids=tuple(identity(x) for x in objs)
+        if (newids[:3]!=ids[:3] or newids[3]==ids[3] or newids[4]==ids[4]
+                or newkey[2]==key[2] or set(k[:2] for k in newkey[3]) & set(k[:2] for k in key[3])):
+            raise ValueError('replacement is not a distinct skill and pool layout')
+        now=self.clock()
+        if self.follow_candidate is None:
+            self.follow_candidate=(tuple(self.weak(x) for x in objs[3:]),newids[3:],newkey,now)
+            self.prev=None;self.pending=None;self.rises=0;self.last_delta=None;self.sample_at=None
+            self.record=(refs,ids,tid,end,now+1,key)
+            self.report('WAIT: distinct local skill replacement; observing before rearm')
+            return True
+        newrefs,witness_ids,witness_key,witness_at=self.follow_candidate
+        if (newids[3:]!=witness_ids or newkey!=witness_key or not .99<=now-witness_at<=2.5
+                or any(r() is None or identity(r())!=i for r,i in zip(newrefs,witness_ids,strict=True))):
+            raise ValueError('replacement witness changed or expired')
+        self.record=(tuple(self.weak(x) for x in objs),newids,tid,end,now+1,newkey)
+        self.follow_candidate=None;self.prev=values;self.pending=None;self.rises=0;self.last_delta=None;self.sample_at=now
+        self.report('EXPERIMENT: distinct local skill replacement admitted; fresh trend required')
+        return True
     def resolve(self,initial=False,refresh=False):
         pc,pawn,state,ok=self.context()
         if not ok or enum_name(pawn.HealthCondition)!='Healthy': raise ValueError('eligible living local player required')
         if initial:
-            skills=self.find()
-            if len(skills)>256: raise ValueError('skill search exceeds bound')
-            owned=[s for s in skills if s.SkillOwner is not None and identity(s.SkillOwner)==identity(pawn)]
+            owned=self.owned_skills(pawn)
         else:
             refs,ids,tid,_,_,key=self.record
             if self.thread()!=tid or any(r() is None or identity(r())!=i for r,i in zip(refs,ids,strict=True)) or tuple(identity(x) for x in (pc,pawn,state))!=ids[:3]: raise ValueError('original skill session changed')
             owned=[refs[3]()]
             if refresh:
-                skills=self.find()
-                if len(skills)>256: raise ValueError('skill search exceeds bound')
-                owned=[s for s in skills if s.SkillOwner is not None and identity(s.SkillOwner)==identity(pawn)]
+                owned=self.owned_skills(pawn)
         found=[(s,c) for s in owned for c in candidates(s,pawn,self.ht,self.inline,self.soft_identifier)]
         if len(found)!=1: raise ValueError('unique ordinary action skill unavailable')
         skill,(script,g,cid,resources,keys,origin)=found[0]
@@ -186,26 +232,26 @@ class SkillPulse:
             expected=values[0 if self.mode=='cooldown' else 1]
             for actual in (numeric(self.adaptive_api[0](pawn)),numeric(self.adaptive_api[1](ref))):
                 if not 0<=actual<=1 or abs(actual-expected)>.005: raise ValueError('native action skill percent disagrees with selected resource')
-        # External references can disappear while native getters run. Re-read
-        # the selected layout before a dispatch; never substitute another set.
-        if refresh and any(keys for _,keys in origin[1]):
-            again=candidates(skill,pawn,self.ht,self.inline,self.soft_identifier)
-            if len(again)!=1:raise ValueError('external skill layout changed during getters')
-            a=again[0]
-            if (identity(a[0]),a[2],a[4],a[5])!=(identity(script),cid,keys,origin):
-                raise ValueError('external skill layout changed during getters')
+        # Getter calls can invalidate inline or external definitions or membership.
+        # Re-resolve the complete selected candidate before every native dispatch.
+        if refresh:
+            again=[(s,c) for s in self.owned_skills(pawn) for c in candidates(s,pawn,self.ht,self.inline,self.soft_identifier)]
+            if len(again)!=1:raise ValueError('skill layout changed during getters')
+            selected,a=again[0]
+            if (identity(selected),identity(a[0]),a[2],a[4],a[5])!=k:
+                raise ValueError('skill layout changed during getters')
         return (pc,pawn,state,skill,script),k,ref,resources,tuple(values)
     def begin(self):
         if self.record or self.fault or self.busy:return False
         try:
             objs,key,_,_,v=self.resolve(True);now=self.clock()
             self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),math.inf if self.continuous else now+30,now+1,key)
-            self.prev=v;self.pending=None;self.rises=0;self.sample_at=now;self.last_delta=None
+            self.prev=v;self.pending=None;self.rises=0;self.sample_at=now;self.last_delta=None;self.follow_candidate=None
         except Exception as e:self.report('HOLD: skill assist '+str(e)[:120]);return False
         self.report('EXPERIMENT: '+self.mode+' assist armed '+('for this session' if self.continuous else 'for 30 seconds'));return True
     def stop(self,reason):
         if self.record is not None:
-            self.record=None;self.pending=None;self.prev=None;self.rises=0;self.sample_at=None;self.last_delta=None
+            self.record=None;self.pending=None;self.prev=None;self.rises=0;self.sample_at=None;self.last_delta=None;self.follow_candidate=None
             self.report('STOP: skill assist '+reason+'; no future refill; recovered resource not reversed')
     def tick(self,permitted):
         if self.record is None or self.busy:return
@@ -214,7 +260,9 @@ class SkillPulse:
         if now<due:return
         snapshot=self.record;self.busy=True
         try:
-            try: _,_,ref,h,v=self.resolve()
+            try:
+                if self.follow_replacement(snapshot):return
+                _,_,ref,h,v=self.resolve()
             except Exception as e:self.stop(str(e)[:100]);return
             if self.record is not snapshot:return
             self.record=(refs,ids,tid,end,now+1,key)
