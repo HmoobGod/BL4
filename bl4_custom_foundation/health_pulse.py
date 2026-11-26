@@ -96,13 +96,13 @@ def select_flesh(pawn, handle_type):
     return select_health(pawn, handle_type, 'flesh')
 
 class Pulse:
-    def __init__(self,context,weak,handle_type,api,clock,thread,report,mode='flesh'):
+    def __init__(self,context,weak,handle_type,api,clock,thread,report,mode='flesh',continuous=False):
         self.context,self.weak,self.handle_type,self.api=context,weak,handle_type,api
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None; self.fault=False; self.busy=False; self.pending=None
         if mode not in ('flesh', 'shield'):
             raise ValueError('unknown recovery mode')
-        self.mode=mode; self.observed=None; self.rises=0
+        self.mode=mode; self.continuous=continuous is True; self.observed=None; self.rises=0
 
     def resolve(self):
         pc,pawn,state,eligible=self.context()
@@ -131,10 +131,10 @@ class Pulse:
         try:
             objs,_,key,p=self.resolve(); now=self.clock()
             self.observed=p; self.rises=0; self.pending=None
-            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+LIFETIME,now+PERIOD,key)
+            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),(math.inf if self.continuous else now+LIFETIME),now+PERIOD,key)
         except Exception as exc:
             self.report('HOLD: health pulse preflight: '+str(exc)[:120]); return False
-        self.report('EXPERIMENT: '+self.mode+' recovery armed for 30 seconds; no native timer.'); return True
+        self.report('EXPERIMENT: '+self.mode+' recovery armed '+('for this session' if self.continuous else 'for 30 seconds')+'; no native timer.'); return True
 
     def stop(self,reason):
         if self.record is not None:
@@ -182,6 +182,10 @@ class Pulse:
                 fresh_h,fresh_key,fresh_ratio=select_health(fresh[1],self.handle_type,self.mode)
                 if fresh_key!=key[0] or abs(fresh_ratio-p)>0.005 or (self.mode=='shield' and fresh_ratio+1e-6<p):
                     raise ValueError('selected layer identity or value changed before refill')
+                if self.continuous:
+                    last=self.context()
+                    if not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid:
+                        raise ValueError('session changed after final layer read')
                 if self.clock()>=end or self.record is None or fresh_ratio>=1:
                     self.stop('lifetime ended before refill'); return
             except Exception as exc:

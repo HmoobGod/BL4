@@ -38,6 +38,10 @@ from test_inventory_r33 import PersistentCapacity
 for name in PersistentCapacity.__dict__:
     if name.startswith("test_"):
         t=PersistentCapacity(name);unique[t.id()]=t
+from test_recovery_r34 import ContinuousRecovery
+for name in ContinuousRecovery.__dict__:
+    if name.startswith('test_'):
+        t=ContinuousRecovery(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
