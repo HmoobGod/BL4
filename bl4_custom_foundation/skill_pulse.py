@@ -47,6 +47,22 @@ def bind_action_percent(functions, existing, mode, ref_type):
         out.append(existing(functions,path,sig))
     return tuple(out)
 
+NATIVE_REFILL_NAMES=('RefillCooldownInternal','RefillDurationInternal')
+REFILL_ENUM='/Script/OakGame.EOakActionSkillResourceRefillMode'
+
+def bind_native_refill(functions, existing, mode, ref_type):
+    """Dedicated component-scoped action-skill API; never call pawn and controller together."""
+    if mode not in ('cooldown','duration'):raise ValueError('unknown skill refill mode')
+    path=ACTION+'Refill'+mode.title()+'Internal'
+    matches=[f for f in functions if f._path_name()==path]
+    if len(matches)!=1:raise ValueError('native action skill refill unavailable')
+    fn=matches[0];ps=tuple(fn._properties())
+    sig=(('ComponentReference','ZStructProperty'),('Percent','ZFloatProperty'),('RefillMode','ZEnumProperty'))
+    if (len(ps)!=3 or any(p.ArrayDim!=1 for p in ps) or fn.Outer._path_name()!=ACTION[:-1]
+            or identity(ps[0].Struct)!=identity(ref_type) or ps[0].Struct._path_name()!=REF
+            or ps[2].Enum._path_name()!=REFILL_ENUM):raise ValueError('native skill refill descriptor mismatch')
+    return existing(functions,path,sig)
+
 def guid(g):
     if g._type._path_name()!='/Script/CoreUObject.Guid': raise ValueError('GUID type mismatch')
     v=tuple(getattr(g,k) for k in ('A','B','C','D'))
@@ -141,7 +157,7 @@ def candidates(skill,pawn,ht,inline,soft_identifier=None):
     return out
 
 class SkillPulse:
-    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False):
+    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False,native_refill=None):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
         self.context,self.weak,self.ht,self.inline,self.construct,self.ref_type,self.api,self.find=context,weak,ht,inline,construct,ref_type,api,find
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
@@ -150,6 +166,8 @@ class SkillPulse:
         self.soft_identifier=soft_identifier
         self.record=None;self.fault=False;self.busy=False;self.prev=None;self.pending=None;self.rises=0;self.follow_candidate=None
         if adaptive_api is not None and (not self.continuous or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
+        if native_refill is not None and (adaptive_api is None or not callable(native_refill)):raise ValueError('native refill requires adaptive cross-checks')
+        self.native_refill=native_refill
         self.adaptive_api=adaptive_api;self.rate=2.;self.sample_at=None;self.last_delta=None
         self.update_adaptive_rate(rate)
     def update_adaptive_rate(self,rate):
@@ -298,10 +316,24 @@ class SkillPulse:
                         self.rises=0;self.last_delta=None;return
                     amount=min(amount,(self.rate-1)*abs(freshp-old))
                     if amount<=.0001:return
+                if self.native_refill is not None:
+                    # No native cap parameter: limit requested addition and verify immediately.
+                    amount=min(amount,.01)
                 cap=min(.95,freshp+amount)
-                self.api[3](fresh[2],fresh[3][idx],cap-freshp,cap)
-                if self.record is None:return
-                after=self.resolve()[4][idx]
+                if self.native_refill is not None:
+                    self.native_refill(fresh[2],cap-freshp,0) # historical Normal=0; no retry
+                else:self.api[3](fresh[2],fresh[3][idx],cap-freshp,cap)
+                if self.record is None:
+                    if self.native_refill is not None:raise ValueError('scope lost after dedicated refill')
+                    return
+                observed=self.resolve()[4]
+                after=observed[idx]
+                if self.native_refill is not None:
+                    last=self.context()
+                    if self.record is None or not last[3] or tuple(identity(x) for x in last[:3])!=ids[:3] or self.thread()!=tid:
+                        raise ValueError('scope lost during dedicated refill verification')
+                    if abs(observed[1-idx]-fresh[4][1-idx])>.005:
+                        raise ValueError('other skill resource changed during dedicated refill')
                 if after>cap+.005:raise ValueError('refill exceeded cap')
                 if after<=freshp:self.stop('refill readback ineffective');return
                 self.pending=True;self.rises=0;self.last_delta=None

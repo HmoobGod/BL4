@@ -15,7 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.55-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.56-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -98,9 +98,10 @@ VACUUM_HIGH_PREF = BoolOption('vacuum_pref_high_gear', False, display_name='Save
 VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., is_integer=False, display_name='Saved vacuum radius (m)')
 RECOVERY_RATES = {k: SliderOption('recovery_rate_'+k, 1., .1, 1., step=.1, is_integer=False, display_name=k.title()+' recovery (% maximum per pulse)') for k in ('health','shield')}
 SKILL_ADAPTIVE = {k: BoolOption('adaptive_'+k,False,display_name='Adaptive '+k.replace('_',' ')+' assist (native percent cross-check)') for k in ('skill_cooldown','skill_duration')}
+SKILL_NATIVE = {k: BoolOption('native_refill_'+k,False,display_name='Dedicated native refill for '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
 SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct replacement '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
-ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values())
+ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values())
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; opt in to persistent gameplay.'
@@ -313,7 +314,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.55-experimental')
+    ui.text('BL4 CUSTOM | v0.7.56-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -454,9 +455,13 @@ def draw():
                     rate=SKILL_RATES[kind]
                     edited,selected=ui.slider_float(rate.display_name+'##'+rate.identifier,float(displayed_selection(rate)),1.,3.,'%.1fx')
                     if edited:queue_auto_edit(rate,selected)
+                    native=SKILL_NATIVE[kind]
+                    edited,selected=ui.checkbox(native.display_name+'##'+native.identifier,native.value is True)
+                    if edited:set_auto_setting(native,selected)
                     follow=SKILL_FOLLOW[kind]
                     edited,selected=ui.checkbox(follow.display_name+'##'+follow.identifier,follow.value is True)
                     if edited:set_auto_setting(follow,selected)
+            ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each requested addition at 1%, checks readback, and requires rearm on mode change. Native effect unverified.')
             ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct ordinary replacement; changing follow mode requires lane rearm.')
             ui.text_wrapped('Player and weapon ammo regeneration cannot overlap. If both are selected, all ammo regeneration modifiers restore until you choose one.')
             ui.text_wrapped('Adaptive skill mode uses observed native pool change, capped at 3% per eligible sample; 1x adds nothing. Mode change requires toggling lane to rearm. Not an exact native multiplier.')
@@ -652,7 +657,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.55-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.56-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -883,7 +888,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.55-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.56-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -953,7 +958,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.55-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.56-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -979,7 +984,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.55-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.56-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1030,7 +1035,7 @@ def current_session(api):
 # same name is read from sys.modules on every check.
 _CONFLICT_NAMES = frozenset({'loottreadmill', 'rarityremover', 'damageandmore', 'bl4damageandmore',
              'resourcesandcooldowns', 'bl4resourcesandcooldowns', 'bl4playermovement',
-             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank', 'lootvacuum', 'lootmagnet'})
+             'squ1ggsboostingtools', 'apexmovement', 'apexspeed', 'autosprint', 'omnisprint', 'autoreload', 'bl4autoreload', 'biggerbackpack', 'biggerbackpackandbank', 'lootvacuum', 'lootmagnet', 'infinitecrossfire'})
 _conflict_index = (None, ())
 
 
@@ -1879,12 +1884,15 @@ def recovery_conflict(kind):
 def make_automation_lane(kind, session):
     sdk = sys.modules['unrealsdk']
     adaptive_mode = kind in SKILL_ADAPTIVE and SKILL_ADAPTIVE[kind].value is True
+    native_mode = kind in SKILL_NATIVE and SKILL_NATIVE[kind].value is True
     follow_mode = kind in SKILL_FOLLOW and SKILL_FOLLOW[kind].value is True
     jump_rate = normalize(DOUBLE_JUMP_RATE,DOUBLE_JUMP_RATE.value) if kind=='double_jump' else None
     def context():
         if kind=='double_jump' and (DOUBLE_JUMP_RATE.identifier in _auto_edits or normalize(DOUBLE_JUMP_RATE,DOUBLE_JUMP_RATE.value)!=jump_rate):
             raise ValueError('double jump scale changed; toggle lane to rearm')
         if kind in SKILL_ADAPTIVE:
+            if (SKILL_NATIVE[kind].value is True)!=native_mode:
+                raise ValueError('native refill mode changed')
             if (SKILL_FOLLOW[kind].value is True)!=follow_mode:
                 raise ValueError('follow skill mode changed')
             if (SKILL_ADAPTIVE[kind].value is True)!=adaptive_mode:
@@ -1912,14 +1920,16 @@ def make_automation_lane(kind, session):
         api = bind(functions,loot_bound)
         return Pulse(context,sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,mode='flesh' if kind=='health' else 'shield',continuous=True,percent=normalize(RECOVERY_RATES[kind],RECOVERY_RATES[kind].value))
     if kind in ('skill_cooldown','skill_duration'):
-        from .skill_pulse import SkillPulse, bind, SPECS, ACTION_NAMES, bind_action_percent
+        from .skill_pulse import SkillPulse, bind, SPECS, ACTION_NAMES, bind_action_percent, NATIVE_REFILL_NAMES, bind_native_refill
         u=sdk.unreal
         adaptive=adaptive_mode
-        functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or (adaptive and str(f.Name) in ACTION_NAMES)]
+        if native_mode and not adaptive:raise ValueError('dedicated native refill requires adaptive mode')
+        functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or (adaptive and str(f.Name) in ACTION_NAMES) or (native_mode and str(f.Name) in NATIVE_REFILL_NAMES)]
         ref,api=bind(functions,loot_bound)
         mode=kind.split('_',1)[1]
         extra=bind_action_percent(functions,loot_bound,mode,ref) if adaptive else None
-        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,continuous=True,adaptive_api=extra,rate=normalize(SKILL_RATES[kind],SKILL_RATES[kind].value),soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None),follow=follow_mode)
+        native=bind_native_refill(functions,loot_bound,mode,ref) if native_mode else None
+        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,continuous=True,adaptive_api=extra,rate=normalize(SKILL_RATES[kind],SKILL_RATES[kind].value),soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None),follow=follow_mode,native_refill=native)
     if kind != 'reload': raise ValueError('unknown automation lane')
     from .reload_assist import ReloadAssist, bind, SPECS
     functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
@@ -1964,6 +1974,8 @@ def automation_tick():
                     rate=RECOVERY_RATES[kind]
                     lease.update_rate(normalize(rate,rate.value))
                 if kind in SKILL_ADAPTIVE and hasattr(lease,'adaptive_api'):
+                    if (getattr(lease,'native_refill',None) is not None)!=(SKILL_NATIVE[kind].value is True):
+                        stop_automation_lane(kind,'native refill mode changed; toggle lane to rearm');continue
                     if getattr(lease,'follow',False)!=(SKILL_FOLLOW[kind].value is True):
                         stop_automation_lane(kind,'follow mode changed; toggle lane to rearm');continue
                     if (lease.adaptive_api is not None)!=(SKILL_ADAPTIVE[kind].value is True):
@@ -2014,7 +2026,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.55-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.56-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
@@ -2030,7 +2042,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values()], display_name='Adaptive skill assist (experimental)')]
+options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values()], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
 options += [NestedOption('menu', [ButtonOption('open_from_menu', display_name='Open Graphical Menu', on_press=toggle_menu)], display_name='Custom Menu'),
