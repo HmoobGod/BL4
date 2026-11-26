@@ -1,7 +1,7 @@
 [project]
 name = "bl4_custom_foundation"
-version = "0.7.60"
-description = "Experimental local capacity, recovery and native reload assists."
+version = "0.7.61"
+description = "Experimental local combat, movement, rarity, recovery and automation."
 authors = [{name = "BL4 Custom Project"}]
 
 [tool.sdkmod]

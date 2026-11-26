@@ -7,4 +7,4 @@ class LoaderMetadata(unittest.TestCase):
             parse('0.7.0.dev1')
         path = pathlib.Path(__file__).parent / 'bl4_custom_foundation' / 'pyproject.toml'
         version = tomllib.loads(path.read_text())['project']['version']
-        self.assertEqual(parse(version), (0, 7, 60))
+        self.assertEqual(parse(version), (0, 7, 61))
