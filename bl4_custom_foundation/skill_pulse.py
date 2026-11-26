@@ -241,6 +241,16 @@ def candidates(skill,pawn,ht,inline,soft_identifier=None,named_type=None):
             out.append((s,d.ComponentID,cid,resources,keys+rk,(origin,tuple(layout),extra),peers))
     return out
 
+
+def distinct_layouts(old,new):
+    def members(key):
+        extra=key[4][2]
+        pools=key[3]+(extra[1]+extra[2] if extra else ())
+        guids={key[2]}
+        if extra and any(extra[0]):guids.add(extra[0])
+        return ({(n.casefold(),t) for n,t,_ in pools},{a for _,_,a in pools},guids)
+    return not any(a & b for a,b in zip(members(old),members(new),strict=True))
+
 class SkillPulse:
     def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False,native_refill=None,event_class=None,direct_api=None):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
@@ -253,8 +263,8 @@ class SkillPulse:
         if adaptive_api is not None and (not self.continuous or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
         if native_refill is not None and (adaptive_api is None or not callable(native_refill)):raise ValueError('native refill requires adaptive cross-checks')
         self.native_refill=native_refill
-        if direct_api is not None and (mode!='cooldown' or native_refill is None or self.follow or len(direct_api)!=4):
-            raise ValueError('named main cooldown requires dedicated adaptive cooldown, follow OFF')
+        if direct_api is not None and (mode!='cooldown' or native_refill is None or len(direct_api)!=4):
+            raise ValueError('named main cooldown requires dedicated adaptive cooldown')
         self.direct_api=direct_api;self.named_max=None
         if event_class is not None and (mode!='duration' or native_refill is None or self.follow):
             raise ValueError('Cross-Fire lifecycle requires dedicated adaptive duration and follow OFF')
@@ -303,26 +313,28 @@ class SkillPulse:
             if self.follow_candidate is not None:raise ValueError('original skill reappeared during replacement')
             return False
         if self.pending is not None:raise ValueError('skill replaced with pending refill readback')
-        if not owned:raise ValueError('unique ordinary replacement unavailable')
-        objs,newkey,_,_,values,_=self.resolve(initial=True,refresh=True)
+        if not owned:raise ValueError('unique action skill replacement unavailable')
+        objs,newkey,_,_,values,named=self.resolve(initial=True,refresh=True)
         self.scope(snapshot)
         if self.record is not snapshot:return True
         newids=tuple(identity(x) for x in objs)
         if (newids[:3]!=ids[:3] or newids[3]==ids[3] or newids[4]==ids[4]
-                or newkey[2]==key[2] or set(k[:2] for k in newkey[3]) & set(k[:2] for k in key[3])):
+                or not distinct_layouts(key,newkey)):
             raise ValueError('replacement is not a distinct skill and pool layout')
         now=self.clock()
+        newmax=named[1] if named is not None else None
         if self.follow_candidate is None:
-            self.follow_candidate=(tuple(self.weak(x) for x in objs[3:]),newids[3:],newkey,now)
+            self.follow_candidate=(tuple(self.weak(x) for x in objs[3:]),newids[3:],newkey,now,newmax)
             self.prev=None;self.pending=None;self.rises=0;self.last_delta=None;self.sample_at=None
             self.record=(refs,ids,tid,end,now+1,key)
             self.report('WAIT: distinct local skill replacement; observing before rearm')
             return True
-        newrefs,witness_ids,witness_key,witness_at=self.follow_candidate
-        if (newids[3:]!=witness_ids or newkey!=witness_key or not .99<=now-witness_at<=2.5
+        newrefs,witness_ids,witness_key,witness_at,witness_max=self.follow_candidate
+        if (newids[3:]!=witness_ids or newkey!=witness_key or newmax!=witness_max or not .99<=now-witness_at<=2.5
                 or any(r() is None or identity(r())!=i for r,i in zip(newrefs,witness_ids,strict=True))):
             raise ValueError('replacement witness changed or expired')
         self.record=(tuple(self.weak(x) for x in objs),newids,tid,end,now+1,newkey)
+        self.named_max=newmax
         self.follow_candidate=None;self.prev=values;self.pending=None;self.rises=0;self.last_delta=None;self.sample_at=now
         self.report('EXPERIMENT: distinct local skill replacement admitted; fresh trend required')
         return True

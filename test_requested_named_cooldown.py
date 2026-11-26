@@ -50,8 +50,8 @@ class NamedCooldown(unittest.TestCase):
         self.s.d.AuxCooldownPoolDefs=[];self.arm();self.trend();self.assertEqual(self.direct,[]);self.assertEqual(len(self.n.calls),1)
     def test_legacy_adaptive_stays_held(self):
         self.n.a.arm();self.trend();self.no_calls();self.stopped()
-    def test_follow_stays_held(self):
-        self.arm(follow_skill_cooldown=True);self.trend();self.no_calls();self.stopped()
+    def test_follow_arms_named_primary(self):
+        self.arm(follow_skill_cooldown=True);self.trend();self.assertEqual(len(self.direct),1);self.assertEqual(self.s.calls+self.n.calls,[])
     def test_missing_direct_stays_held(self):
         self.s.funcs.remove(self.funcs[-1]);self.arm();self.trend();self.no_calls();self.stopped()
     def test_wrong_interface(self):
