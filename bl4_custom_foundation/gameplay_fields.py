@@ -46,6 +46,7 @@ FEATURES = {
     'shield_regen_delay': ('Equipped energy shield recharge delay speed (experimental)', .5, 3.),
     'grenade_cooldown': ('Grenade gadget cooldown speed (experimental)', .5, 3.),
     'lifesteal_rate': ('Existing life-steal rate (experimental)', .5, 3.),
+    'lifesteal_fraction': ('Existing life-steal percentage multiplier (experimental)', .5, 3.),
     'repair_health': ('Repair-kit healing amount multiplier', .5, 5.),
     'damage_taken': ('Damage taken multiplier', .1, 5.),
     'shock_damage': ('Shock damage multiplier', .5, 5.),
@@ -273,6 +274,32 @@ def lifesteal_rate(pawn, state):
     return pair(nested(damage, 'lifestealrate', 'GbxAttributeFloat'))
 
 
+def lifesteal_fraction(pawn, state):
+    # Resolve the writable pair separately from admission: loss of the native
+    # rate/cap must not prevent restoration of an otherwise intact original pair.
+    from .weapon_rates import nested
+    damage = nested(pawn, 'DamageState', 'OakDamageState')
+    if identity(damage.owner) != identity(pawn):
+        raise ValueError('life-steal owner mismatch')
+    return pair(nested(damage, 'lifestealpercent', 'GbxAttributeFloat'))
+
+
+def validate_lifesteal_fraction(pawn, baseline, targets):
+    from .weapon_rates import nested
+    damage = nested(pawn, 'DamageState', 'OakDamageState')
+    if identity(damage.owner) != identity(pawn):
+        raise ValueError('life-steal owner mismatch')
+    # Conservative normalized-fraction experiment only. Never seed a zero
+    # baseline, modify the cap, or assume values above one are percentages.
+    if any(not 0 < v <= 1 for v in (*baseline, *targets)):
+        raise ValueError('life-steal fraction outside normalized bounds')
+    rate = pair(nested(damage, 'lifestealrate', 'GbxAttributeFloat'))
+    cap = pair(nested(damage, 'lifestealratecap', 'GbxAttributeFloat'))
+    if rate[0][3] != rate[1][3] or cap[0][3] != cap[1][3] or rate[0][3] > cap[0][3]:
+        raise ValueError('existing life-steal rate/cap uncertain')
+    return describe_fields(rate + cap)[1:]
+
+
 def validate_lifesteal(pawn, targets):
     from .weapon_rates import nested
     damage = nested(pawn, 'DamageState', 'OakDamageState')
@@ -321,6 +348,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'repair_health': repair_health,
            'swap_time': swap_time,
            'lifesteal_rate': lifesteal_rate,
+           'lifesteal_fraction': lifesteal_fraction,
            'damage': lambda p, s: pair(p.DamageCauserData.DamageDealtMultiplier),
            'damage_taken': lambda p, s: pair(p.DamageState.DamageTakenMultiplier),
            'shock_damage': lambda p, s: pair(p.ElementalDamageModifiers.ShockModifier),

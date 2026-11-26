@@ -1,7 +1,7 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
-from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal, slide_scale, slide_active
+from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal, validate_lifesteal_fraction, slide_scale, slide_active
 from . import weapon_rates, inventory_capacity, shield_rates, gadget_rates
 
 
@@ -139,6 +139,14 @@ class Controller:
         fields, values, eligible = self.resolve(record)
         if applying and not eligible:
             raise ValueError('session became ineligible')
+        if applying and record['key'] == 'lifesteal_fraction':
+            if self.stop_pending is not None or self.records.get(record['key']) is not record:
+                raise ValueError('life-steal activation interrupted')
+            if validate_lifesteal_fraction(record['pawn'](), record['baseline'], (value,)) != record['life_context']:
+                raise ValueError('life-steal rate/cap changed')
+            fields, values, eligible = self.resolve(record)
+            if not eligible:
+                raise ValueError('life-steal scope lost')
         if applying and record['key'] == 'slide_speed':
             if self.stop_pending is not None or self.records.get('slide_speed') is not record:
                 raise ValueError('slide activation interrupted')
@@ -230,6 +238,9 @@ class Controller:
                                (key in weapon_rates.AMMO_KEYS and 'player_ammo_regen' in self.records)):
             self.log('HOLD: restore other ammo regeneration path first')
             return False
+        if selection != 1 and key in ('lifesteal_rate', 'lifesteal_fraction') and ({'lifesteal_rate', 'lifesteal_fraction'} - {key}).intersection(self.records):
+            self.log('HOLD: restore other life-steal control first')
+            return False
         self.busy = True
         try:
             if key not in FEATURES or key in DAMAGE_HOLD:
@@ -266,6 +277,11 @@ class Controller:
                 inventory_capacity.validate(record['inventory_scope'], count, targets[0], applying=True)
             if key == 'lifesteal_rate':
                 validate_lifesteal(record['pawn'](), targets)
+            if key == 'lifesteal_fraction':
+                life_context = validate_lifesteal_fraction(record['pawn'](), record['baseline'], targets)
+                if key in self.records and life_context != record['life_context']:
+                    raise ValueError('life-steal rate/cap changed')
+                record['life_context'] = life_context
             if record.get('weapon_scope') is not None:
                 weapon_rates.validate_targets(record['weapon_scope'], targets)
             if values == targets and key not in GROUND_KEYS:
@@ -287,6 +303,8 @@ class Controller:
                 _, checked, still_eligible = self.resolve(record)
                 if not still_eligible or checked != targets or self.stop_pending is not None or self.records.get(key) is not record:
                     raise ValueError('shield scope changed after native readback')
+            if key == 'lifesteal_fraction' and validate_lifesteal_fraction(record['pawn'](), record['baseline'], targets) != record['life_context']:
+                raise ValueError('life-steal rate/cap changed after write')
             record['expected'] = targets
             record['selection'] = selection
             record['owned'] = [{b, t} for b, t in zip(record['baseline'], targets, strict=True)]
@@ -382,6 +400,8 @@ class Controller:
                         shield_rates.validate_readback(record['shield_scope'][0](), key, values[0])
                     if key == 'lifesteal_rate':
                         validate_lifesteal(record['pawn'](), values)
+                    if key == 'lifesteal_fraction' and validate_lifesteal_fraction(record['pawn'](), record['baseline'], values) != record['life_context']:
+                        raise ValueError('life-steal rate/cap changed')
                     if key in weapon_rates.AMMO_KEYS:
                         weapon_rates.validate_ammo(record['weapon_scope'])
                     if key == 'reload':
