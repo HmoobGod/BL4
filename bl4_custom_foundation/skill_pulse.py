@@ -1,4 +1,5 @@
 """Experimental bounded action-skill assist. Read definitions only; never edit them."""
+import math
 from .gameplay_fields import identity
 from .weapon_rates import prop
 from .health_pulse import numeric, enum_name
@@ -79,10 +80,11 @@ def candidates(skill,pawn,ht,inline):
     return out
 
 class SkillPulse:
-    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode):
+    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
         self.context,self.weak,self.ht,self.inline,self.construct,self.ref_type,self.api,self.find=context,weak,ht,inline,construct,ref_type,api,find
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
+        self.continuous=continuous is True
         self.record=None;self.fault=False;self.busy=False;self.prev=None;self.pending=None;self.rises=0
     def resolve(self,initial=False,refresh=False):
         pc,pawn,state,ok=self.context()
@@ -116,10 +118,10 @@ class SkillPulse:
         if self.record or self.fault or self.busy:return False
         try:
             objs,key,_,_,v=self.resolve(True);now=self.clock()
-            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+30,now+1,key)
+            self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),math.inf if self.continuous else now+30,now+1,key)
             self.prev=v;self.pending=None;self.rises=0
         except Exception as e:self.report('HOLD: skill assist '+str(e)[:120]);return False
-        self.report('EXPERIMENT: '+self.mode+' assist armed for 30 seconds');return True
+        self.report('EXPERIMENT: '+self.mode+' assist armed '+('for this session' if self.continuous else 'for 30 seconds'));return True
     def stop(self,reason):
         if self.record is not None:
             self.record=None;self.pending=None;self.prev=None;self.rises=0
@@ -147,7 +149,7 @@ class SkillPulse:
             try:
                 fresh=self.resolve(refresh=True);freshp=fresh[4][idx]
                 last=self.context()
-                if not last[3] or tuple(identity(x) for x in last[:3])!=ids[:3]:raise ValueError('session changed before skill refill')
+                if not last[3] or tuple(identity(x) for x in last[:3])!=ids[:3] or self.thread()!=tid:raise ValueError('session changed before skill refill')
                 if self.record is None or self.clock()>=end or abs(freshp-p)>.005 or not .05<freshp<.90 or (idx==0 and freshp<=old) or (idx==1 and freshp>=old):self.stop('resource changed before refill');return
             except Exception as e:self.stop(str(e)[:100]);return
             try:

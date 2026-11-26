@@ -12,7 +12,7 @@ from .gameplay_fields import identity, target_values
 from .inventory_capacity import KEYS as CAPACITY_KEYS, resolve as resolve_capacity, validate as validate_capacity
 from .weapon_rates import WEAPON_KEYS, validate_targets
 
-TITLE = 'BL4 Custom - Community Integration v0.7.32-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.33-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -71,7 +71,7 @@ MANUAL_ONLY = frozenset(('sprint', 'lifesteal_rate'))
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Auto-enable '+label)
-                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'))}
+                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'))}
 AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values()]
 # Independent persistent lanes. Isolated manual experiments remain unchanged.
 _automation_leases = {}
@@ -83,7 +83,8 @@ _AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken'
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., is_integer=False, display_name='Saved vacuum radius (m)')
-ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF]
+RECOVERY_RATES = {k: SliderOption('recovery_rate_'+k, 1., .1, 1., step=.1, is_integer=False, display_name=k.title()+' recovery (% maximum per pulse)') for k in ('health','shield')}
+ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF] + list(RECOVERY_RATES.values())
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; opt in to persistent gameplay.'
@@ -260,7 +261,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.32-experimental')
+    ui.text('BL4 CUSTOM | v0.7.33-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -372,11 +373,16 @@ def draw():
     if _category == 6:
         if auto_master.value is True:
             ui.text_wrapped('Continuous recovery assists: native refill pulses, not native regen-rate or recharge-delay modifiers. Stop on lost scope or ineffective refill; toggle to rearm. Already recovered health is not reversed.')
-            for kind in ('health','shield'):
+            for kind in ('health','shield','skill_cooldown','skill_duration'):
                 option = AUTOMATION_OPTIONS[kind]
                 edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
                 if edited: set_auto_setting(option, selected)
                 ui.text(kind+': '+_automation_status.get(kind, 'Waiting / off'))
+                if kind in RECOVERY_RATES:
+                    rate=RECOVERY_RATES[kind]
+                    edited, selected=ui.slider_float(rate.display_name+'##'+rate.identifier, float(_auto_edits.get(rate.identifier,normalize(rate,rate.value))), .1,1.,'%.1f%%')
+                    if edited: queue_auto_edit(rate, selected)
+            ui.text_wrapped('Skill assists: only unique ordinary skills, no charges or auxiliary pools; not exact cooldown/duration multipliers.')
         ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
         if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
             activate_feature('health_pulse', 1.0)
@@ -559,7 +565,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.32-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.33-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -789,7 +795,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.32-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.33-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -825,7 +831,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0732exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0733exp'
 
 
 def monitor_status():
@@ -859,7 +865,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.32-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.33-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -885,7 +891,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.32-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.33-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1035,7 +1041,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0732exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0733exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1612,7 +1618,13 @@ def make_automation_lane(kind, session):
         from .health_pulse import Pulse, bind, SPECS
         functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
         api = bind(functions,loot_bound)
-        return Pulse(context,sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,mode='flesh' if kind=='health' else 'shield',continuous=True)
+        return Pulse(context,sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,mode='flesh' if kind=='health' else 'shield',continuous=True,percent=normalize(RECOVERY_RATES[kind],RECOVERY_RATES[kind].value))
+    if kind in ('skill_cooldown','skill_duration'):
+        from .skill_pulse import SkillPulse, bind, SPECS
+        u=sdk.unreal
+        functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
+        ref,api=bind(functions,loot_bound)
+        return SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,kind.split('_',1)[1],continuous=True)
     if kind != 'reload': raise ValueError('unknown automation lane')
     from .reload_assist import ReloadAssist, bind, SPECS
     functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
@@ -1633,7 +1645,7 @@ def automation_tick():
             stop_automation('permission or modifier compatibility ended')
             return
         # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
-        for kind in ('vacuum','reload','health','shield'):
+        for kind in ('vacuum','reload','health','shield','skill_cooldown','skill_duration'):
             if AUTOMATION_OPTIONS[kind].value is not True:
                 stop_automation_lane(kind,'disabled')
                 continue
@@ -1647,6 +1659,9 @@ def automation_tick():
             if lease is not None:
                 if kind == 'vacuum' and callable(getattr(lease,'update_preferences',None)):
                     lease.update_preferences(tuple(k for k,o in VACUUM_PREFS.items() if o.value is True), normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value))
+                if kind in RECOVERY_RATES and callable(getattr(lease,'update_rate',None)):
+                    rate=RECOVERY_RATES[kind]
+                    lease.update_rate(normalize(rate,rate.value))
                 lease.tick(True)
                 if lease.fault:
                     _automation_leases[kind] = lease  # retain late fault even after reentrant stop
@@ -1688,7 +1703,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.32-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.33-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():
@@ -1704,6 +1719,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF], display_name='Saved vacuum preferences (no startup activation)')]
+options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
 options += [NestedOption('menu', [ButtonOption('open_from_menu', display_name='Open Graphical Menu', on_press=toggle_menu)], display_name='Custom Menu'),

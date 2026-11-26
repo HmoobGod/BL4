@@ -96,13 +96,22 @@ def select_flesh(pawn, handle_type):
     return select_health(pawn, handle_type, 'flesh')
 
 class Pulse:
-    def __init__(self,context,weak,handle_type,api,clock,thread,report,mode='flesh',continuous=False):
+    def __init__(self,context,weak,handle_type,api,clock,thread,report,mode='flesh',continuous=False,percent=1.0):
         self.context,self.weak,self.handle_type,self.api=context,weak,handle_type,api
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None; self.fault=False; self.busy=False; self.pending=None
         if mode not in ('flesh', 'shield'):
             raise ValueError('unknown recovery mode')
         self.mode=mode; self.continuous=continuous is True; self.observed=None; self.rises=0
+        self.fraction=FRACTION
+        self.update_rate(percent)
+
+    def update_rate(self,percent):
+        if type(percent) not in (int,float) or not math.isfinite(percent) or not .1<=percent<=1.:
+            raise ValueError('recovery pulse percentage out of range')
+        if not self.continuous and percent!=1.:
+            raise ValueError('manual recovery uses fixed pulse')
+        self.fraction=percent/100.
 
     def resolve(self):
         pc,pawn,state,eligible=self.context()
@@ -192,7 +201,7 @@ class Pulse:
                 self.stop(str(exc)[:100]); return
             try:
                 # Native refill only; no direct HP edit. MaxPercent is bounded to 1.
-                self.api[2](fresh[1],fresh_h,min(FRACTION,1-max(p,fresh_ratio)),1.0)
+                self.api[2](fresh[1],fresh_h,min(self.fraction,1-max(p,fresh_ratio)),1.0)
                 if self.record is not None:
                     self.pending=max(p,fresh_ratio)
             except Exception:
