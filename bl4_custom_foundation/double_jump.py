@@ -110,18 +110,30 @@ class DoubleJump:
             self.record=None;self.phase='wait'
             self.report(f'STOP: double jump {reason}; {self.applied} velocity changes; completed impulses not reversed')
 
-    def tick(self,permitted):
+    def tick(self,permitted,event_pawn=None):
         if self.record is None or self.fault or self.busy:return
         snapshot=self.record;now=self.clock()
         if not permitted or self.thread()!=snapshot[2]:self.stop('permission/thread ended');return
-        if now<self.next_due:return
-        self.next_due=now+.05;self.busy=True;dispatched=False
+        event = event_pawn is not None
+        if event:
+            # Ignore other characters and stale wrappers before any native inspection.
+            try:
+                original = snapshot[0][1]()
+                if original is None or identity(original)!=snapshot[1][1] or identity(event_pawn)!=snapshot[1][1]:return
+            except Exception:return
+        elif now<self.next_due:return
+        if not event:self.next_due=now+.05
+        self.busy=True;dispatched=False
         try:
             objs,key=self.resolve();sample,velocity=observe(objs[1],objs[3]);phase=sample[0]
             if self.record is not snapshot:return
+            # Native event may precede coherent movement/count update. Leave the
+            # periodic fallback and sequence untouched in that case.
+            if event and phase not in ('first','second'):return
             if phase=='ground':self.phase='ready';return
             if phase=='first' and self.phase in ('ready','first'):
                 self.phase='first';self.last_first=now;return
+            if event and (phase!='second' or self.phase!='first'):return
             previous=self.phase;self.phase='used'
             if phase!='second' or previous!='first' or not 0<=now-self.last_first<=.125 or self.rate==1.:return
             z=sample[3][2];target=z*self.rate
