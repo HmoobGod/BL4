@@ -198,6 +198,11 @@ class Controller:
         if key in GROUND_KEYS and selection != 1 and (GROUND_KEYS - {key}).intersection(self.records):
             self.log('HOLD: restore the other ground-speed mode first')
             return False
+        # Avoid compounding two unverified native ammo regeneration paths.
+        if selection != 1 and ((key == 'player_ammo_regen' and weapon_rates.AMMO_KEYS.intersection(self.records)) or
+                               (key in weapon_rates.AMMO_KEYS and 'player_ammo_regen' in self.records)):
+            self.log('HOLD: restore other ammo regeneration path first')
+            return False
         self.busy = True
         try:
             if key not in FEATURES or key in DAMAGE_HOLD:
@@ -297,7 +302,7 @@ class Controller:
         finally:
             self.busy = False
 
-    def tick(self, permitted, *, observed=None, follow_weapon=False, follow_shield=False):
+    def tick(self, permitted, *, observed=None, follow_weapon=False, follow_shield=False, follow_gadget=False):
         if self.busy or not self.records or self.fault:
             return
         transitioned = set()
@@ -327,6 +332,12 @@ class Controller:
                         if follow_shield and observed[3] and key in shield_rates.KEYS:
                             if not self.restore(key, 'shield transition; original restored'):
                                 self.restore_all('shield restoration failed')
+                                return
+                            transitioned.add(key)
+                            continue
+                        if follow_gadget and observed[3] and key == gadget_rates.KEY:
+                            if not self.restore(key, 'grenade gadget transition; original restored'):
+                                self.restore_all('grenade restoration failed')
                                 return
                             transitioned.add(key)
                             continue

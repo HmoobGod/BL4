@@ -18,7 +18,7 @@ class GadgetCooldown(unittest.TestCase):
         return Node(Name='GrenadeInstance',Class=typ(GADGET,desc('CooldownTime',a._type),objdesc('OwningCharacter','/Script/OakGame.OakCharacter'),flag),CooldownTime=a,Owner=self.p,OwningCharacter=self.p,bIsUsing=False,HasAuthority=lambda:True,IsActorBeingDestroyed=lambda:False,NumberOfCharges=1)
     def activate(self,v):self.b.activate('grenade_cooldown',v)
     def vals(self):return self.g.CooldownTime.Value,self.g.CooldownTime.BaseValue
-    def test_manual_only_and_default(self):self.assertNotIn('grenade_cooldown',self.m.AUTO_OPTIONS);self.assertEqual(self.g.CooldownTime.writes,[])
+    def test_manual_only_and_default(self):self.assertFalse(self.m.AUTO_OPTIONS['grenade_cooldown'].value);self.assertEqual(self.g.CooldownTime.writes,[])
     def test_cycle(self):
         self.activate(2.);self.assertEqual(self.vals(),(6.,6.));self.activate(.5);self.assertEqual(self.vals(),(24.,24.));self.activate(1.);self.assertEqual(self.vals(),(12.,12.));self.assertEqual(self.g.NumberOfCharges,1)
     def test_busy_refused(self):self.g.bIsUsing=True;self.activate(2.);self.assertFalse(self.g.CooldownTime.writes)

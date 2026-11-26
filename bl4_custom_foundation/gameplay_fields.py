@@ -24,6 +24,10 @@ FEATURES = {
     'glide_deceleration': ('Glide deceleration multiplier (experimental)', .5, 3.),
     'grapple_cost': ('Grapple energy cost multiplier (experimental)', .1, 3.),
     'slam_cost': ('Ground-slam energy cost multiplier (experimental)', .1, 3.),
+    'ladder_ascend': ('Ladder ascent speed multiplier (experimental)', .5, 3.),
+    'ladder_descend': ('Ladder descent speed multiplier (experimental)', .5, 3.),
+    'slam_height': ('Ground-slam height scalar (experimental)', .5, 2.),
+    'player_ammo_regen': ('Existing player ammo regeneration rate (experimental)', .5, 3.),
     'gravity': ('Local gravity multiplier', .5, 1.5),
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
@@ -154,6 +158,13 @@ def local_move_pair(pawn, field):
     return pair(nested(comp, field, 'GbxAttributeFloat'))
 
 
+def player_ammo_regen(pawn, state):
+    from .weapon_rates import nested
+    if str(pawn.Class.Name) != 'OakCharacter' or 'Default__' in pawn._path_name():
+        raise ValueError('live local OakCharacter required')
+    return pair(nested(pawn, 'ammoregenrate', 'GbxAttributeFloat'))
+
+
 def combat(pawn, state):
     # Verified source: ElementalDamageModifiers.FireModifier is a pawn pair.
     return pair(pawn.ElementalDamageModifiers.FireModifier)
@@ -258,6 +269,10 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'glide_deceleration': lambda p, s: local_move_pair(p, 'GlidingDeceleration'),
            'grapple_cost': lambda p, s: local_move_pair(p, 'VaultPowerCost_Grapple'),
            'slam_cost': lambda p, s: local_move_pair(p, 'VaultPowerCost_GroundSlam'),
+           'ladder_ascend': lambda p, s: local_move_pair(p, 'MaxLadderAscendSpeed'),
+           'ladder_descend': lambda p, s: local_move_pair(p, 'MaxLadderDescendSpeed'),
+           'slam_height': lambda p, s: local_move_pair(p, 'GroundSlamHeightScalar'),
+           'player_ammo_regen': player_ammo_regen,
            'healing_received': lambda p, s: pair(p.DamageState.HealingReceivedMultiplier),
            'rare_weight': lambda p, s: (scalar(s.RarityState.RareModifier, 'Value'),),
            'epic_weight': epic,
