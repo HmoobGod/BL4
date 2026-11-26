@@ -23,6 +23,7 @@ SPECS={
  'Conv_DoubleToGbxParam':('GbxParamBlueprintLibrary',(('Value','ZDoubleProperty'),('ReturnValue',S))),
  'Conv_StringToGbxParam':('GbxParamBlueprintLibrary',(('Value',T),('ReturnValue',S))),
  'Conv_GbxParamToString':('GbxParamBlueprintLibrary',(('GbxParam',S),('ReturnValue',T))),
+ 'GetGbxParam_Float':('GbxParamBlueprintLibrary',(('GbxParam',S),('Context',O),('ReturnValue',F))),
  'GetSummary_GbxParam':('GbxParamBlueprintLibrary',(('Param',S),('ReturnValue',T))),
  'GetValueOfAttribute':('GbxAttributeBlueprintLibrary',(('AttributeDef',N),('ContextSource',O),('DefaultValue',F),('ReturnValue',F))),
 }
@@ -102,12 +103,19 @@ class Binding:
             fps.append(fp)
         if fps[0]!=fps[1]:raise ValueError('missing entry witnesses disagree')
         return fps[0]
+    def decoded_float(self,p,pawn):
+        # Independent native parameter conversion, not Python parsing of diagnostic text.
+        r=self.calls['GetGbxParam_Float'](self.check(p,PARAM),pawn)
+        if type(r) is not tuple or len(r)!=2 or self.fingerprint(self.check(r[1],PARAM))!=self.fingerprint(p):raise ValueError('native parameter float conversion response uncertain')
+        return number(r[0])
     def read(self,name,pawn,missing):
         p=self.get(name,pawn);r=self.calls['GetBlackboardFloatPure'](self.key(name),pawn,False)
         if type(r) is not tuple or len(r)!=2 or self.check(r[1],ENTRY).Name!=name:raise ValueError('unexpected typed float read tuple')
         v=number(r[0]);a=number(self.calls['GetValueOfAttribute'](name,pawn,-123456.))
         if not near(v,a):raise ValueError('attribute and blackboard value disagree')
-        return v,self.typed_float(p,v,missing),p
+        fp=self.typed_float(p,v,missing)
+        if not near(v,self.decoded_float(p,pawn)):raise ValueError('native parameter float disagrees with blackboard value')
+        return v,fp,p
     def write(self,name,pawn,p):
         r=self.calls['SetBlackboardParam'](self.key(name),self.check(p,PARAM),pawn)
         if type(r) is not tuple or len(r)!=3 or r[0] is not Ellipsis or self.check(r[1],ENTRY).Name!=name or self.fingerprint(self.check(r[2],PARAM))!=self.fingerprint(p):raise ValueError('native setter response uncertain')
@@ -169,7 +177,12 @@ class Trial:
             s=self.stable()
             if self.phase=='armed':
                 if not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5] or self.permission() is not True:raise ValueError('armed reward baseline changed')
-                p=self.binding.make_float(self.target);self.target_fp=self.binding.typed_float(p,self.target,self.base[1]);self.phase='active';self.owned=True
+                p=self.binding.make_float(self.target);self.target_fp=self.binding.typed_float(p,self.target,self.base[1])
+                if not near(self.target,self.binding.decoded_float(p,s[0][1])):raise ValueError('native target float conversion disagrees')
+                s=self.stable()
+                if (not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5] or self.stop_requested
+                        or self.clock()>=self.record[3] or self.permission() is not True):raise ValueError('reward scope or permission changed during target construction')
+                self.phase='active';self.owned=True
                 self.binding.write(self.name,s[0][1],p);s=self.stable()
                 if not self.matches(s,self.target,self.target_fp) or s[6]!=self.base[5]:raise ValueError('native reward change or peer isolation unverified')
                 self.due=self.clock()+.5;self.report('EXPERIMENT: '+self.name+' value changed; actual earned reward unverified.')

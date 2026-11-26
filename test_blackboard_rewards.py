@@ -30,6 +30,7 @@ class RewardTests(unittest.TestCase):
         n=path.rsplit(':',1)[1]
         if n in ('Conv_GbxParamToString','GetSummary_GbxParam'):return lambda p:(('None' if p.kind=='None' else f'{p.kind}: {p.v}'),p)
         if n.startswith('Conv_'):return lambda v:self.param_obj(n.split('_')[1].split('To')[0],v)
+        if n=='GetGbxParam_Float':return lambda p,pawn:(float(p.v),p)
         if n=='GetBlackboardParamPure':return lambda k,pawn,report:(self.param_obj(*self.values.get(k.Name,('None',0.))),k)
         if n=='GetBlackboardFloatPure':return lambda k,pawn,report:(float(self.values.get(k.Name,('None',0.))[1]),k)
         if n=='GetValueOfAttribute':return lambda key,pawn,default:self.values.get(key,('None',default))[1]
@@ -96,3 +97,23 @@ class RewardTests(unittest.TestCase):
     def test_queue_dispatch(self):
         m=self.base.m;self.assertEqual(m.REWARD_KEYS,set(self.R.TARGETS))
         seen=[];m.begin_blackboard_reward=lambda k,v:seen.append((k,v));m.execute_activation('progress_money',2.);self.assertEqual(seen,[('progress_money',2.)])
+
+    def test_native_param_value_mismatch(self):
+        self.binding.calls['GetGbxParam_Float']=lambda p,pawn:(float(p.v)+1,p)
+        self.assertFalse(self.lane().begin());self.assertFalse(self.calls)
+    def test_native_target_decoder_mismatch(self):
+        l=self.lane();self.assertTrue(l.begin())
+        self.binding.calls['GetGbxParam_Float']=lambda p,pawn:(float(p.v)+(1 if p.v==2. else 0),p)
+        self.tick(l);self.assertEqual(l.phase,'done');self.assertFalse(self.calls)
+    def test_permission_lost_during_target_conversion(self):
+        l=self.lane();self.assertTrue(l.begin());old=self.binding.make_float
+        def change(v):
+            if v==2.:self.permission=False
+            return old(v)
+        self.binding.make_float=change;self.tick(l);self.assertFalse(self.calls)
+    def test_foreign_drift_during_target_conversion(self):
+        l=self.lane();self.assertTrue(l.begin());old=self.binding.make_float
+        def change(v):
+            if v==2.:self.values[l.name]=('Float',3.)
+            return old(v)
+        self.binding.make_float=change;self.tick(l);self.assertFalse(self.calls)

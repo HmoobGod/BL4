@@ -32,6 +32,15 @@ SPECS={
 }
 
 
+def trial_amount(mode,selection=None):
+    """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
+    if mode not in TARGETS:raise ValueError('unknown native rate trial')
+    if selection is None:return TARGETS[mode][-1]
+    if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<=selection<=5 or (mode!='health' and selection==1):
+        raise ValueError('select 1–5x health increment or above 1x skill factor')
+    return .001*selection if mode=='health' else selection if mode=='cooldown' else 1./selection
+
+
 def close(a,b):
     return math.isclose(a,b,rel_tol=1e-5,abs_tol=1e-7)
 
@@ -112,8 +121,8 @@ class NativeBinding:
     def valid_handle(self,h):
         return type(h) is self.handle_wrapper and h._type._path_name()==HANDLE and identity(h._type)==identity(self.handle_type)
 
-    def add(self,mode,d,pawn):
-        _,_,_,_,modifier,amount=TARGETS[mode]
+    def add(self,mode,d,pawn,selection=None):
+        modifier=TARGETS[mode][-2];amount=trial_amount(mode,selection)
         result=self.calls['AddModifierToGbxAttribute'](d,pawn,self.mods[modifier],amount,True,self.failure)
         # The SDK returns return value followed by *all* out parameters,
         # including the const-ref definition, not merely the success enum.
@@ -141,11 +150,12 @@ class NativeRateTrial:
     and exact validated native definition. It may not mutate the game. Caller
     must run tick on the existing verified game hook; no scheduling here.
     """
-    def __init__(self,mode,binding,resolve,weak,clock,thread,report,can_add,cleanup_key=lambda key:key):
+    def __init__(self,mode,binding,resolve,weak,clock,thread,report,can_add,cleanup_key=lambda key:key,selection=None):
         if mode not in TARGETS:raise ValueError('unknown native rate trial')
         self.mode,self.binding,self.resolve,self.weak=mode,binding,resolve,weak
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
-        self.cleanup_key=cleanup_key
+        self.cleanup_key=cleanup_key;self.selection=selection
+        trial_amount(mode,selection)
         self.record=None;self.fault=False;self.busy=False;self.used=False;self.stop_requested=False
         self.handle=None;self.phase='idle';self.baseline=None;self.expected=None;self.anomaly=False;self.due=0.
 
@@ -171,7 +181,7 @@ class NativeRateTrial:
         return b
 
     def target_value(self,base):
-        modifier,amount=TARGETS[self.mode][-2:]
+        modifier=TARGETS[self.mode][-2];amount=trial_amount(self.mode,self.selection)
         expected=base+amount if modifier=='PostAdd' else base*amount
         if not 0<expected<=(.1 if self.mode=='health' else 1e4):raise ValueError('native trial target outside conservative bound')
         return expected
@@ -242,7 +252,7 @@ class NativeRateTrial:
                 self.record=None;self.phase='idle';self.report('HOLD: native rate '+str(e)[:120]);return
             self.expected=self.target_value(value)
             self.used=True;self.phase='active';self.due=self.clock()+.25
-            self.handle,echo_ok=self.binding.add(self.mode,d,objs[1])
+            self.handle,echo_ok=self.binding.add(self.mode,d,objs[1],self.selection)
             _,_,_,observed=self.stable_snapshot()
             if not echo_ok or not close(observed,self.expected):
                 self.anomaly=True;self.cleanup();return

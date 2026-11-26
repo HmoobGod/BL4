@@ -137,10 +137,10 @@ class NativeRateTests(unittest.TestCase):
     def test_no_writes_before_explicit_activation(self):
         lane=self.trial();self.tick(lane);self.assertFalse(self.native)
     def test_f8_dispatch_selection(self):
-        m=self.base.m;called=[];m.begin_native_resource_rate=lambda mode:called.append(mode)
-        for mode in ('health','cooldown','duration'):m.execute_activation('native_rate_'+mode,1.)
-        self.assertEqual(called,['health','cooldown','duration'])
-        self.assertRaises(ValueError,m.execute_activation,'native_rate_health',2.)
+        m=self.base.m;called=[];m.begin_native_resource_rate=lambda mode,selection:called.append((mode,selection))
+        for mode in ('health','cooldown','duration'):m.execute_activation('native_rate_'+mode,2.)
+        self.assertEqual(called,[('health',2.),('cooldown',2.),('duration',2.)])
+        self.assertRaises(ValueError,m.execute_activation,'native_rate_health',6.)
 
     def local_health(self):
         from test_health_pulse_r17 import FGameDataHandle
@@ -201,3 +201,17 @@ class NativeRateTests(unittest.TestCase):
         def add(*a):h=old_add(*a);self.rate=1.;return h
         self.binding.calls['AddModifierToGbxAttribute']=add;self.tick(lane);self.tick(lane)
         self.assertTrue(lane.fault);self.assertEqual([x[0] for x in self.native],['add','remove']);self.assertEqual(self.rate,0.)
+
+    def test_custom_native_rate_cycle(self):
+        for mode,base,selection,target in [('health',0.,3.5,.0035),('cooldown',2.,3.5,7.),('duration',4.,4.,1.)]:
+            self.native.clear();lane=self.trial(mode,base);lane.selection=selection
+            self.assertTrue(lane.begin());self.tick(lane);self.assertAlmostEqual(self.rate,target)
+            lane.stop('restore');self.tick(lane);self.tick(lane);self.assertEqual(lane.phase,'done');self.assertAlmostEqual(self.rate,base)
+    def test_custom_rate_invalid(self):
+        for mode,selection in [('health',False),('health',6.),('cooldown',1.),('duration',float('nan'))]:
+            with self.assertRaises(ValueError):self.R.trial_amount(mode,selection)
+    def test_native_rate_options_default_inert(self):
+        m=self.base.m
+        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration'})
+        self.assertTrue(all(o.value==1. for o in m.NATIVE_RATE_OPTIONS.values()))
+        self.assertFalse(self.native)

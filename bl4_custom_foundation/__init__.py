@@ -106,7 +106,9 @@ _crossfire_hooks = None
 _crossfire_attempted = False
 SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct replacement '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
-ALL = PREVIEW + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=.1,is_integer=False,display_name=label)
+                       for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'))}
+ALL = PREVIEW + list(NATIVE_RATE_OPTIONS.values()) + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; opt in to persistent gameplay.'
@@ -330,6 +332,13 @@ def displayed_selection(option):
     return normalize(option, option.value)
 
 
+def native_rate_selection(ui, mode):
+    option=NATIVE_RATE_OPTIONS[mode]
+    edited,value=ui.slider_float(option.display_name+'##'+option.identifier,float(displayed_selection(option)),1.,5.,'%.1fx')
+    if edited:_pending[option.identifier]=normalize(option,value)
+    return displayed_selection(option)
+
+
 def draw():
     global _category, _status, _compact_view, _vacuum_radius, _focus_controls, _vacuum_high_gear
     if _backend is None or not mod.is_enabled:
@@ -522,17 +531,19 @@ def draw():
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native regeneration start/stop (2 sec)'):
                 activate_feature('health_regen_native', 1.0)
             ui.text_wrapped('Native passive regeneration rate trial: small additive native rate, not a refill. Ten-second maximum; restore before travel. Rate units and actual healing unverified.')
+            rate=native_rate_selection(ui,'health')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native passive health rate (10 sec)'):
-                activate_feature('native_rate_health', 1.0)
+                activate_feature('native_rate_health',rate)
             ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
                 activate_feature('shield_pulse', 1.0)
         if 'Action skills' in panels:
             ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
-            ui.text_wrapped('Native resource-rate trials: 2x cooldown regeneration or half duration consumption, one at a time. Exact runtime property path and reversible readback required; no refill. Restore before skill changes.')
+            ui.text_wrapped('Native resource-rate trials: selectable cooldown regeneration speed or inverse duration consumption (above 1x), one at a time. Exact runtime property path and reversible readback required; no refill. Restore before skill changes.')
             for mode in ('cooldown','duration'):
-                if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
-                    activate_feature('native_rate_'+mode, 1.0)
+                rate=native_rate_selection(ui,mode)
+                if rate>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
+                    activate_feature('native_rate_'+mode,rate)
                 if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental skill '+mode+' assist (30 sec)'):
                     activate_feature('skill_'+mode, 1.0)
     if _category == 8:
@@ -1216,7 +1227,7 @@ def begin_blackboard_reward(key, selection):
     _health_pulse.begin()
 
 
-def begin_native_resource_rate(mode):
+def begin_native_resource_rate(mode,selection):
     global _health_pulse
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
                                         TARGETS, bind_health_readers, make_local_resolver, original_pool_identity)
@@ -1244,7 +1255,7 @@ def begin_native_resource_rate(mode):
                          lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
                          adaptive_api=adaptive,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
     resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill)
-    _health_pulse=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key))
+    _health_pulse=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection)
     _health_pulse.begin()
 
 
@@ -1562,8 +1573,10 @@ def execute_activation(key, selection):
         begin_skill_pulse(key.split('_',1)[1])
         return
     if key in ('native_rate_health','native_rate_cooldown','native_rate_duration'):
-        if selection != 1.0:raise ValueError('invalid native rate trial selection')
-        begin_native_resource_rate(key.rsplit('_',1)[1])
+        from .native_resource_rates import trial_amount
+        mode=key.rsplit('_',1)[1]
+        trial_amount(mode,selection)
+        begin_native_resource_rate(mode,selection)
         return
     if key == 'health_regen_native':
         if selection != 1.0:raise ValueError('invalid native regeneration selection')
@@ -2285,6 +2298,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
+options += [NestedOption('native_rate_options', list(NATIVE_RATE_OPTIONS.values()), display_name='Native rate trial selections (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
