@@ -10,12 +10,12 @@ from .session_control import Controller, DAMAGE_HOLD, GROUND_KEYS
 from .ground_speed import is_player_animation, sprinting
 from .gameplay_fields import identity, target_values
 from .inventory_capacity import KEYS as CAPACITY_KEYS, resolve as resolve_capacity, validate as validate_capacity
-from .weapon_rates import WEAPON_KEYS, validate_targets
+from .weapon_rates import WEAPON_KEYS, AMMO_KEYS, validate_targets
 from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shield_readback
 from .gadget_rates import KEY as GADGET_KEY
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height'))
 
-TITLE = 'BL4 Custom - Community Integration v0.7.39-experimental'
+TITLE = 'BL4 Custom - Community Integration v0.7.40-experimental'
 DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
 
 
@@ -62,16 +62,19 @@ CATEGORIES = [
     ('inventory', 'Inventory', [SliderOption(k, 1., 1., 1000., step=1, is_integer=True, display_name=FEATURES[k][0], description='Experimental absolute slots; 1 restores captured original. Never fill above original capacity during testing.') for k in ('backpack_capacity','bank_capacity')]),
     ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement attribute; manual or persistent opt-in; 1x restores. Actual speed/distance unverified.') for k in ('dash_speed', 'glide_speed', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration')], *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Existing positive vault-power cost; lower may reduce consumption. 1x restores. No free energy or new jump actions.') for k in ('double_jump_cost','dash_cost','glide_cost','grapple_cost','slam_cost')], *[SliderOption(k, 1., FEATURES[k][1], FEATURES[k][2], step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement field only; native effect unverified. 1x restores.') for k in ('ladder_ascend','ladder_descend','slam_height')], SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
-    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental: existing positive native rate only; 1x restores. Weapon ammo, grenade and shield controls support persistent opt-in; life-steal and player ammo regeneration remain manual.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'shield_regen_rate', 'shield_regen_delay', 'grenade_cooldown', 'player_ammo_regen')]]),
+    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental: existing positive native rate only; 1x restores. Weapon ammo, grenade and shield controls support persistent opt-in; player ammo regeneration supports persistent opt-in; life-steal remains manual.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'shield_regen_rate', 'shield_regen_delay', 'grenade_cooldown', 'player_ammo_regen')]]),
     ('enemies', 'Enemy Difficulty', [slider('enemy_health', 'Enemy health multiplier'), slider('enemy_damage', 'Enemy damage multiplier')]),
     ('menu', 'Custom Menu', [probe]),
 ]
 PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 _PREVIEW_BY_KEY = {o.identifier: o for o in PREVIEW}
+_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Persistent gameplay (experimental)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
-MANUAL_ONLY = frozenset(('sprint', 'lifesteal_rate', 'player_ammo_regen'))
+MANUAL_ONLY = frozenset(('sprint', 'lifesteal_rate'))
+PLAYER_AMMO_KEY = 'player_ammo_regen'
+AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Auto-enable '+label)
@@ -83,7 +86,7 @@ _automation_attempted = set()
 _automation_status = {}
 _automation_next = 0.0
 _automation_busy = False
-_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY}
+_AUTOMATION_COMPATIBLE = frozenset(('walk_speed','jump','gravity','damage_taken','healing_received','repair_cooldown','repair_duration','dash_speed','glide_speed','fire_damage','shock_damage','corrosive_damage','cryo_damage','radiation_damage','double_jump_cost','dash_cost','glide_cost','swap_time','repair_health','fire_rate','weapon_spread','weapon_recoil','reload','ammo_regen_rate','ammo_regen_delay', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration', 'grapple_cost', 'slam_cost')) | CAPACITY_KEYS | SHIELD_KEYS | NEW_MOVE_KEYS | {GADGET_KEY, PLAYER_AMMO_KEY}
 _ground_selection = next(o for o in PREVIEW if o.identifier == 'walk_speed')
 VACUUM_PREFS = {k: BoolOption('vacuum_pref_'+k, False, display_name='Saved vacuum '+k) for k in ('ammo','cash','eridium','health','gear')}
 VACUUM_RADIUS_PREF = SliderOption('vacuum_pref_radius', 30., 5., 100., step=1., is_integer=False, display_name='Saved vacuum radius (m)')
@@ -242,6 +245,8 @@ def persistent_feature_status(key):
         return 'FAULT / exit game'
     if _auto_blocked or not auto_allowed():
         return 'Paused / HOLD'
+    if key in AMMO_GROUP and ammo_selection_conflict(raw_auto_desired()):
+        return 'HOLD: choose player OR weapon ammo regeneration'
     if key in _auto_edits:
         return 'Saving selection...'
     selected = _PREVIEW_BY_KEY[key].value
@@ -251,6 +256,15 @@ def persistent_feature_status(key):
     if record is not None and record.get('selection') == selected:
         return 'Active: ' + str(selected) + (' slots' if key in CAPACITY_KEYS else 'x') + ' (value verified)'
     return 'Waiting for gameplay callback'
+
+
+def displayed_selection(option):
+    key = option.identifier
+    if key in _auto_edits:
+        return _auto_edits[key]
+    if key in _pending:
+        return _pending[key]
+    return normalize(option, option.value)
 
 
 def draw():
@@ -265,7 +279,7 @@ def draw():
     if gui_close_pressed(ui):
         close_menu()
         return
-    ui.text('BL4 CUSTOM | v0.7.39-experimental')
+    ui.text('BL4 CUSTOM | v0.7.40-experimental')
     ui.text_wrapped('Manual or persistent solo activation. XP and unsupported fields HOLD.')
     ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
@@ -318,7 +332,7 @@ def draw():
     _, name, options = CATEGORIES[_category]
     ui.text(name)
     if compact:
-        options = [o for o in options if o is probe or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)]
+        options = _COMPACT_OPTIONS[_category]
         if not options:
             ui.text('No supported gameplay controls here; turn off Compact menu to view previews.')
     if _category == 0 and not compact:
@@ -384,8 +398,9 @@ def draw():
                 ui.text(kind+': '+_automation_status.get(kind, 'Waiting / off'))
                 if kind in RECOVERY_RATES:
                     rate=RECOVERY_RATES[kind]
-                    edited, selected=ui.slider_float(rate.display_name+'##'+rate.identifier, float(_auto_edits.get(rate.identifier,normalize(rate,rate.value))), .1,1.,'%.1f%%')
+                    edited, selected=ui.slider_float(rate.display_name+'##'+rate.identifier, float(displayed_selection(rate)), .1,1.,'%.1f%%')
                     if edited: queue_auto_edit(rate, selected)
+            ui.text_wrapped('Player and weapon ammo regeneration cannot overlap. If both are selected, all ammo regeneration modifiers restore until you choose one.')
             ui.text_wrapped('Native shield modifiers take priority over the shield pulse assist; flesh recovery remains independent. Restore before changing equipment if possible.')
             ui.text_wrapped('Skill assists: only unique ordinary skills, no charges or auxiliary pools; not exact cooldown/duration multipliers.')
         ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
@@ -402,7 +417,7 @@ def draw():
         ui.text_wrapped('Change the Open Custom Menu key in the SDK console Keybinds section. Default: F8.')
         ui.text('Current hotkey: ' + str(open_key.key or 'Unbound'))
     for o in options:
-        value = _auto_edits.get(o.identifier, _pending.get(o.identifier, normalize(o, o.value)))
+        value = displayed_selection(o)
         label = o.display_name + '##' + o.identifier
         if (o.identifier not in FEATURES or o.identifier in DAMAGE_HOLD) and o is not probe:
             ui.text_wrapped(o.display_name + ' — HOLD / preview only')
@@ -570,7 +585,7 @@ ATTRIBUTE_NAMES = ('Att_CombatXP_Multiplier', 'Att_PickupCash_Multiplier', 'Att_
 
 
 def attribute_report(sdk):
-    lines = ['BL4 Custom v0.7.39-experimental - read-only compatibility report',
+    lines = ['BL4 Custom v0.7.40-experimental - read-only compatibility report',
              'All reward modifications HOLD. Metadata is not proof of live behavior.']
     binding = sys.modules.get('unrealsdk.unreal')
     lines.append('FGbxDefPtr binding visible: ' + str(hasattr(binding, 'FGbxDefPtr')))
@@ -800,7 +815,7 @@ def _write_report(path, lines):
 
 def inspect_loot_readonly():
     global _loot_status
-    lines = ['BL4 Custom v0.7.39-experimental - read-only rarity diagnostic',
+    lines = ['BL4 Custom v0.7.40-experimental - read-only rarity diagnostic',
              'No gameplay writes; session report is a separate file.',
              f'F8 binding: {open_key.key!r}; mod enabled: {mod.is_enabled!r}']
     try:
@@ -836,7 +851,7 @@ def _valid_test_backend():
 # The community mod uses RarityState.LegendaryModifier.Value and baseline-relative
 # updates. SDK addresses below are identity tokens only, never dereferenced or written.
 _MONITOR_PATH = '/Script/Engine.CameraModifier:BlueprintModifyCamera'
-_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0739exp'
+_MONITOR_ID = 'bl4_custom_legendary_session_guard_v0740exp'
 
 
 def monitor_status():
@@ -870,7 +885,7 @@ def ensure_monitor():
         # Do not adopt, remove, or replace an existing identifier.
         before = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
         if before is not False:
-            raise ValueError('v0.7.39-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
+            raise ValueError('v0.7.40-experimental monitor identifier already exists or cannot be checked; remove duplicate SDKMOD copies if present')
         _monitor_attempted = True
         _monitor_add_result = hooks.add_hook(_MONITOR_PATH, kind, _MONITOR_ID, monitor_tick)
         after = hooks.has_hook(_MONITOR_PATH, kind, _MONITOR_ID)
@@ -896,7 +911,7 @@ def report_live(message):
     _loot_test_status = message
     _live_lines.append(message)
     try:
-        _write_report(loot_report_path(), ['BL4 Custom v0.7.39-experimental - community session control',
+        _write_report(loot_report_path(), ['BL4 Custom v0.7.40-experimental - community session control',
             'Offline Local Only owner prerequisite; privacy not independently verified.',
             'No direct grants, spawning, raw memory writes or save edits.'] + _live_lines[-150:])
         return True
@@ -1060,7 +1075,7 @@ def expire_activation():
 
 
 _GROUND_PATH = '/Script/Engine.AnimInstance:BlueprintUpdateAnimation'
-_GROUND_ID = 'bl4_custom_ground_speed_v0739exp'
+_GROUND_ID = 'bl4_custom_ground_speed_v0740exp'
 _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
@@ -1397,7 +1412,7 @@ def pause_auto(reason):
             report_live('HOLD: master off in memory; settings save failed, check before restart')
 
 
-def auto_desired():
+def raw_auto_desired():
     desired = {}
     for key, flag in AUTO_OPTIONS.items():
         if flag.value is not True:
@@ -1406,8 +1421,27 @@ def auto_desired():
             record = _controller.records.get(key) if _auto_owned and _controller is not None else None
             if record is not None:
                 desired[key] = record['selection']
+            elif key in AMMO_GROUP and _PREVIEW_BY_KEY[key].value != 1.0:
+                # Preserve committed ammo selection for conflict detection while a draft saves.
+                desired[key] = _PREVIEW_BY_KEY[key].value
         elif _PREVIEW_BY_KEY[key].value != 1.0:
             desired[key] = _PREVIEW_BY_KEY[key].value
+    return desired
+
+
+def ammo_selection_conflict(desired):
+    return PLAYER_AMMO_KEY in desired and bool(AMMO_KEYS.intersection(desired))
+
+
+def auto_desired():
+    desired = raw_auto_desired()
+    # Refuse ambiguous saved selections rather than silently choosing a winner.
+    if ammo_selection_conflict(desired):
+        return {k: v for k, v in desired.items() if k not in AMMO_GROUP}
+    # A draft cannot initiate an inactive ammo modifier.
+    for key in AMMO_GROUP.intersection(_auto_edits):
+        if not (_auto_owned and _controller is not None and key in _controller.records):
+            desired.pop(key, None)
     return desired
 
 
@@ -1499,6 +1533,7 @@ def auto_tick():
         _auto_ground = None
         _auto_owned = False
         _auto_status = ('Waiting for slider edit to save' if _auto_edits else
+                        'Waiting: choose player OR weapon ammo regeneration' if ammo_selection_conflict(raw_auto_desired()) else
                         'Ready; automation preferences managed separately' if any(o.value is True for o in AUTOMATION_OPTIONS.values()) else 'Ready; enable a feature and select a non-1x value')
         return
     try:
@@ -1568,7 +1603,7 @@ def auto_tick():
                 validate_capacity(rec['inventory_scope'], count, targets[0], applying=True)
             except (AttributeError, TypeError, ValueError):
                 continue
-        if key in NEW_MOVE_KEYS or key == GADGET_KEY:
+        if key in NEW_MOVE_KEYS or key in (GADGET_KEY, PLAYER_AMMO_KEY):
             # Wait for exact reflected local field or idle equipped gadget.
             try:
                 rec = _controller.records.get(key) or _controller.capture(key)
@@ -1766,7 +1801,7 @@ def automation_tick():
 def enabled():
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.39-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.40-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
 
 
 def disabled():

@@ -61,7 +61,7 @@ class PlayerAmmo(GadgetCooldown):
     def setUp(self):
         super().setUp();self.a=attr(2.);self.p.ammoregenrate=self.a;self.p._path_name=lambda:'LocalPawn';prior=list(getattr(self.p.Class,'_properties',lambda:[])());self.p.Class._properties=lambda:prior+[desc('ammoregenrate',self.a._type)]
     def test_manual_positive_cycle(self):
-        self.assertNotIn('player_ammo_regen',self.m.AUTO_OPTIONS);self.b.activate('player_ammo_regen',3.);self.assertEqual((self.a.Value,self.a.BaseValue),(6.,6.));self.b.activate('player_ammo_regen',1.);self.assertEqual((self.a.Value,self.a.BaseValue),(2.,2.))
+        self.assertIn('player_ammo_regen',self.m.AUTO_OPTIONS);self.b.activate('player_ammo_regen',3.);self.assertEqual((self.a.Value,self.a.BaseValue),(6.,6.));self.b.activate('player_ammo_regen',1.);self.assertEqual((self.a.Value,self.a.BaseValue),(2.,2.))
     def test_zero_not_enabled(self):
         self.a._values.update(Value=0.,BaseValue=0.);self.b.activate('player_ammo_regen',2.);self.assertFalse(self.a.writes)
     def test_unequal_refused(self):
