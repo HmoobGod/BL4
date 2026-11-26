@@ -5,7 +5,8 @@ consumption and reflection remain unverified. Identity tokens are not dereferenc
 import re
 
 AMMO_KEYS = frozenset(('ammo_regen_rate', 'ammo_regen_delay'))
-WEAPON_KEYS = frozenset(('fire_rate', 'reload')) | AMMO_KEYS
+FIRE_KEYS = frozenset(('fire_rate', 'weapon_spread', 'weapon_recoil'))
+WEAPON_KEYS = FIRE_KEYS | frozenset(('reload',)) | AMMO_KEYS
 STATES = frozenset(('Active', 'Using', 'Firing', 'Reloading'))
 
 
@@ -115,7 +116,7 @@ def matching_behavior(w, key, index):
         m = re.fullmatch(r'UM([0-9]+)_[A-Za-z0-9_]+', name)
         if m is None or int(m.group(1)) != index:
             continue
-        if (key == 'fire_rate' and is_fire(b)) or (key == 'reload' and str(b.Class.Name) == 'WeaponBehavior_StockReload') or (key in AMMO_KEYS and str(b.Class.Name) == 'WeaponBehavior_AmmoPool'):
+        if (key in FIRE_KEYS and is_fire(b)) or (key == 'reload' and str(b.Class.Name) == 'WeaponBehavior_StockReload') or (key in AMMO_KEYS and str(b.Class.Name) == 'WeaponBehavior_AmmoPool'):
             if live(b) in found or token(b.Outer) != token(w):
                 raise ValueError('ambiguous or foreign weapon behavior')
             found[live(b)] = b
@@ -126,7 +127,8 @@ def matching_behavior(w, key, index):
 
 def fields(b, key):
     from .gameplay_fields import pair
-    name = {'fire_rate': 'firerate', 'reload': 'ReloadTime',
+    name = {'fire_rate': 'firerate', 'weapon_spread': 'spread',
+            'weapon_recoil': 'RecoilScale', 'reload': 'ReloadTime',
             'ammo_regen_rate': 'RegenRate', 'ammo_regen_delay': 'ConsumeRegenDelay'}[key]
     return pair(nested(b, name, 'GbxAttributeFloat'))
 

@@ -15,6 +15,8 @@ FEATURES = {
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
     'damage': ('Damage multiplier', .5, 5.),
+    'weapon_spread': ('Weapon spread scale (experimental)', .1, 3.),
+    'weapon_recoil': ('Weapon recoil scale (experimental)', .1, 3.),
     'fire_rate': ('Weapon fire rate multiplier (experimental)', .5, 3.),
     'reload': ('Weapon reload speed multiplier (experimental)', .5, 3.),
     'swap_time': ('Weapon swap time scale (experimental)', .5, 3.),
