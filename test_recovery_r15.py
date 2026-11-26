@@ -19,7 +19,7 @@ class Swap(unittest.TestCase):
         self.c.activate('swap_time', 1.); self.assertEqual(self.c.vals(self.a), (1., 1.))
 
     def test_manual(self):
-        self.assertNotIn('swap_time', self.m.AUTO_OPTIONS)
+        self.assertFalse(self.m.AUTO_OPTIONS['swap_time'].value)
         self.assertEqual(self.a.writes, [])
 
     def test_default_refused(self):

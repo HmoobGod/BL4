@@ -53,7 +53,8 @@ class Combat(unittest.TestCase):
     def activate(self,k,v): self.b.activate(k,v)
     def vals(self,a):return (a.Value,a.BaseValue)
     def test_manual_only(self):
-        for k in ('fire_rate','reload','repair_health'): self.assertNotIn(k,self.m.AUTO_OPTIONS)
+        for k in ('fire_rate','reload'): self.assertNotIn(k,self.m.AUTO_OPTIONS)
+        self.assertFalse(self.m.AUTO_OPTIONS['repair_health'].value)
         self.assertEqual(self.fire.writes+self.reload.writes+self.health.writes,[])
     def test_fire_rate_cycle(self):
         self.activate('fire_rate',2.);self.assertEqual(self.vals(self.fire),(16.,16.));self.activate('fire_rate',3.);self.assertEqual(self.vals(self.fire),(24.,24.));self.activate('fire_rate',1.);self.assertEqual(self.vals(self.fire),(8.,8.))
