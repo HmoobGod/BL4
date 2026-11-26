@@ -17,6 +17,9 @@ FEATURES = {
     'damage': ('Damage multiplier', .5, 5.),
     'fire_rate': ('Weapon fire rate multiplier (experimental)', .5, 3.),
     'reload': ('Weapon reload speed multiplier (experimental)', .5, 3.),
+    'ammo_regen_rate': ('Existing ammo regeneration rate (experimental)', .5, 3.),
+    'ammo_regen_delay': ('Existing ammo regeneration delay speed (experimental)', .5, 3.),
+    'lifesteal_rate': ('Existing life-steal rate (experimental)', .5, 3.),
     'repair_health': ('Repair-kit healing amount multiplier', .5, 5.),
     'damage_taken': ('Damage taken multiplier', .1, 5.),
     'shock_damage': ('Shock damage multiplier', .5, 5.),
@@ -136,6 +139,28 @@ def repair_health(pawn, state):
     return pair(nested(health, 'RepairKitHealth', 'GbxAttributeFloat'))
 
 
+def lifesteal_rate(pawn, state):
+    # Only the existing local rate; do not turn on life-steal, change its cap,
+    # or touch any health pool value. Historical OakDamageState declaration.
+    from .weapon_rates import nested
+    damage = nested(pawn, 'DamageState', 'OakDamageState')
+    if identity(damage.owner) != identity(pawn):
+        raise ValueError('life-steal owner mismatch')
+    return pair(nested(damage, 'lifestealrate', 'GbxAttributeFloat'))
+
+
+def validate_lifesteal(pawn, targets):
+    from .weapon_rates import nested
+    damage = nested(pawn, 'DamageState', 'OakDamageState')
+    if identity(damage.owner) != identity(pawn):
+        raise ValueError('life-steal owner mismatch')
+    # Positive existing percent and cap only; conservative candidate bound.
+    pair(nested(damage, 'lifestealpercent', 'GbxAttributeFloat'))
+    cap = min(f[3] for f in pair(nested(damage, 'lifestealratecap', 'GbxAttributeFloat')))
+    if any(t > cap for t in targets):
+        raise ValueError('life-steal target above existing cap')
+
+
 def epic(pawn, state):
     # Upstream lists VeryRareModifier and EpicModifier; ambiguous distinct
     # candidates are not safe to guess between. Only exact reflected fields.
@@ -170,6 +195,7 @@ RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
            'repair_health': repair_health,
+           'lifesteal_rate': lifesteal_rate,
            'damage': lambda p, s: pair(p.DamageCauserData.DamageDealtMultiplier),
            'damage_taken': lambda p, s: pair(p.DamageState.DamageTakenMultiplier),
            'shock_damage': lambda p, s: pair(p.ElementalDamageModifiers.ShockModifier),
@@ -208,7 +234,7 @@ def target_values(key, baseline, tokens, selection):
         raise ValueError('rarity weight uses 0.1 increments')
     result = []
     for base, (_, _, kind) in zip(baseline, tokens, strict=True):
-        v = base / selection if key == 'reload' else base * selection
+        v = base / selection if key in ('reload', 'ammo_regen_delay') else base * selection
         if kind == 'ZFloatProperty':
             v = struct.unpack('<f', struct.pack('<f', v))[0]
         if not math.isfinite(v) or not (0 <= v <= 1e6 if key in ZERO_RARITY_KEYS and selection == 0 else 0 < v <= 1e6):

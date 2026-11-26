@@ -1,7 +1,7 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
-from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields
+from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, validate_lifesteal
 from . import weapon_rates
 
 
@@ -165,6 +165,8 @@ class Controller:
                 raise ValueError('session or owned value changed')
             targets = (floor_target(record['baseline'], record['tokens'], selection, ground_sprinting, sprint_only=key == 'sprint')
                        if key in GROUND_KEYS else target_values(key, record['baseline'], record['tokens'], selection))
+            if key == 'lifesteal_rate':
+                validate_lifesteal(record['pawn'](), targets)
             if record.get('weapon_scope') is not None:
                 weapon_rates.validate_targets(record['weapon_scope'], targets)
             if values == targets and key not in GROUND_KEYS:
@@ -243,6 +245,10 @@ class Controller:
                     if not eligible:
                         self.restore_all('session or pawn changed')
                         return
+                    if key == 'lifesteal_rate':
+                        validate_lifesteal(record['pawn'](), values)
+                    if key in weapon_rates.AMMO_KEYS:
+                        weapon_rates.validate_ammo(record['weapon_scope'])
                     if values != record['expected'] and not (key in GROUND_KEYS and values == record['baseline']):
                         self.restore_all('engine or another writer changed active field; no reapply')
                         return

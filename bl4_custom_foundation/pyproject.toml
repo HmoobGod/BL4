@@ -1,7 +1,7 @@
 [project]
 name = "bl4_custom_foundation"
-version = "0.7.11"
-description = "Experimental weapon rate and repair-kit amount controls; R12 preserved."
+version = "0.7.12"
+description = "Experimental existing ammo regeneration and life-steal controls; R13 preserved."
 authors = [{name = "BL4 Custom Project"}]
 
 [tool.sdkmod]

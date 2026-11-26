@@ -4,7 +4,8 @@ consumption and reflection remain unverified. Identity tokens are not dereferenc
 """
 import re
 
-WEAPON_KEYS = frozenset(('fire_rate', 'reload'))
+AMMO_KEYS = frozenset(('ammo_regen_rate', 'ammo_regen_delay'))
+WEAPON_KEYS = frozenset(('fire_rate', 'reload')) | AMMO_KEYS
 STATES = frozenset(('Active', 'Using', 'Firing', 'Reloading'))
 
 
@@ -114,7 +115,7 @@ def matching_behavior(w, key, index):
         m = re.fullmatch(r'UM([0-9]+)_[A-Za-z0-9_]+', name)
         if m is None or int(m.group(1)) != index:
             continue
-        if (key == 'fire_rate' and is_fire(b)) or (key == 'reload' and str(b.Class.Name) == 'WeaponBehavior_StockReload'):
+        if (key == 'fire_rate' and is_fire(b)) or (key == 'reload' and str(b.Class.Name) == 'WeaponBehavior_StockReload') or (key in AMMO_KEYS and str(b.Class.Name) == 'WeaponBehavior_AmmoPool'):
             if live(b) in found or token(b.Outer) != token(w):
                 raise ValueError('ambiguous or foreign weapon behavior')
             found[live(b)] = b
@@ -125,7 +126,9 @@ def matching_behavior(w, key, index):
 
 def fields(b, key):
     from .gameplay_fields import pair
-    return pair(nested(b, 'firerate' if key == 'fire_rate' else 'ReloadTime', 'GbxAttributeFloat'))
+    name = {'fire_rate': 'firerate', 'reload': 'ReloadTime',
+            'ammo_regen_rate': 'RegenRate', 'ammo_regen_delay': 'ConsumeRegenDelay'}[key]
+    return pair(nested(b, name, 'GbxAttributeFloat'))
 
 
 def capture(pawn, key, weak):
@@ -134,6 +137,11 @@ def capture(pawn, key, weak):
         raise ValueError('activate with weapon idle')
     index = mode(w)
     b = matching_behavior(w, key, index)
+    if key in AMMO_KEYS:
+        # Require ordinary stock-reload behavior and existing positive native regen.
+        matching_behavior(w, 'reload', index)
+        from .gameplay_fields import pair
+        pair(nested(b, 'RegenRate', 'GbxAttributeFloat'))
     return dict(weapon=weak(w), behavior=weak(b), weapon_id=live(w), behavior_id=live(b), mode=index, key=key)
 
 
@@ -158,6 +166,8 @@ def validate_targets(scope, targets):
     w = scope['weapon']()
     if w is None or str(w.CurrentState) != 'Active':
         raise ValueError('update with weapon idle')
+    if scope['key'] in AMMO_KEYS:
+        validate_ammo(scope)
     if scope['key'] == 'reload':
         from .gameplay_fields import scalar
         b = scope['behavior']()
@@ -165,3 +175,10 @@ def validate_targets(scope, targets):
         floor = max(scalar(minimum, n, allow_zero=True)[3] for n in ('Value', 'BaseValue'))
         if any(t < floor for t in targets):
             raise ValueError('reload target below native minimum')
+
+
+def validate_ammo(scope):
+    from .gameplay_fields import pair
+    w, b = scope['weapon'](), scope['behavior']()
+    matching_behavior(w, 'reload', scope['mode'])
+    pair(nested(b, 'RegenRate', 'GbxAttributeFloat'))
