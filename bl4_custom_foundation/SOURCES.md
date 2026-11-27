@@ -265,3 +265,6 @@ Reuses the exact prior NativeRateTrial, property and pool identity validation, n
 
 ## R63 persistent activation recovery
 Independent reliability and idle admission optimization; no external code copied. Ground floor still restored on stale local animation witness; reactivation requires fresh validated local animation and unchanged original safeguards. No actual FPS or gameplay result claimed. 1316 synthetic regressions pass.
+
+## R63 active-workload recovery
+Independent optimization: one fresh reflection traversal per attribute pair, including slide and reload minimum; preserve exact descriptor validation and both live values. No cross-frame cache or reduced active guard cadence. Stopped/backoff automation lanes skip repeated permission checks when no dispatch is possible; active leases still checked. Temporarily unavailable initial ground component retries after one second, without touching peer modifiers, before the normal fully checked activation; uncertain dispatch and fault behavior unchanged. 1322 synthetic regressions, no native FPS or gameplay benchmark.

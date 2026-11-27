@@ -1359,6 +1359,7 @@ _ground_inserted = False
 _ground_attempted = False
 _ground_anim_id = None
 _ground_seen = 0.0
+_ground_retry_at = 0.0
 
 def ensure_ground_hook():
     global _ground_inserted, _ground_attempted
@@ -1375,7 +1376,7 @@ def ensure_ground_hook():
 
 
 def ground_tick(obj, *_):
-    global _ground_anim_id, _ground_seen, _activation_request, _controller, _auto_ground, _auto_blocked
+    global _ground_anim_id, _ground_seen, _activation_request, _controller, _auto_ground, _auto_blocked, _ground_retry_at
     if _automation_busy or automation_fault():
         return
     request = _activation_request
@@ -1442,6 +1443,16 @@ def ground_tick(obj, *_):
         if queued:
             if automatic:
                 _auto_ground = None
+                if 'walk_speed' not in _controller.records:
+                    # A missing/ambiguous component before any dispatch is not
+                    # a failed transaction. Back off this lane only. Activate
+                    # still performs a completely fresh capture/write check.
+                    try:
+                        _controller.capture('walk_speed')
+                    except (AttributeError, TypeError, ValueError) as exc:
+                        _ground_retry_at = time.monotonic() + 1.0
+                        report_live('HOLD ground admission; retrying: ' + str(exc)[:100])
+                        return
                 if not _controller.activate('walk_speed', request[1], ground_sprinting=stance):
                     _auto_blocked = 'Ground activation failed; toggle master to retry'
                 return
@@ -1630,7 +1641,7 @@ def auto_allowed():
 
 
 def set_auto_setting(option, value):
-    global _auto_blocked, _auto_ground, _auto_next
+    global _auto_blocked, _auto_ground, _auto_next, _ground_retry_at
     try:
         edits = dict(_auto_edits) if option is auto_master and value is False else {}
         apply({**edits, option.identifier: value})
@@ -1651,6 +1662,8 @@ def set_auto_setting(option, value):
         if value is True and not automation_fault() and kind not in _automation_leases:
             _automation_attempted.discard(kind)
             _automation_status[kind] = 'Waiting for eligible session'
+    if option is AUTO_OPTIONS['walk_speed'] or option is auto_master:
+        _ground_retry_at = 0.0
     if option is auto_master:
         stop_automation('persistent master changed')
         if value is True and not automation_fault():
@@ -1933,6 +1946,8 @@ def auto_tick():
         if _controller.records.get(key, {}).get('selection') == selection:
             continue
         if key == 'walk_speed':
+            if now < _ground_retry_at:
+                continue
             if _auto_ground is None:
                 if not ensure_ground_hook():
                     _auto_status = 'Ground animation hook unavailable; other features unaffected'
@@ -2278,6 +2293,11 @@ def automation_tick():
         for kind in (*AUTOMATION_OPTIONS,*NATIVE_AUTO_OPTIONS):
             if lane_options[kind].value is not True:
                 stop_automation_lane(kind,'disabled')
+                continue
+            # A stopped lane cannot dispatch until explicitly rearmed. A lane
+            # waiting for its admission deadline also cannot dispatch yet.
+            # Still check every live lease, including pending native cleanup.
+            if kind not in _automation_leases and (kind in _automation_attempted or time.monotonic() < _automation_next):
                 continue
             if not automation_permitted():
                 stop_automation('permission ended before next lane')

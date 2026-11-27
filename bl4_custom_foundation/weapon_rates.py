@@ -181,10 +181,10 @@ def validate_targets(scope, targets):
 
 def validate_reload_floor(scope, targets):
     # Read-only: monitor the floor even during native reloading/firing.
-    from .gameplay_fields import scalar
+    from .gameplay_fields import pair
     b = scope['behavior']()
     minimum = nested(b, 'MinReloadTime', 'GbxAttributeFloat')
-    floor = max(scalar(minimum, n, allow_zero=True)[3] for n in ('Value', 'BaseValue'))
+    floor = max(f[3] for f in pair(minimum, allow_zero=True))
     if any(t < floor for t in targets):
         raise ValueError('reload target below native minimum')
 

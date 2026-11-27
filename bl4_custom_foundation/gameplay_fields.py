@@ -78,7 +78,10 @@ def scalar(owner, name, *, allow_zero=False):
     typ = getattr(owner, '_type', None)
     if typ is None:
         typ = owner.Class
-    props = [p for p in typ._properties() if str(p.Name) == name]
+    return _scalar_from_matches(owner, name, [p for p in typ._properties() if str(p.Name) == name], allow_zero=allow_zero)
+
+
+def _scalar_from_matches(owner, name, props, *, allow_zero=False):
     if len(props) != 1 or props[0].ArrayDim != 1:
         raise ValueError('unsupported or ambiguous scalar: ' + name)
     kind = type(props[0]).__name__
@@ -90,9 +93,19 @@ def scalar(owner, name, *, allow_zero=False):
     return owner, name, kind, float(v)
 
 
-def pair(owner):
-    # Do not guess extra fields or use the upstream blind fallback setter.
-    return (scalar(owner, 'Value'), scalar(owner, 'BaseValue'))
+def pair(owner, *, allow_zero=False):
+    # One fresh reflection traversal for this exact struct, never cache metadata
+    # or values across callbacks. Both properties retain full scalar validation.
+    typ = getattr(owner, '_type', None)
+    if typ is None:
+        typ = owner.Class
+    matches = {'Value': [], 'BaseValue': []}
+    for prop in typ._properties():
+        name = str(prop.Name)
+        if name in matches:
+            matches[name].append(prop)
+    return tuple(_scalar_from_matches(owner, name, props, allow_zero=allow_zero)
+                 for name, props in matches.items())
 
 
 def loot(pawn, state):
@@ -194,7 +207,7 @@ def slide_component(pawn):
 def slide_scale(pawn):
     from .weapon_rates import nested
     attribute = nested(slide_component(pawn), 'MaxGroundSpeedScale', 'GbxAttributeFloat')
-    return scalar(attribute, 'Value'), scalar(attribute, 'BaseValue')
+    return pair(attribute)
 
 
 def slide_active(pawn):
