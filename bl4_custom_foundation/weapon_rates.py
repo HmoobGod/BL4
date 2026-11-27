@@ -51,24 +51,37 @@ def slot_entries(pawn):
     for slot in arr:
         if token(slot._type) != token(inner.Struct):
             raise ValueError('active slot wrapper mismatch')
-        for name in ('Weapon', 'PendingWeapon', 'ClientPredictedPendingWeapon'):
-            d = prop(slot._type, name, 'ZObjectProperty')
-            if str(d.PropertyClass.Name) != 'Weapon':
-                raise ValueError('unexpected slot weapon descriptor')
+        # One fresh traversal per slot, retaining uniqueness and exact type checks.
+        names = ('Weapon', 'PendingWeapon', 'ClientPredictedPendingWeapon')
+        descriptors = {name: [] for name in names}
+        for d in slot._type._properties():
+            name = str(d.Name)
+            if name in descriptors:
+                descriptors[name].append(d)
+        for name, matches in descriptors.items():
+            if (len(matches) != 1 or type(matches[0]).__name__ != 'ZObjectProperty'
+                    or matches[0].ArrayDim != 1 or str(matches[0].PropertyClass.Name) != 'Weapon'):
+                raise ValueError('unexpected slot weapon descriptor: ' + name)
     return arr
 
 
-def slots(pawn):
+def weapons_from_entries(entries):
+    """Consume entries already validated in this synchronous observation only."""
     found = {}
-    for slot in slot_entries(pawn):
+    for slot in entries:
         w = slot.Weapon
         if w is not None:
             found[live(w)] = w
     return found
 
 
-def owned_weapon(w, pawn):
-    if str(w.Class.Name) != 'OakWeapon' or live(w) not in slots(pawn):
+def slots(pawn):
+    return weapons_from_entries(slot_entries(pawn))
+
+
+def owned_weapon(w, pawn, *, observed_slots=None):
+    found = slots(pawn) if observed_slots is None else observed_slots
+    if str(w.Class.Name) != 'OakWeapon' or live(w) not in found:
         raise ValueError('ordinary local weapon not identified')
     # Require actor ownership; interface/fallback guesses are not accepted.
     if token(w.Owner) != token(pawn):
@@ -86,13 +99,15 @@ def mode(w):
 
 def active_weapon(pawn):
     # No first-slot fallback. A second active weapon makes this experiment ineligible.
-    if any(slot.PendingWeapon is not None or slot.ClientPredictedPendingWeapon is not None for slot in slot_entries(pawn)):
+    entries = slot_entries(pawn)
+    if any(slot.PendingWeapon is not None or slot.ClientPredictedPendingWeapon is not None for slot in entries):
         raise ValueError('weapon transition pending')
-    candidates = [w for w in slots(pawn).values() if str(w.CurrentState) in STATES]
+    found = weapons_from_entries(entries)
+    candidates = [w for w in found.values() if str(w.CurrentState) in STATES]
     if len(candidates) != 1:
         raise ValueError('unique active weapon unavailable')
     w = candidates[0]
-    owned_weapon(w, pawn)
+    owned_weapon(w, pawn, observed_slots=found)
     return w
 
 

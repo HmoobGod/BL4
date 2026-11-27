@@ -1377,7 +1377,7 @@ def ensure_ground_hook():
 
 def ground_tick(obj, *_):
     global _ground_anim_id, _ground_seen, _activation_request, _controller, _auto_ground, _auto_blocked, _ground_retry_at
-    if _automation_busy or automation_fault():
+    if _automation_busy:
         return
     request = _activation_request
     automatic = _auto_ground is not None and _auto_owned
@@ -1394,6 +1394,8 @@ def ground_tick(obj, *_):
         return
     try:
         if _ground_anim_id is not None and identity(obj) != _ground_anim_id and active:
+            return
+        if automation_fault():
             return
         if threading.get_ident() != _monitor_thread or time.monotonic() - _monitor_seen > 2.0:
             return

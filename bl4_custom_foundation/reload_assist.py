@@ -2,7 +2,7 @@
 from collections import deque
 from .gameplay_fields import identity
 from .health_pulse import enum_name
-from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, live, slot_entries, slots, STATES
+from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, live, slot_entries, weapons_from_entries, STATES
 
 PATH = '/Script/GbxWeapon.WeaponStatics:'
 REQUEST = '/Script/GbxWeapon.Weapon:ServerStartReloading'
@@ -89,7 +89,7 @@ class ReloadAssist:
         entries=slot_entries(pawn)
         if any(s.PendingWeapon is not None or s.ClientPredictedPendingWeapon is not None for s in entries):
             return True
-        states=tuple(str(w.CurrentState) for w in slots(pawn).values())
+        states=tuple(str(w.CurrentState) for w in weapons_from_entries(entries).values())
         if any(state in STATES for state in states):return False
         if any(state!='Inactive' for state in states):raise ValueError('unknown weapon state during wait')
         return True
