@@ -271,3 +271,7 @@ Independent optimization: one fresh reflection traversal per attribute pair, inc
 
 ### R63 weapon observation workload (v0.7.61)
 The existing instance-local weapon adapter now validates all three slot descriptors in one fresh per-slot traversal. Active selection consumes one synchronous validated slot observation for pending checks, unique active candidate and membership; class, owner and destruction checks remain. `resolve` still independently verifies original membership before behavior resolution and reobserves active slots afterward. Automatic reload waiting uses its freshly validated entries rather than repeating reflection. No observation crosses a callback or is used to bypass a write-time recheck. Unrelated animation callbacks skip automation-fault enumeration once the active local animation identity excludes them; local callbacks retain the guard. No new game API, native calls, features or copied third-party code. Synthetic operation-count evidence only; real FPS unverified.
+
+
+### R63 permission-exception cleanup
+An exception in the outer automation permission observation now denies dispatch and still enters the existing native-handle cleanup loop. Original thread, resource identity, single removal, and immediate/delayed baseline verification remain mandatory. Existing per-lane checks and timing are unchanged. Three synthetic cases fail on the parent and pass after the change; no new native APIs, gameplay or FPS claims.

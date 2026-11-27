@@ -2273,7 +2273,12 @@ def automation_tick():
     try:
         # Drain native cleanup even after master/consent/mod disable, conflict, or peer fault.
         # Never discard a pending native handle or its delayed verification receipt.
-        permitted=automation_permitted()
+        try:
+            permitted=automation_permitted()
+        except Exception:
+            # A failed permission observation denies new actions, but must not
+            # prevent the original handle from reaching its cleanup path.
+            permitted=False
         for kind in NATIVE_AUTO_OPTIONS:
             lease=_automation_leases.get(kind)
             if lease is None or lease.fault:continue

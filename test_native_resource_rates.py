@@ -247,6 +247,28 @@ class NativeRateTests(unittest.TestCase):
         self.now+=.2;m.automation_tick();self.assertEqual(lane.phase,'verify');self.assertIs(m._automation_leases[k],lane)
         self.now+=.2;m.automation_tick();self.assertNotIn(k,m._automation_leases);self.assertEqual(len(self.native),2);self.assertEqual(self.rate,0.)
 
+    def test_permission_exception_drains_native_handle(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();lane.begin();self.tick(lane)
+        m._automation_leases[k]=lane;m._automation_attempted.add(k)
+        def broken():raise RuntimeError('permission reflection unavailable')
+        m.automation_permitted=broken
+        self.now+=.2;m.automation_tick();self.assertEqual(lane.phase,'verify');self.assertEqual(self.rate,0.)
+        self.now+=.2;m.automation_tick();self.assertNotIn(k,m._automation_leases);self.assertEqual(len(self.native),2)
+
+    def test_permission_exception_cancels_armed_rate_without_dispatch(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();lane.begin();m._automation_leases[k]=lane
+        def broken():raise RuntimeError('permission reflection unavailable')
+        m.automation_permitted=broken
+        self.now+=.2;m.automation_tick();self.assertNotIn(k,m._automation_leases);self.assertFalse(self.native)
+        self.assertIn(k,m._automation_attempted)
+
+    def test_permission_exception_preserves_failed_cleanup_fault(self):
+        m=self.base.m;k='native_rate_health';lane=self.persistent_trial();lane.begin();self.tick(lane);m._automation_leases[k]=lane
+        def broken():raise RuntimeError('permission reflection unavailable')
+        m.automation_permitted=broken;self.restore=False
+        self.now+=.2;m.automation_tick();self.assertTrue(lane.fault);self.assertIs(m._automation_leases[k],lane)
+        self.now+=.2;m.automation_tick();self.assertEqual(len(self.native),2)
+
     def test_persistent_rate_selection_change_restores_no_rearm(self):
         m=self.base.m;k='native_rate_health';lane=self.persistent_trial();m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS['health'].value=2.
         lane.begin();self.tick(lane);m._automation_leases[k]=lane;m._automation_attempted.add(k)
