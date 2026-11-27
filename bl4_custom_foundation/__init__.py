@@ -117,6 +117,7 @@ _auto_ground = None
 _auto_api = None
 _auto_next = 0.0
 _slide_next = 0.0
+_reload_handoff = None  # (scope IDs, deadline, next attempt) only after clean transition
 _auto_edits = {}
 _auto_edit_at = 0.0
 _auto_last_diagnostic = ''
@@ -1324,7 +1325,8 @@ def begin_reload_assist(continuous=False):
 
 
 def request_stop(reason, *, immediate=False):
-    global _offline_confirmed, _auto_blocked, _auto_ground
+    global _offline_confirmed, _auto_blocked, _auto_ground, _reload_handoff
+    _reload_handoff = None
     _offline_confirmed = False
     stop_health_pulse(reason)
     stop_automation(reason)
@@ -1643,7 +1645,9 @@ def auto_allowed():
 
 
 def set_auto_setting(option, value):
-    global _auto_blocked, _auto_ground, _auto_next, _ground_retry_at
+    global _auto_blocked, _auto_ground, _auto_next, _ground_retry_at, _reload_handoff
+    if option is auto_master or option is auto_consent or option is AUTO_OPTIONS['reload']:
+        _reload_handoff = None
     try:
         edits = dict(_auto_edits) if option is auto_master and value is False else {}
         apply({**edits, option.identifier: value})
@@ -1710,7 +1714,8 @@ def flush_auto_edits(force=False):
 
 
 def pause_auto(reason):
-    global _auto_blocked, _auto_ground
+    global _auto_blocked, _auto_ground, _reload_handoff
+    _reload_handoff = None
     stop_automation(reason)
     _auto_ground = None
     _auto_edits.clear()
@@ -1804,11 +1809,47 @@ def fast_slide_admission(selection):
         _auto_blocked = 'Activation failed: slide_speed; toggle master to retry'
 
 
+def fast_reload_handoff(now, observed):
+    """Retry only after verified old-weapon restoration. No steady-state SDK work."""
+    global _reload_handoff, _auto_blocked, _auto_ground
+    scope, deadline, due = _reload_handoff
+    selection = raw_auto_desired(('reload',)).get('reload')
+    if (now >= deadline or not _auto_owned or not auto_allowed() or _controller.fault
+            or _controller.stop_pending is not None or 'reload' in _controller.records
+            or selection is None or 'reload' in _auto_edits):
+        _reload_handoff = None
+        return False
+    if now < due:
+        return False
+    _reload_handoff = (scope, deadline, now + .05)
+    try:
+        observed = _controller.context() if observed is None else observed
+        if not observed[3] or tuple(identity(x) for x in observed[:3]) != scope:
+            _reload_handoff = None
+            return False
+        rec = _controller.capture('reload')
+        if tuple(rec[k+'_id'] for k in ('pc','pawn','state')) != scope:
+            _reload_handoff = None
+            return False
+        targets = target_values('reload', rec['baseline'], rec['tokens'], selection)
+        validate_targets(rec['weapon_scope'], targets)
+    except (AttributeError, TypeError, ValueError):
+        return False  # pending equip, unsupported gun, native floor: no writes
+    if not auto_allowed() or _controller.stop_pending is not None or raw_auto_desired(('reload',)).get('reload') != selection or 'reload' in _auto_edits:
+        _reload_handoff = None
+        return False
+    _reload_handoff = None
+    if not _controller.activate('reload', selection):
+        _auto_ground = None
+        _auto_blocked = 'Activation failed: reload; toggle master to retry'
+    return True  # at most one activation attempt per camera callback
+
+
 def auto_tick():
     """Camera callback only. Reconcile saved desired settings in owner-confirmed offline solo mode (R2 admission).
     No implicit legacy migration, no retry after unexpected drift or failed write.
     """
-    global _controller, _auto_owned, _auto_blocked, _auto_ground, _auto_next, _auto_api, _auto_status, _slide_next
+    global _controller, _auto_owned, _auto_blocked, _auto_ground, _auto_next, _auto_api, _auto_status, _slide_next, _reload_handoff, _ground_anim_id
     now = time.monotonic()
     if _activation_request is not None:
         cancel_activation('persistent mode selected')
@@ -1819,7 +1860,7 @@ def auto_tick():
             _controller.restore_all("automation fault")
         return
     slide_selection = pending_slide_selection() if now >= _slide_next else None
-    if not (_controller is not None and _controller.records) and _auto_ground is None and now < _auto_next and slide_selection is None:
+    if not (_controller is not None and _controller.records) and _auto_ground is None and now < _auto_next and slide_selection is None and _reload_handoff is None:
         return  # idle only: no owned values or queued animation to protect
     if not _auto_owned and _controller is not None and _controller.records:
         # Never adopt active manual baselines into a new automatic session.
@@ -1839,6 +1880,7 @@ def auto_tick():
         permitted = False
         _auto_status = 'HOLD: persistent preflight unavailable'
     if not permitted:
+        _reload_handoff = None
         _auto_next = now + .25
         _auto_ground = None
         if _auto_owned and _controller is not None and _controller.records:
@@ -1858,6 +1900,7 @@ def auto_tick():
         else:
             reason = _session_reason
         if observed is None or not observed[3]:
+            _reload_handoff = None
             _auto_status = 'Waiting for eligible local solo session: ' + (reason or 'local eligibility not established')
             _auto_ground = None
             stop_automation('persistent session no longer eligible')
@@ -1875,12 +1918,30 @@ def auto_tick():
             if not _controller.restore_selected('walk_speed', 'local animation callback stale; waiting to rearm'):
                 _auto_blocked = 'Ground restoration failed; exit game'
                 return
+            _auto_next = 0.0  # queue rearm without waiting for normal cadence
         before = set(_controller.records)
         transitioned = _controller.tick(True, observed=observed, follow_weapon=True, follow_shield=True, follow_gadget=True) or set()
         if set(_controller.records) != before - transitioned or _controller.fault:
             _auto_ground = None
             _auto_blocked = 'Unexpected active field change; toggle master to retry'
+            _reload_handoff = None
             return
+        if 'reload' in transitioned:
+            _reload_handoff = (tuple(identity(x) for x in observed[:3]), now + 3.0, now)
+        # The old animation identity is a cheap rejection filter, not a lifetime
+        # pin. Refresh only on normal reconciliation when callbacks have paused.
+        # Never refresh the heartbeat here: only an actual local callback does.
+        if 'walk_speed' in _controller.records and now >= _auto_next and now - _ground_seen > .25:
+            try:
+                pc, pawn = observed[:2]
+                if identity(pc.OakCharacter) == identity(pawn):
+                    anim = pawn.Mesh.GetAnimInstance()
+                    if anim is not None:
+                        _ground_anim_id = identity(anim)
+            except (AttributeError, TypeError, ValueError):
+                pass
+    if _reload_handoff is not None and fast_reload_handoff(now, observed):
+        return
     if now < _auto_next:
         if slide_selection is not None:
             _slide_next = now + .05
@@ -1945,6 +2006,8 @@ def auto_tick():
             _auto_ground = None
             # Expired unused request: no ownership to clean up. Retry below.
     for key, selection in desired.items():
+        if key == 'reload' and _reload_handoff is not None:
+            continue  # pending bounded handoff already has its own retry cadence
         if _controller.records.get(key, {}).get('selection') == selection:
             continue
         if key == 'walk_speed':
