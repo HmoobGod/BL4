@@ -24,6 +24,27 @@ class Controller:
         self.fault = False
         self.busy = False
         self.stop_pending = None
+        self.reload_reset_recovered = False
+        self.reload_wait_reason = ''
+        self.reload_wait_since = None
+        self.reload_wait_logged = ''
+        self.reload_wait_report_at = -float('inf')
+
+    def note_reload_wait(self, exc, now):
+        """Read-only admission failures: bounded reporting, no new gameplay calls."""
+        reason = str(exc)[:140] or type(exc).__name__
+        if self.reload_wait_since is None:
+            self.reload_wait_since = now
+        self.reload_wait_reason = reason
+        if reason != self.reload_wait_logged and now - self.reload_wait_report_at >= 1.0:
+            self.reload_wait_logged = reason
+            self.reload_wait_report_at = now
+            self.log(f'WAIT reload: {reason}; elapsed {max(0., now-self.reload_wait_since):.2f}s')
+
+    def clear_reload_wait(self):
+        self.reload_wait_reason = ''
+        self.reload_wait_since = None
+        self.reload_wait_logged = ''
 
     def log(self, message):
         return self.report(message)
@@ -404,6 +425,7 @@ class Controller:
         if self.busy or not self.records or self.fault:
             return
         transitioned = set()
+        self.reload_reset_recovered = False
         self.busy = True
         try:
             if self.stop_pending is not None or not permitted:
@@ -461,6 +483,17 @@ class Controller:
                         weapon_rates.validate_ammo(record['weapon_scope'])
                     if key == 'reload' and not light_reload:
                         weapon_rates.validate_reload_floor(record['weapon_scope'], values)
+                    # The complete captured original pair can be observed after native
+                    # recalculation. Treat it as a clean end of this persistent lease,
+                    # never a new baseline or permission to overwrite foreign values.
+                    # Full resolution above and restore() independently prove identity.
+                    if light_reload and values != record['expected'] and values == record['baseline']:
+                        if not self.restore(key, 'exact original reload pair observed; rearm when idle'):
+                            self.restore_all('reload reset cleanup failed')
+                            return
+                        self.reload_reset_recovered = True
+                        transitioned.add(key)
+                        continue
                     if values != record['expected'] and not (key in GROUND_KEYS and values == record['baseline']):
                         self.restore_all('engine or another writer changed active field; no reapply')
                         return

@@ -321,6 +321,8 @@ def persistent_feature_status(key):
         return 'Restoring' if record else 'Vanilla capacity' if key in CAPACITY_KEYS else '1x / vanilla'
     if record is not None and record.get('selection') == selected:
         return 'Active: ' + str(selected) + (' slots' if key in CAPACITY_KEYS else 'x') + ' (value verified)'
+    if key == 'reload' and _controller is not None and _controller.reload_wait_reason:
+        return 'Waiting: ' + _controller.reload_wait_reason
     if key in LIFE_KEYS:
         return 'Waiting for supported positive life-steal effect'
     return 'Waiting for exact active slide' if key == 'slide_speed' else 'Waiting for gameplay callback'
@@ -1833,7 +1835,8 @@ def fast_reload_handoff(now, observed):
             return False
         targets = target_values('reload', rec['baseline'], rec['tokens'], selection)
         validate_targets(rec['weapon_scope'], targets)
-    except (AttributeError, TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError) as exc:
+        _controller.note_reload_wait(exc, now)
         return False  # pending equip, unsupported gun, native floor: no writes
     if not auto_allowed() or _controller.stop_pending is not None or raw_auto_desired(('reload',)).get('reload') != selection or 'reload' in _auto_edits:
         _reload_handoff = None
@@ -1842,6 +1845,8 @@ def fast_reload_handoff(now, observed):
     if not _controller.activate('reload', selection):
         _auto_ground = None
         _auto_blocked = 'Activation failed: reload; toggle master to retry'
+    else:
+        _controller.clear_reload_wait()
     return True  # at most one activation attempt per camera callback
 
 
@@ -1927,7 +1932,9 @@ def auto_tick():
             _reload_handoff = None
             return
         if 'reload' in transitioned:
-            _reload_handoff = (tuple(identity(x) for x in observed[:3]), now + 3.0, now)
+            # Native reset recovery must not become an expensive sticky write loop.
+            delay = .25 if _controller.reload_reset_recovered else 0.0
+            _reload_handoff = (tuple(identity(x) for x in observed[:3]), now + 3.0, now + delay)
         # The old animation identity is a cheap rejection filter, not a lifetime
         # pin. Refresh only on normal reconciliation when callbacks have paused.
         # Never refresh the heartbeat here: only an actual local callback does.
@@ -2081,12 +2088,16 @@ def auto_tick():
                 rec = _controller.records.get(key) or _controller.capture(key)
                 targets = target_values(key, rec['baseline'], rec['tokens'], selection)
                 validate_targets(rec['weapon_scope'], targets)
-            except (AttributeError, TypeError, ValueError):
+            except (AttributeError, TypeError, ValueError) as exc:
+                if key == 'reload':
+                    _controller.note_reload_wait(exc, now)
                 continue
         if not _controller.activate(key, selection):
             _auto_ground = None
             _auto_blocked = 'Activation failed: ' + key + '; toggle master to retry'
             return
+        if key == 'reload':
+            _controller.clear_reload_wait()
         break  # at most one non-animation activation per reconciliation interval
 
 
