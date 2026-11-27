@@ -14,7 +14,7 @@ class RewardTests(unittest.TestCase):
         self.ctx=t('GbxBlackboardOwnerContextResolver',R.ENGINE+'GbxBlackboardOwnerContextResolver');self.val=t('GbxBlackboardValueResolver',R.ENGINE+'GbxBlackboardValueResolver',p('Variable',R.S,Struct=self.entry))
         self.values={n:('Float',float(i+1)) for i,n in enumerate(R.TARGETS.values())}
         for n in self.values:self.defs.definitions[n]=Node(Context=Node(_type=self.ctx),Value=Node(_type=self.val,Variable=self.key(n)))
-        bb=t('GbxBlackboard',R.ENGINE+'GbxBlackboard');self.pawn=Node(Class=t('OakCharacter','/Script/OakGame.OakCharacter',p('blackboard',R.S,Struct=bb)),blackboard=Node(_type=bb),Name='Pawn');self.pc=Node(Pawn=self.pawn);self.state=Node()
+        bb=t('GbxBlackboard',R.ENGINE+'GbxBlackboard');self.pawn=Node(Class=t('OakCharacter','/Script/OakGame.OakCharacter',p('blackboard',R.S,Struct=bb)),blackboard=Node(_type=bb),Name='Pawn');self.pc=Node(Pawn=self.pawn,Class=t('OakPlayerController','/Script/OakGame.OakPlayerController'));self.state=Node()
         self.fs=[]
         for n,(lib,sig) in R.SPECS.items():
             ps=[p(k,kind) for k,kind in sig]
@@ -38,7 +38,7 @@ class RewardTests(unittest.TestCase):
         if n=='SetBlackboardFloat':return self.write
         raise AssertionError(n)
     def write(self,k,p,pawn):
-        assert pawn is self.pawn
+        assert pawn is (self.pc if k.Name==self.R.TARGETS['progress_enemy_xp'] else self.pawn)
         assert k is self.defs.definitions[k.Name].Value.Variable
         self.calls.append((k.Name,'Float',p));self.values[k.Name]=('Float',p)
         if self.peer_drift and len(self.calls)==1:self.values[next(n for n in self.values if n!=k.Name)]=('Float',99.)
@@ -140,3 +140,33 @@ class RewardTests(unittest.TestCase):
     def test_setter_uses_only_native_float(self):
         self.assertNotIn('SetBlackboardParam',self.binding.calls)
         self.cycle('progress_money')
+
+    def test_controller_xp_dispatch_and_pawn_readback(self):
+        contexts=[];old=self.binding.calls['SetBlackboardFloat']
+        def spy(k,v,c):
+            contexts.append(c);return old(k,v,c)
+        self.binding.calls['SetBlackboardFloat']=spy;self.cycle('progress_enemy_xp');self.assertEqual(contexts,[self.pc,self.pc])
+    def test_controller_wrong_class(self):
+        self.pc.Class=Node(Name='wrong');self.assertFalse(self.lane().begin());self.assertFalse(self.calls)
+    def test_controller_pawn_disagree_before_write(self):
+        old=self.binding.calls['GetValueOfAttribute']
+        self.binding.calls['GetValueOfAttribute']=lambda k,c,d: (4. if c is self.pc and k==self.R.TARGETS['progress_enemy_xp'] else old(k,c,d))
+        self.assertFalse(self.lane().begin());self.assertFalse(self.calls)
+    def test_controller_only_change_restores_then_faults(self):
+        key=self.R.TARGETS['progress_enemy_xp'];orig=dict(self.values);other=dict(self.values)
+        old=self.binding.calls.copy()
+        for name in ('GetBlackboardParamPure','GetBlackboardFloatPure','GetValueOfAttribute'):
+            def f(k,c,d,name=name):
+                if c is not self.pc:return old[name](k,c,d)
+                n=k if name=='GetValueOfAttribute' else k.Name
+                kind,val=other.get(n,('None',d if name=='GetValueOfAttribute' else 0.))
+                if name=='GetBlackboardParamPure':return self.param_obj(kind,val),k
+                if name=='GetBlackboardFloatPure':return val,k
+                return val
+            self.binding.calls[name]=f
+        def write(k,v,c):
+            self.assertIs(c,self.pc);self.calls.append((k.Name,v));other[k.Name]=('Float',v);return Ellipsis,k
+        self.binding.calls['SetBlackboardFloat']=write
+        l=self.lane();self.assertTrue(l.begin());self.tick(l);self.assertTrue(l.fault);self.assertEqual(other,orig);self.assertEqual(self.values,orig);self.assertEqual(len(self.calls),2)
+    def test_controller_changed_before_dispatch(self):
+        l=self.lane();self.assertTrue(l.begin());self.pc=Node(Pawn=self.pawn,Class=self.pc.Class);self.tick(l);self.assertFalse(self.calls)

@@ -141,46 +141,62 @@ class Trial:
     def __init__(self,mode,scale,binding,context,weak,clock,thread,report,permission):
         if mode not in TARGETS or type(scale) not in (int,float) or not math.isfinite(scale) or not 1<scale<=10:raise ValueError('choose a reward multiplier above 1x')
         self.mode,self.name,self.scale=mode,TARGETS[mode],scale
+        self.controller_context=mode=='progress_enemy_xp'
         self.binding,self.context,self.weak,self.clock,self.thread,self.report,self.permission=binding,context,weak,clock,thread,report,permission
         self.record=None;self.fault=False;self.busy=False;self.phase='idle';self.stop_requested=False;self.due=0.;self.owned=False
     def scope(self):
         pc,pawn,state,ok=self.context()
         if ok is not True or pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name() or identity(pc.Pawn)!=identity(pawn):raise ValueError('original local character required')
         struct(pawn,'blackboard',ENGINE+'GbxBlackboard')
+        if self.controller_context and (pc.Class._path_name()!='/Script/OakGame.OakPlayerController' or 'Default__' in pc._path_name()):raise ValueError('exact local XP controller required')
         objs=(pc,pawn,state);ids=tuple(identity(o) for o in objs)
         if len(set(ids))!=3:raise ValueError('ambiguous owner identity')
         if self.record:
             refs,oldids,tid,_=self.record
             if ids!=oldids or self.thread()!=tid or any(r() is None or identity(r())!=i for r,i in zip(refs,ids,strict=True)):raise ValueError('original local scope lost')
         return objs
+    def owner(self,objs):return objs[0] if self.controller_context else objs[1]
     def observe(self):
-        objs=self.scope();pawn=objs[1];b=self.binding
-        missing=b.absent_witness(pawn)
-        key=b.definition(self.name);v,fp,p=b.read(self.name,pawn,missing)
+        objs=self.scope();pawn=objs[1];owner=self.owner(objs);b=self.binding
+        missing=b.absent_witness(owner)
+        key=b.definition(self.name);v,fp,p=b.read(self.name,owner,missing)
         # Independent peers only read through the attribute resolver; unresolved peers
         # are allowed, but their actual raw values must not change during our write.
-        peers=tuple(b.calls['GetValueOfAttribute'](n,pawn,-123456.) for n in TARGETS.values() if n!=self.name)
+        contexts=(owner,pawn) if self.controller_context else (owner,)
+        peers=tuple(b.calls['GetValueOfAttribute'](n,c,-123456.) for c in contexts for n in TARGETS.values() if n!=self.name)
         if any(type(x) not in (int,float) or not math.isfinite(x) for x in peers):raise ValueError('peer value unavailable')
-        return objs,key,missing,v,fp,p,peers
+        # The controller is a context, not proof of a separate embedded board.
+        # Require the existing local pawn's typed entry as an independent witness.
+        witness=None
+        if self.controller_context:
+            pm=b.absent_witness(pawn);pv,pfp,_=b.read(self.name,pawn,pm)
+            witness=(pm,pv,pfp)
+        return objs,key,missing,v,fp,p,peers,witness
     def stable(self):
         a,b=self.observe(),self.observe()
-        if tuple(identity(o) for o in a[0])!=tuple(identity(o) for o in b[0]) or a[1:5]!=b[1:5] or a[6]!=b[6]:raise ValueError('reward preflight changed')
+        if tuple(identity(o) for o in a[0])!=tuple(identity(o) for o in b[0]) or a[1:5]!=b[1:5] or a[6:]!=b[6:]:raise ValueError('reward preflight changed')
         return b
     def begin(self):
         if self.record or self.fault or self.phase!='idle':return False
         try:
-            objs,key,missing,v,fp,p,peers=self.stable();self.target=number(v*self.scale)
+            objs,key,missing,v,fp,p,peers,witness=self.stable();self.target=number(v*self.scale)
+            if self.controller_context and not self.witness_matches(witness,missing,v,fp):raise ValueError('controller/pawn XP baseline mismatch')
             if self.permission() is not True or near(v,self.target):raise ValueError('activation not permitted or ineffective target')
             self.base=(key,missing,v,fp,p,peers);self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),self.clock()+30.);self.phase='armed'
             self.report('EXPERIMENT: '+self.name+' armed for 30 seconds; earned rewards are not reversed.');return True
         except Exception as e:self.report('HOLD: native reward '+str(e)[:140]);return False
     def stop(self,reason):
         if self.record:self.stop_requested=True;self.report('STOP PENDING: native reward '+reason)
-    def matches(self,s,v,fp):return s[1:3]==self.base[:2] and near(s[3],v) and s[4]==fp
+    @staticmethod
+    def witness_matches(w,missing,v,fp):return w is not None and w[0]==missing and near(w[1],v) and w[2]==fp
+    def primary_matches(self,s,v,fp):return s[1:3]==self.base[:2] and near(s[3],v) and s[4]==fp
+    def matches(self,s,v,fp):
+        return self.primary_matches(s,v,fp) and (not self.controller_context or self.witness_matches(s[7],self.base[1],v,fp))
     def cleanup(self,s):
-        if not self.matches(s,self.target,self.target_fp):raise ValueError('owned reward value changed; no overwrite')
+        if not self.primary_matches(s,self.target,self.target_fp):raise ValueError('owned reward value changed; no overwrite')
+        if self.controller_context and not (self.witness_matches(s[7],self.base[1],self.target,self.target_fp) or self.witness_matches(s[7],self.base[1],self.base[2],self.base[3])):raise ValueError('foreign pawn XP witness; no overwrite')
         self.owned=False # never retry setter after dispatch
-        self.binding.write(self.name,s[0][1],self.base[2],self.base[0])
+        self.binding.write(self.name,self.owner(s[0]),self.base[2],self.base[0])
         now=self.stable()
         if not self.matches(now,self.base[2],self.base[3]) or now[6]!=self.base[5]:raise ValueError('original reward or peer restoration unverified')
         self.phase='verify';self.due=self.clock()+.2
@@ -195,12 +211,12 @@ class Trial:
             if self.phase=='armed':
                 if not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5] or self.permission() is not True:raise ValueError('armed reward baseline changed')
                 p=self.binding.make_float(self.target);self.target_fp=self.binding.typed_float(p,self.target,self.base[1])
-                if not near(self.target,self.binding.decoded_float(p,s[0][1])):raise ValueError('native target float conversion disagrees')
+                if not near(self.target,self.binding.decoded_float(p,self.owner(s[0]))):raise ValueError('native target float conversion disagrees')
                 s=self.stable()
                 if (not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5] or self.stop_requested
                         or self.clock()>=self.record[3] or self.permission() is not True):raise ValueError('reward scope or permission changed during target construction')
                 self.phase='active';self.owned=True
-                self.binding.write(self.name,s[0][1],self.target,self.base[0]);s=self.stable()
+                self.binding.write(self.name,self.owner(s[0]),self.target,self.base[0]);s=self.stable()
                 if not self.matches(s,self.target,self.target_fp) or s[6]!=self.base[5]:raise ValueError('native reward change or peer isolation unverified')
                 self.due=self.clock()+.5;self.report('EXPERIMENT: '+self.name+' value changed; actual earned reward unverified.')
                 if self.stop_requested or self.permission() is not True:self.cleanup(s)
