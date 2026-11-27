@@ -266,6 +266,11 @@ class Controller:
         if key in GROUND_KEYS and selection != 1 and (GROUND_KEYS - {key}).intersection(self.records):
             self.log('HOLD: restore the other ground-speed mode first')
             return False
+        # Isolate the new splash experiment from every other field transaction.
+        if selection != 1 and ((key == 'splash_damage' and (set(self.records) - {key})) or
+                               (key != 'splash_damage' and 'splash_damage' in self.records)):
+            self.log('HOLD: restore isolated splash damage experiment or other active modifiers first')
+            return False
         # Avoid compounding two unverified native ammo regeneration paths.
         if selection != 1 and ((key == 'player_ammo_regen' and weapon_rates.AMMO_KEYS.intersection(self.records)) or
                                (key in weapon_rates.AMMO_KEYS and 'player_ammo_regen' in self.records)):

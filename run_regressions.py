@@ -230,6 +230,10 @@ from test_f8_simple import SimpleF8
 for name in SimpleF8.__dict__:
     if name.startswith('test_'):
         t=SimpleF8(name);unique[t.id()]=t
+from test_splash_damage import SplashDamage
+for name in SplashDamage.__dict__:
+    if name.startswith('test_'):
+        t=SplashDamage(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
