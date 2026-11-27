@@ -120,6 +120,7 @@ _slide_next = 0.0
 _auto_edits = {}
 _auto_edit_at = 0.0
 _auto_last_diagnostic = ''
+_session_reason = ''
 
 _vacuum_filters = {k: False for k in ('ammo','cash','eridium','health','gear')}
 _vacuum_radius = 30.0
@@ -1099,6 +1100,8 @@ def shield_binding():
 
 
 def current_session(api):
+    global _session_reason
+    _session_reason = ''
     pc = sys.modules['mods_base'].get_pc(possibly_loading=True)
     if pc is None or pc.IsLocalPlayerController() is not True or pc.HasAuthority() is not True:
         raise ValueError('local authoritative controller unavailable')
@@ -1111,10 +1114,17 @@ def current_session(api):
     if server(world) is not True or dedicated(world) is not False:
         raise ValueError('authoritative non-dedicated state unavailable')
     players, standalone = count(world), solo(world)
-    eligible = (type(players) is int and players == 1 and type(standalone) is bool
-                and pawn is not None and str(pawn.Class.Name) == 'OakCharacter'
-                and getattr(pc, 'PlayerState', None) is not None)
-    return pc, pawn, state, eligible
+    if type(players) is not int:
+        _session_reason = 'player count unavailable'
+    elif players != 1:
+        _session_reason = 'player count is '+str(players)+' (requires exactly one)'
+    elif type(standalone) is not bool:
+        _session_reason = 'standalone query unavailable'
+    elif pawn is None or str(pawn.Class.Name) != 'OakCharacter':
+        _session_reason = 'local OakCharacter not loaded'
+    elif getattr(pc, 'PlayerState', None) is None:
+        _session_reason = 'local PlayerState unavailable'
+    return pc, pawn, state, not _session_reason
 
 
 # Cache only candidate module *names*, never objects, enabled flags or permission.
@@ -1402,7 +1412,7 @@ def ground_tick(obj, *_):
         if queued and (request[2] != threading.get_ident() or time.monotonic() >= request[3] or (not automatic and not _valid_menu_backend())):
             if automatic:
                 _auto_ground = None
-                _auto_blocked = 'Animation activation expired; toggle master to retry'
+                # No write occurred. Let the camera queue a fresh local animation.
                 return
             else:
                 cancel_activation('ground activation expired or F8 closed')
@@ -1825,16 +1835,15 @@ def auto_tick():
     # Retain full per-camera active guard; share only fresh read-only context within it.
     observed = None
     if _auto_owned and _controller is not None and _controller.records:
-        if 'walk_speed' in _controller.records and now - _ground_seen > 2.0:
-            _controller.restore_all('local animation callback stale')
-            _auto_blocked = 'Animation stale; toggle master to retry'
-            return
         try:
             observed = _controller.context()
-        except Exception:
+        except Exception as exc:
             observed = None
+            reason = str(exc)[:120]
+        else:
+            reason = _session_reason
         if observed is None or not observed[3]:
-            _auto_status = 'Waiting for eligible local solo session (R2 checks)'
+            _auto_status = 'Waiting for eligible local solo session: ' + (reason or 'local eligibility not established')
             _auto_ground = None
             stop_automation('persistent session no longer eligible')
             _controller.restore_all('persistent session no longer eligible')
@@ -1843,6 +1852,14 @@ def auto_tick():
             else:
                 _auto_owned = False
             return
+        # An animation gap is not a session failure. Restore only the owned
+        # ground floor; allow a fresh, positively identified animation to rearm.
+        # Keep full restoration/fault behavior on failed cleanup or lost scope.
+        if 'walk_speed' in _controller.records and now - _ground_seen > 2.0:
+            _auto_ground = None
+            if not _controller.restore_selected('walk_speed', 'local animation callback stale; waiting to rearm'):
+                _auto_blocked = 'Ground restoration failed; exit game'
+                return
         before = set(_controller.records)
         transitioned = _controller.tick(True, observed=observed, follow_weapon=True, follow_shield=True, follow_gadget=True) or set()
         if set(_controller.records) != before - transitioned or _controller.fault:
@@ -1875,19 +1892,19 @@ def auto_tick():
             context = lambda: current_session(api)
             observed = context()
             if not observed[3]:
-                _auto_status = 'Waiting for eligible local solo session (R2 checks); verify Offline Local Only'
+                _auto_status = 'Waiting for eligible local solo session: ' + (_session_reason or 'local eligibility not established') + '; verify Offline Local Only'
                 return
             _controller = Controller(context, sys.modules['unrealsdk'].unreal.WeakPointer, report_live, threading.get_ident, shield_binding=shield_binding)
             _auto_owned = True
         else:
             observed = _controller.context() if observed is None else observed
             if not observed[3]:
-                _auto_status = 'Waiting for eligible local solo session (R2 checks)'
+                _auto_status = 'Waiting for eligible local solo session: ' + (_session_reason or 'local eligibility not established')
                 _auto_ground = None
                 _auto_owned = False
                 return
-    except Exception:
-        _auto_status = 'Waiting for loaded solo character or compatible SDK reflection'
+    except Exception as exc:
+        _auto_status = 'Waiting for loaded solo character or compatible SDK reflection: ' + str(exc)[:120]
         _auto_next = _slide_next = now + 1.0  # loading screen or missing reflection: bounded retry, no writes
         return
     if _controller.stop_pending is not None:
@@ -1911,18 +1928,15 @@ def auto_tick():
             _auto_ground = None
         elif now >= _auto_ground[1]:
             _auto_ground = None
-            _auto_blocked = 'Animation activation expired; toggle master to retry'
-            _controller.restore_all('persistent animation activation expired')
-            return
+            # Expired unused request: no ownership to clean up. Retry below.
     for key, selection in desired.items():
         if _controller.records.get(key, {}).get('selection') == selection:
             continue
         if key == 'walk_speed':
             if _auto_ground is None:
                 if not ensure_ground_hook():
-                    _auto_blocked = 'Animation hook unavailable; toggle master to retry'
-                    _controller.restore_all('persistent animation hook unavailable')
-                    return
+                    _auto_status = 'Ground animation hook unavailable; other features unaffected'
+                    continue
                 _auto_ground = (selection, now + 3.0, tuple(identity(x) for x in observed[:3]))
             continue
         if key in CAPACITY_KEYS:
@@ -2236,7 +2250,7 @@ def automation_tick():
     if _automation_busy:
         return
     lane_options={**AUTOMATION_OPTIONS,**NATIVE_AUTO_OPTIONS}
-    if not _automation_leases and not any(o.value is True and k not in _automation_attempted for k,o in lane_options.items()):
+    if not _automation_leases and (time.monotonic() < _automation_next or not any(o.value is True and k not in _automation_attempted for k,o in lane_options.items())):
         return
     _automation_busy = True
     try:
@@ -2322,7 +2336,7 @@ def automation_tick():
                 continue
             _automation_next = time.monotonic()+.25
             try:
-                session = bound_session(sys.modules['unrealsdk'])
+                session = _auto_api if _auto_api is not None else bound_session(sys.modules['unrealsdk'])
                 if not current_session(session)[3]:
                     continue  # wait for a loaded eligible character, without dispatch
             except Exception:
