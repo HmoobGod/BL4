@@ -35,6 +35,7 @@ FEATURES = {
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
     'damage': ('Damage multiplier', .5, 5.),
+    'critical_damage': ('Default critical-hit damage multiplier (experimental)', .5, 3.),
     'weapon_spread': ('Weapon spread scale (experimental)', .1, 3.),
     'weapon_recoil': ('Weapon recoil scale (experimental)', .1, 3.),
     'fire_rate': ('Weapon fire rate multiplier (experimental)', .5, 3.),
@@ -304,6 +305,24 @@ def validate_overshield(pawn, baseline, targets):
     return describe_fields(base)[1:]
 
 
+def critical_damage(pawn, state):
+    # The inline pawn-owned causer data is distinct from a shared crit definition
+    # or the grenade causer. No forced critical hits or duplicate damage calls.
+    from .weapon_rates import nested
+    if pawn.Class._path_name() != '/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+        raise ValueError('exact live local character required')
+    causer = nested(pawn, 'DamageCauserData', 'OakDamageCauserData')
+    if causer._type._path_name() != '/Script/OakGame.OakDamageCauserData':
+        raise ValueError('unexpected damage causer type')
+    multiplier = nested(causer, 'DefaultCriticalHitMultiplier', 'GbxAttributeFloat')
+    if multiplier._type._path_name() != '/Script/GbxCore.GbxAttributeFloat':
+        raise ValueError('unexpected critical multiplier type')
+    fields = pair(multiplier)
+    if any(f[2] != 'ZFloatProperty' for f in fields):
+        raise ValueError('unexpected critical scalar type')
+    return fields
+
+
 def lifesteal_rate(pawn, state):
     # Only the existing local rate; do not turn on life-steal, change its cap,
     # or touch any health pool value. Historical OakDamageState declaration.
@@ -404,7 +423,7 @@ def pearlescent(pawn, state):
     return (next(iter(candidates.values())),)
 
 
-RESOLVE = {'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
+RESOLVE = {'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
@@ -477,5 +496,7 @@ def target_values(key, baseline, tokens, selection):
             v = struct.unpack('<f', struct.pack('<f', v))[0]
         if not math.isfinite(v) or not (0 <= v <= 1e6 if key in ZERO_RARITY_KEYS and selection == 0 else 0 < v <= 1e6):
             raise ValueError('target outside verified scalar bounds')
+        if key == 'critical_damage' and (base > 10 or v > 10):
+            raise ValueError('critical multiplier outside conservative bounds')
         result.append(v)
     return tuple(result)
