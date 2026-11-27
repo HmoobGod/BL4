@@ -46,7 +46,7 @@ class NativeRateTests(unittest.TestCase):
         pp=p('ParsedPath','ZStructProperty',Struct=elem);pp.ArrayDim=5
         parsed=t('ParsedProperty',R.PARSED,p('PropertyPath','ZStrProperty'),p('ParsedPathLength','ZUInt32Property'),pp)
         val=Node(_type=t('PropertyValueResolver',R.VALUE,p('PropertySupportsModifierRemoval','ZBoolProperty'),p('ResolvedType','ZEnumProperty'),desc('Property',parsed)),PropertySupportsModifierRemoval=True,ResolvedType=Node(name='Float'),Property=Node(_type=parsed,PropertyPath=field,ParsedPathLength=1,ParsedPath=[Node(_type=elem,PropertyName=field,bUsesArrayIndex=False)]))
-        if mode=='health':
+        if ctx==R.HEALTH_CONTEXT:
             c=Node(_type=t('GameResourcePoolContextResolver',ctx,p('ResourceDef','ZGameDataHandleProperty',TypeHandle=5)),ResourceDef=Node(_name='Health',_type_handle=5))
         else:
             c=Node(_type=t('OakActionSkillResourcePoolResolver',ctx,p('PoolType','ZEnumProperty',Enum=Node(Name='/Script/OakGame.EOakActionSkillResourcePoolType'))),PoolType=Node(name=selector))
@@ -402,3 +402,71 @@ class NativeRateTests(unittest.TestCase):
         m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.);self.restore=False
         self.advance_rate(m);self.advance_rate(m)
         self.assertTrue(lane.fault);self.assertEqual(len(self.native),2)
+
+    def missing_health_trial(self,base=0.):
+        self.local_health()
+        ordinary=self.attr.definitions[self.R.TARGETS['health'][0]]
+        missing=self.attr.definitions[self.R.TARGETS['missing_health'][0]]
+        missing.Context.ResourceDef=ordinary.Context.ResourceDef
+        self.peer_rate=.012
+        from test_health_pulse_r17 import FGameDataHandle
+        readers=(lambda pawn,h:self.native_cur,lambda pawn,h:self.native_pct,5)
+        self.resolve=self.R.make_local_resolver('missing_health',self.binding,lambda:(self.pc,self.pawn,self.world,self.allowed),FGameDataHandle,readers)
+        self.binding.calls['GetValueOfAttribute']=lambda name,pawn,default:self.peer_rate if name==self.R.TARGETS['health'][0] else self.get(name,pawn,default)
+        lane=self.trial('missing_health',base)
+        lane.cleanup_key=lambda k:self.R.original_pool_identity('missing_health',k)
+        return lane
+
+    def test_missing_health_exact_distinct_target(self):
+        lane=self.missing_health_trial();self.assertTrue(lane.begin(),self.msg);self.tick(lane)
+        self.assertEqual(lane.phase,'active',self.msg)
+        self.assertEqual(self.native,[('add','health_resource_passive_missing_pct_regen',Modifier.PostAdd,.001)])
+        self.assertEqual(self.peer_rate,.012)
+        self.assertEqual(self.pawn.HealthState.HealthTypeStates[0].SimpleCurrentHealth.Value,50.)
+        lane.stop('restore');self.tick(lane);self.tick(lane);self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,0.);self.assertEqual(self.peer_rate,.012)
+
+    def test_missing_health_existing_positive_rate(self):
+        lane=self.missing_health_trial(.02);lane.selection=3.5;self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.assertAlmostEqual(self.rate,.0235)
+        self.tick(lane,10.);self.tick(lane);self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,.02)
+
+    def test_missing_health_reject_flat_property_alias(self):
+        lane=self.missing_health_trial();d=self.attr.definitions[self.R.TARGETS['missing_health'][0]];d.Value.Property.PropertyPath='PassivePercentRegenerationRate'
+        self.assertFalse(lane.begin());self.assertEqual(self.native,[])
+
+    def test_missing_health_requires_exact_ordinary_peer(self):
+        lane=self.missing_health_trial();del self.attr.definitions[self.R.TARGETS['health'][0]];self.assertFalse(lane.begin());self.assertEqual(self.native,[])
+
+    def test_missing_health_reject_peer_resource_mismatch(self):
+        lane=self.missing_health_trial();d=self.attr.definitions[self.R.TARGETS['health'][0]];d.Context.ResourceDef=Node(_name='Health',_type_handle=5)
+        self.assertFalse(lane.begin());self.assertEqual(self.native,[])
+
+    def test_missing_health_peer_drift_before_dispatch(self):
+        lane=self.missing_health_trial();self.assertTrue(lane.begin());self.peer_rate=.02;self.tick(lane);self.assertEqual(self.native,[])
+
+    def test_missing_health_peer_drift_after_dispatch_cleans_original(self):
+        lane=self.missing_health_trial();self.assertTrue(lane.begin());self.tick(lane);self.peer_rate=.02;self.tick(lane,.3);self.assertEqual([v[0] for v in self.native],['add','remove']);self.assertTrue(lane.fault);self.assertEqual(self.rate,0.);self.assertEqual(self.peer_rate,.02)
+
+    def test_missing_health_peer_invalid_rate(self):
+        lane=self.missing_health_trial();self.peer_rate=float('nan');self.assertFalse(lane.begin());self.assertEqual(self.native,[])
+
+    def test_missing_health_pool_ratio_mismatch(self):
+        lane=self.missing_health_trial();self.native_pct=.8;self.assertFalse(lane.begin());self.assertEqual(self.native,[])
+
+    def test_missing_health_no_continuous_mode(self):
+        lane=self.missing_health_trial()
+        with self.assertRaises(ValueError):self.R.NativeRateTrial('missing_health',self.binding,self.resolve,lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:True,continuous=True)
+
+    def test_missing_health_over_bound(self):
+        lane=self.missing_health_trial(.1);self.assertFalse(lane.begin());self.assertEqual(self.native,[])
+
+    def test_missing_health_routes_existing_selection(self):
+        m=self.base.m;calls=[];m.begin_native_resource_rate=lambda mode,selection:calls.append((mode,selection));m.execute_activation('native_rate_missing_health',2.4)
+        self.assertEqual(calls,[('missing_health',2.4)]);self.assertNotIn('native_rate_missing_health',m.NATIVE_AUTO_OPTIONS)
+        with self.assertRaises(ValueError):m.execute_activation('native_rate_missing_health',6.)
+
+    def test_missing_health_permission_lost_before_dispatch(self):
+        lane=self.missing_health_trial();self.assertTrue(lane.begin());self.allowed=False;self.tick(lane);self.assertEqual(self.native,[])
+
+    def test_missing_health_peer_unavailable_after_dispatch_cleans_original(self):
+        lane=self.missing_health_trial();self.assertTrue(lane.begin());self.tick(lane);del self.attr.definitions[self.R.TARGETS['health'][0]]
+        self.tick(lane,.3);self.assertEqual([v[0] for v in self.native],['add','remove']);self.assertTrue(lane.fault);self.assertEqual(self.rate,0.)

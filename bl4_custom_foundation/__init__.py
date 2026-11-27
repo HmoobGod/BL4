@@ -645,10 +645,12 @@ def draw():
             ui.text_wrapped('Native regeneration start/stop test: uses a distinct constant-rate initializer and existing flesh tags. Rate units and stop/expiry are unverified; share one timed attempt per process. Exit after testing.')
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native regeneration start/stop (2 sec)'):
                 activate_feature('health_regen_native', 1.0)
-            ui.text_wrapped('Native passive regeneration rate: small additive native rate, not a refill. Manual ten-second trial or separate toggle; restore before travel. Rate units and actual healing unverified.')
+            ui.text_wrapped('Native passive regeneration rate: small additive native rate, not a refill. Manual ten-second trial or separate toggle; restore before travel. Rate units and actual healing unverified. The missing-health test uses the same increment slider, but targets a separate native rate.')
             rate=native_rate_selection(ui,'health')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native passive health rate (10 sec)'):
                 activate_feature('native_rate_health',rate)
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native missing-health regeneration (10 sec)'):
+                activate_feature('native_rate_missing_health',rate)
             ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
                 activate_feature('shield_pulse', 1.0)
@@ -1336,7 +1338,7 @@ def begin_blackboard_reward(key, selection):
 
 def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
-                                        TARGETS, bind_health_readers, make_local_resolver, original_pool_identity)
+                                        TARGETS, HEALTH_MODES, bind_health_readers, make_local_resolver, original_pool_identity)
     from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
     if mode not in TARGETS or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
@@ -1356,7 +1358,8 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                 and _monitor_thread==threading.get_ident()
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     readers=None;skill=None
-    if mode=='health':readers=bind_health_readers(functions,loot_bound)
+    if mode=='missing_health' and persistent:raise ValueError('missing-health trial is manual only')
+    if mode in HEALTH_MODES:readers=bind_health_readers(functions,loot_bound)
     else:
         ref,api=bind(functions,loot_bound)
         adaptive=bind_action_percent(functions,loot_bound,mode,ref)
@@ -1665,7 +1668,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1710,9 +1713,9 @@ def execute_activation(key, selection):
     if key in ('skill_cooldown','skill_duration'):
         begin_skill_pulse(key.split('_',1)[1])
         return
-    if key in ('native_rate_health','native_rate_cooldown','native_rate_duration'):
+    if key in ('native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health'):
         from .native_resource_rates import trial_amount
-        mode=key.rsplit('_',1)[1]
+        mode=key.removeprefix('native_rate_')
         trial_amount(mode,selection)
         begin_native_resource_rate(mode,selection)
         return

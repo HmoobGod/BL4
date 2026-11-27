@@ -22,9 +22,11 @@ SKILL_CONTEXT='/Script/OakGame.OakActionSkillResourcePoolResolver'
 # Name, native property, exact context, selector, modifier, bounded experiment.
 TARGETS={
     'health': ('health_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
+    'missing_health': ('health_resource_passive_missing_pct_regen','PassiveMissingPercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'cooldown': ('Att_PlayerShared_ActionSkill_Pool_Cooldown_Rate','ActiveRegenerationRate',SKILL_CONTEXT,'Cooldown','ScaleMultiply',2.),
     'duration': ('Att_PlayerShared_ActionSkill_Pool_Duration_Rate','ConsumptionRate',SKILL_CONTEXT,'Duration','ScaleMultiply',.5),
 }
+HEALTH_MODES=frozenset(('health','missing_health'))
 SPECS={
     'GetValueOfAttribute':(('AttributeDef','ZNameProperty'),('ContextSource','ZObjectProperty'),('DefaultValue','ZFloatProperty'),('ReturnValue','ZFloatProperty')),
     'AddModifierToGbxAttribute':(('attribute','ZGbxDefPtrProperty'),('ContextSource','ZObjectProperty'),('ModifierType','ZEnumProperty'),('modifiervalue','ZFloatProperty'),('bAutoRefresh','ZBoolProperty'),('ModifierActionResult','ZEnumProperty'),('ReturnValue','ZStructProperty')),
@@ -36,9 +38,9 @@ def trial_amount(mode,selection=None):
     """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
     if mode not in TARGETS:raise ValueError('unknown native rate trial')
     if selection is None:return TARGETS[mode][-1]
-    if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<=selection<=5 or (mode!='health' and selection==1):
+    if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<=selection<=5 or (mode not in HEALTH_MODES and selection==1):
         raise ValueError('select 1–5x health increment or above 1x skill factor')
-    return .001*selection if mode=='health' else selection if mode=='cooldown' else 1./selection
+    return .001*selection if mode in HEALTH_MODES else selection if mode=='cooldown' else 1./selection
 
 
 def close(a,b):
@@ -83,7 +85,7 @@ class NativeBinding:
         c,v=d.Context,d.Value
         if c._type._path_name()!=ctx or v._type._path_name()!=VALUE:
             raise ValueError('unexpected native resolver kind')
-        if mode=='health':
+        if mode in HEALTH_MODES:
             resource_prop=prop(c._type,'ResourceDef','ZGameDataHandleProperty')
             resource=c.ResourceDef
             if resource._name!=selector or type(resource._type_handle) is not int or resource._type_handle<=0 or resource._type_handle!=resource_prop.TypeHandle:
@@ -113,9 +115,9 @@ class NativeBinding:
 
     def read(self,mode,pawn):
         value=numeric(self.calls['GetValueOfAttribute'](TARGETS[mode][0],pawn,-123456.))
-        if not (0<=value<=1e4 if mode!='health' else 0<=value<=.1):
+        if not (0<=value<=1e4 if mode not in HEALTH_MODES else 0<=value<=.1):
             raise ValueError('native rate unresolved or outside conservative range')
-        if mode!='health' and value<=0:raise ValueError('positive native skill rate required')
+        if mode not in HEALTH_MODES and value<=0:raise ValueError('positive native skill rate required')
         return value
 
     def valid_handle(self,h):
@@ -156,6 +158,8 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
+        if mode=='missing_health' and continuous:
+            raise ValueError('missing-health rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)
         self.record=None;self.fault=False;self.busy=False;self.used=False;self.stop_requested=False
@@ -163,7 +167,10 @@ class NativeRateTrial:
         self.next_selection=None
 
     def dispatch_target(self,cleanup=False):
-        objs,key,d=self.resolve()
+        # Cleanup for the isolated missing-health lane must not depend on an
+        # independently observed peer's readback remaining available.
+        resolver=getattr(self.resolve,'original',self.resolve) if cleanup and self.mode=='missing_health' else self.resolve
+        objs,key,d=resolver()
         ids=tuple(identity(o) for o in objs)
         if len(ids)<3 or len(set(ids))!=len(ids):raise ValueError('ambiguous local owner identity')
         if self.record is not None:
@@ -186,7 +193,7 @@ class NativeRateTrial:
     def target_value(self,base):
         modifier=TARGETS[self.mode][-2];amount=trial_amount(self.mode,self.selection)
         expected=base+amount if modifier=='PostAdd' else base*amount
-        if not 0<expected<=(.1 if self.mode=='health' else 1e4):raise ValueError('native trial target outside conservative bound')
+        if not 0<expected<=(.1 if self.mode in HEALTH_MODES else 1e4):raise ValueError('native trial target outside conservative bound')
         return expected
 
     def begin(self):
@@ -331,6 +338,10 @@ def local_health_target(pawn,d,ht,readers):
     return key,handle(res,ht),maximum
 
 
+def handle_identity(h):
+    return h._name,h._type_handle,identity(h)
+
+
 def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader=None):
     """Independently witness native pool ownership before allowing a modifier.
 
@@ -338,13 +349,19 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
     Skill pool maxima are pinned to catch the known erroneous duration MaxValue
     parsed-path mapping; this does not assert actual timing or rate units.
     """
-    def resolve():
+    def resolve(include_peer=True):
         pc,pawn,state,ok=context()
         if ok is not True or pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
             raise ValueError('eligible local OakCharacter required')
         d,def_key=binding.definition(mode)
-        if mode=='health':
+        if mode in HEALTH_MODES:
             objs=(pc,pawn,state);pool_key=local_health_target(pawn,d,ht,health_readers)
+            if mode=='missing_health' and include_peer:
+                # Independent ordinary-rate witness; never edit this peer.
+                peer,peer_key=binding.definition('health')
+                if identity(peer)==identity(d) or handle_identity(peer.Context.ResourceDef)!=handle_identity(d.Context.ResourceDef):
+                    raise ValueError('missing-health and ordinary rate must be distinct on the same Health resource')
+                pool_key=(*pool_key,peer_key,binding.read('health',pawn))
         else:
             objs,key,ref,resources,_,_=skill_reader.resolve(initial=True,refresh=True)
             if tuple(identity(o) for o in objs[:3])!=tuple(identity(o) for o in (pc,pawn,state)):
@@ -356,6 +373,9 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
         if fresh[3] is not True or tuple(identity(o) for o in fresh[:3])!=tuple(identity(o) for o in objs[:3]):
             raise ValueError('local session changed during rate resolution')
         return objs,(def_key,pool_key),d
+    # The original owner and target are still fully validated for cleanup.
+    # Peer absence/drift remains a fault during immediate/delayed readback.
+    if mode=='missing_health':resolve.original=lambda:resolve(False)
     return resolve
 
 
@@ -363,4 +383,4 @@ def original_pool_identity(mode,key):
     definition,pool=key
     # Maxima are witnesses, not identities. A handle must still be removable
     # after an anomalous maximum change if the original owner/pool is intact.
-    return definition,(pool[:2] if mode=='health' else pool[0])
+    return definition,(pool[:2] if mode in HEALTH_MODES else pool[0])
