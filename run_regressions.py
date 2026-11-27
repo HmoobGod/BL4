@@ -218,6 +218,10 @@ from test_reload_persistence import ReloadPersistence
 for name in ReloadPersistence.__dict__:
     if name.startswith('test_'):
         t=ReloadPersistence(name);unique[t.id()]=t
+from test_reload_window import ReloadEvent
+for name in ReloadEvent.__dict__:
+    if name.startswith('test_'):
+        t=ReloadEvent(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

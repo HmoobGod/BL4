@@ -82,7 +82,12 @@ AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enabl
 AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Auto-enable '+label)
                       for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'))}
 DOUBLE_JUMP_RATE = SliderOption('double_jump_velocity_scale', 1., .5, 2., step=.1, is_integer=False, display_name='Double-jump upward velocity multiplier (experimental)')
-AUTO_SETTINGS = [auto_master, auto_consent, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
+RELOAD_EVENT = BoolOption('persistent_reload_event_window',False,display_name='Experimental reload request timing (instead of persistent weapon values)')
+_reload_event = None
+_reload_event_attempted = False
+_reload_event_registered = False
+_reload_event_status = 'Not armed'
+AUTO_SETTINGS = [auto_master, auto_consent, RELOAD_EVENT, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
 # Independent persistent lanes. Isolated manual experiments remain unchanged.
 _automation_leases = {}
 _automation_attempted = set()
@@ -321,6 +326,10 @@ def persistent_feature_status(key):
         return 'Restoring' if record else 'Vanilla capacity' if key in CAPACITY_KEYS else '1x / vanilla'
     if record is not None and record.get('selection') == selected:
         return 'Active: ' + str(selected) + (' slots' if key in CAPACITY_KEYS else 'x') + ' (value verified)'
+    if key == 'reload' and RELOAD_EVENT.value is True:
+        if AUTOMATION_OPTIONS['reload'].value is True or 'reload' in _automation_leases:
+            return 'HOLD: turn off automatic reload for request timing'
+        return _reload_event.last_result if _reload_event is not None else _reload_event_status
     if key == 'reload' and _controller is not None and _controller.reload_wait_reason:
         return 'Waiting: ' + _controller.reload_wait_reason
     if key in LIFE_KEYS:
@@ -400,7 +409,7 @@ def draw():
         if _controller.records and not _controller.fault and ui.button('Restore ALL active gameplay values'):
             pause_auto('F8 restore all')
             request_stop('F8 restore all', immediate=True)
-    if any(l.record is not None for l in _automation_leases.values()):
+    if any(l.record is not None for l in _automation_leases.values()) or (RELOAD_EVENT.value is True and AUTO_OPTIONS['reload'].value is True and auto_allowed()):
         ui.text_wrapped('Persistent automation armed (native outcomes unverified).')
         if ui.button('Stop automation / Restore ALL'):
             pause_auto('F8 restore all')
@@ -623,6 +632,10 @@ def draw():
             changed_auto, selected_auto = ui.checkbox(option.display_name + '##' + option.identifier, option.value is True)
             if changed_auto and selected_auto is not option.value:
                 set_auto_setting(option, selected_auto)
+            if key == 'reload':
+                edited_event, event = ui.checkbox(RELOAD_EVENT.display_name+'##'+RELOAD_EVENT.identifier, RELOAD_EVENT.value is True)
+                if edited_event: set_auto_setting(RELOAD_EVENT,event)
+                if RELOAD_EVENT.value is True: ui.text_wrapped('Experimental: only observed native reload requests; automatic reload lane must be off. No persistent weapon value writes.')
             ui.text(name + ': ' + persistent_feature_status(key))
             continue
         if key in ('damage_taken', 'repair_cooldown', 'fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
@@ -1381,7 +1394,7 @@ def ensure_ground_hook():
 
 def ground_tick(obj, *_):
     global _ground_anim_id, _ground_seen, _activation_request, _controller, _auto_ground, _auto_blocked, _ground_retry_at
-    if _automation_busy:
+    if _automation_busy or (_reload_event is not None and _reload_event.root is not None):
         return
     request = _activation_request
     automatic = _auto_ground is not None and _auto_owned
@@ -1485,6 +1498,13 @@ def ground_tick(obj, *_):
 def monitor_tick(*_):
     global _monitor_thread, _monitor_seen, _offline_confirmed, _activation_request
     global _monitor_registered, _monitor_error
+    if _reload_event is not None and _reload_event.root is not None:
+        try: _reload_event.watchdog()
+        except Exception as exc:
+            _reload_event.fault=True
+            report_live('FAULT: reload event watchdog failed: '+str(exc)[:100]+'; exit game')
+        if _reload_event.root is not None:
+            return
     if _automation_busy:
         return  # do not re-enter or change monitor identity during native dispatch
     if not _monitor_registered:
@@ -1517,6 +1537,8 @@ def monitor_tick(*_):
         return
     if auto_master.value is True or _auto_owned or _automation_leases:
         auto_tick()
+        if not _reload_event_attempted and RELOAD_EVENT.value is True and AUTO_OPTIONS['reload'].value is True and auto_allowed():
+            ensure_reload_event()
         report_auto_status_change()
         automation_tick()
         return
@@ -1648,7 +1670,7 @@ def auto_allowed():
 
 def set_auto_setting(option, value):
     global _auto_blocked, _auto_ground, _auto_next, _ground_retry_at, _reload_handoff
-    if option is auto_master or option is auto_consent or option is AUTO_OPTIONS['reload']:
+    if option is auto_master or option is auto_consent or option is AUTO_OPTIONS['reload'] or option is RELOAD_EVENT:
         _reload_handoff = None
     try:
         edits = dict(_auto_edits) if option is auto_master and value is False else {}
@@ -1755,6 +1777,8 @@ def ammo_selection_conflict(desired):
 
 def auto_desired():
     desired = raw_auto_desired()
+    if RELOAD_EVENT.value is True:
+        desired.pop('reload',None)
     # Refuse ambiguous saved selections rather than silently choosing a winner.
     if ammo_selection_conflict(desired):
         desired = {k: v for k, v in desired.items() if k not in AMMO_GROUP}
@@ -1816,7 +1840,7 @@ def fast_reload_handoff(now, observed):
     global _reload_handoff, _auto_blocked, _auto_ground
     scope, deadline, due = _reload_handoff
     selection = raw_auto_desired(('reload',)).get('reload')
-    if (now >= deadline or not _auto_owned or not auto_allowed() or _controller.fault
+    if (RELOAD_EVENT.value is True or now >= deadline or not _auto_owned or not auto_allowed() or _controller.fault
             or _controller.stop_pending is not None or 'reload' in _controller.records
             or selection is None or 'reload' in _auto_edits):
         _reload_handoff = None
@@ -2102,7 +2126,7 @@ def auto_tick():
 
 
 def automation_fault():
-    return any(l.fault for l in _automation_leases.values())
+    return bool(_reload_event is not None and _reload_event.fault) or any(l.fault for l in _automation_leases.values())
 
 
 def stop_automation_lane(kind, reason):
@@ -2135,6 +2159,79 @@ def automation_permitted():
         return False
     hooks = sys.modules['unrealsdk'].hooks
     return _monitor_registered and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True
+
+
+def reload_event_selection():
+    if (RELOAD_EVENT.value is not True or AUTO_OPTIONS['reload'].value is not True
+            or 'reload' in _auto_edits or AUTOMATION_OPTIONS['reload'].value is True
+            or 'reload' in _automation_leases):
+        return None
+    selected = _PREVIEW_BY_KEY['reload'].value
+    return selected if type(selected) in (int,float) and .5 <= selected <= 3. and selected != 1. else None
+
+
+def reload_event_permitted():
+    try:
+        if (not _reload_event_registered or _automation_busy or _monitor_thread != threading.get_ident()
+                or time.monotonic()-_monitor_seen > 2. or reload_event_selection() is None
+                or not automation_permitted() or (_controller is not None and 'reload' in _controller.records)):
+            return False
+        if _reload_event is not None and _reload_event.root is not None and reload_event_selection() != _reload_event.root[4]:
+            return False
+        from .reload_assist import REQUEST
+        hooks=sys.modules['unrealsdk'].hooks
+        return (hooks.has_hook(REQUEST,hooks.Type.PRE,'bl4_custom_reload_window_pre') is True
+                and hooks.has_hook(REQUEST,hooks.Type.POST_UNCONDITIONAL,'bl4_custom_reload_window_post') is True)
+    except Exception:
+        return False
+
+
+def ensure_reload_event():
+    global _reload_event_attempted,_reload_event_registered,_reload_event,_reload_event_status
+    if _reload_event_attempted: return _reload_event_registered
+    if reload_event_selection() is None: return False
+    _reload_event_attempted=True
+    try:
+        from .reload_window import ReloadWindow,request_function
+        from .reload_assist import REQUEST
+        sdk=sys.modules['unrealsdk'];hooks=sdk.hooks
+        request_function(sdk)
+        pre,post=hooks.Type.PRE,hooks.Type.POST_UNCONDITIONAL
+        ids=('bl4_custom_reload_window_pre','bl4_custom_reload_window_post')
+        if any(hooks.has_hook(REQUEST,k,i) is not False for k,i in zip((pre,post),ids)):
+            raise ValueError('reload request hook identity unavailable')
+        # Install cleanup first. Partial registration never enables writes.
+        result=hooks.add_hook(REQUEST,post,ids[1],reload_event_post)
+        if type(result) is not bool or hooks.has_hook(REQUEST,post,ids[1]) is not True:
+            raise ValueError('reload cleanup hook unavailable')
+        result=hooks.add_hook(REQUEST,pre,ids[0],reload_event_pre)
+        if type(result) is not bool or hooks.has_hook(REQUEST,pre,ids[0]) is not True:
+            raise ValueError('reload pre hook unavailable')
+        api=bound_session(sdk)
+        _reload_event=ReloadWindow(lambda:current_session(api),sdk.unreal.WeakPointer,
+                                  reload_event_permitted,threading.get_ident,lambda:time.monotonic(),report_live,
+                                  lambda: tuple(t for r in (_controller.records.values() if _controller is not None else ()) for t in r['tokens']))
+        _reload_event_registered=True
+        _reload_event_status='Waiting for native reload request (experimental)'
+        report_live('RELOAD EVENT: request hooks registered; actual callback not yet observed')
+    except Exception as exc:
+        _reload_event_status='HOLD: '+str(exc)[:120]
+    return _reload_event_registered
+
+
+def reload_event_pre(obj,args,*_):
+    if _reload_event is not None:
+        try: _reload_event.pre(obj,args,reload_event_selection())
+        except Exception as exc: _reload_event.note('request observation failed: '+str(exc)[:100])
+    # None leaves native request untouched, including its arguments and return.
+
+
+def reload_event_post(obj,*_):
+    if _reload_event is not None:
+        try: _reload_event.post(obj)
+        except Exception as exc:
+            _reload_event.fault=True
+            report_live('FAULT: reload event cleanup unavailable: '+str(exc)[:100]+'; exit game')
 
 
 def ensure_jump_event():
