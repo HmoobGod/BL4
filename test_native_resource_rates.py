@@ -331,3 +331,74 @@ class NativeRateTests(unittest.TestCase):
         m.stop_automation('master off');m.automation_permitted=lambda:False
         for _ in range(2):self.now+=.3;m.automation_tick()
         self.assertEqual(rates,{'health':0.,'cooldown':4.,'duration':4.});self.assertFalse(m._automation_leases)
+
+    def edited_lane(self,mode='health',base=0.):
+        m=self.base.m;k='native_rate_'+mode;lane=self.persistent_trial(mode,base)
+        m.auto_master.value=True;m.auto_consent.value=True
+        m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS[mode].value=2.
+        m.automation_permitted=lambda:True
+        lane.can_add=lambda:m.native_rate_allowed(k,lane.selection)
+        lane.begin();self.tick(lane);m._automation_leases[k]=lane;m._automation_attempted.add(k)
+        return m,k,lane
+
+    def edit_rate(self,m,mode,value):
+        m.queue_auto_edit(m.NATIVE_RATE_OPTIONS[mode],value);m.flush_auto_edits(force=True)
+
+    def advance_rate(self,m):
+        self.now+=.3;m.automation_tick()
+
+    def test_saved_health_edit_replaces_only_after_delayed_restore(self):
+        m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.)
+        self.assertEqual(lane.next_selection,3.);self.advance_rate(m)
+        self.assertEqual(lane.phase,'verify');self.assertEqual(self.rate,0.);self.assertEqual(len(self.native),2)
+        self.advance_rate(m);self.assertEqual(lane.phase,'armed');self.assertEqual(len(self.native),2)
+        self.advance_rate(m);self.assertEqual(lane.phase,'active');self.assertAlmostEqual(self.rate,.003);self.assertEqual(len(self.native),3)
+        m.stop_automation('restore');self.advance_rate(m);self.advance_rate(m)
+        self.assertEqual(self.rate,0.);self.assertEqual(len(self.native),4)
+
+    def test_saved_skill_rate_edit_updates_inverse_duration(self):
+        m,k,lane=self.edited_lane('duration',4.);self.edit_rate(m,'duration',4.)
+        for _ in range(3):self.advance_rate(m)
+        self.assertEqual(lane.phase,'active');self.assertEqual(self.rate,1.);self.assertEqual(len(self.native),3)
+
+    def test_edit_coalesces_during_cleanup(self):
+        m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.);self.advance_rate(m)
+        self.edit_rate(m,'health',4.);self.advance_rate(m);self.advance_rate(m)
+        self.assertAlmostEqual(self.rate,.004);self.assertEqual(len(self.native),3)
+
+    def test_permission_loss_cancels_replacement(self):
+        m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.);self.advance_rate(m)
+        m.automation_permitted=lambda:False;self.advance_rate(m)
+        self.assertNotIn(k,m._automation_leases);self.assertEqual(len(self.native),2)
+
+    def test_restore_all_cancels_replacement(self):
+        m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.);self.advance_rate(m)
+        m.stop_automation('restore all');self.advance_rate(m)
+        self.assertNotIn(k,m._automation_leases);self.assertEqual(len(self.native),2)
+
+    def test_delayed_drift_blocks_replacement(self):
+        m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.);self.advance_rate(m)
+        self.rate=.002;self.advance_rate(m)
+        self.assertTrue(lane.fault);self.assertEqual(len(self.native),2)
+
+    def test_failed_save_does_not_request_replacement(self):
+        m,k,lane=self.edited_lane();m.mod.fail_save=True;self.edit_rate(m,'health',3.)
+        self.assertIsNone(lane.next_selection);self.assertEqual(m.NATIVE_RATE_OPTIONS['health'].value,2.)
+
+    def test_neutral_skill_edit_restores_without_replacement(self):
+        m,k,lane=self.edited_lane('cooldown',4.);self.edit_rate(m,'cooldown',1.)
+        self.advance_rate(m);self.advance_rate(m);self.assertNotIn(k,m._automation_leases)
+        self.assertEqual(self.rate,4.);self.assertEqual(len(self.native),2)
+
+    def test_rearm_refuses_replacement_scope_after_verified_cleanup(self):
+        m,k,lane=self.edited_lane();original=lane.record
+        lane.stop('restore');self.tick(lane,permit=False);self.tick(lane,permit=False)
+        self.assertEqual(lane.phase,'done');self.key=('replacement pool',)
+        m.NATIVE_RATE_OPTIONS['health'].value=3.
+        self.assertFalse(lane.rearm_verified(original,3.));self.assertIsNone(lane.record)
+        self.assertEqual(len(self.native),2)
+
+    def test_saved_edit_cannot_replay_failed_cleanup(self):
+        m,k,lane=self.edited_lane();self.edit_rate(m,'health',3.);self.restore=False
+        self.advance_rate(m);self.advance_rate(m)
+        self.assertTrue(lane.fault);self.assertEqual(len(self.native),2)

@@ -215,6 +215,18 @@ def apply(values):
         for o, old in previous:
             o.value = old
         raise
+    # Only a successfully committed slider edit can request a native replacement.
+    for mode, option in NATIVE_RATE_OPTIONS.items():
+        if option.identifier not in values:
+            continue
+        old=next((v for o,v in previous if o is option),option.value)
+        if old==option.value:
+            continue
+        kind='native_rate_'+mode
+        lease=_automation_leases.get(kind)
+        if (lease is not None and not lease.fault and feature_enabled(NATIVE_AUTO_OPTIONS[kind])
+                and (lease.phase=='active' and not lease.stop_requested or lease.phase=='verify' and lease.next_selection is not None)):
+            lease.next_selection=normalize(option,option.value)
 
 
 def reset(_option=None):
@@ -642,7 +654,7 @@ def draw():
                 activate_feature('shield_pulse', 1.0)
         if 'Action skills' in panels:
             ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
-            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or individual toggle; choose native OR matching refill assist. Changes to active rates restore and require toggle to rearm. Restore before skill changes.')
+            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or individual toggle; choose native OR matching refill assist. Saved rate edits restore and verify the old modifier before applying the new rate; unsupported changes stop the lane. Restore before skill changes.')
             for mode in ('cooldown','duration'):
                 rate=native_rate_selection(ui,mode)
                 if rate>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
@@ -1336,7 +1348,7 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
         hooks=sdk.hooks
         if persistent:
             kind='native_rate_'+mode
-            return (_monitor_thread==threading.get_ident() and native_rate_allowed(kind,selection) and automation_permitted())
+            return (_monitor_thread==threading.get_ident() and native_rate_allowed(kind,trial.selection) and automation_permitted())
         return (mod.is_enabled is True and _offline_confirmed and auto_master.value is not True and not _auto_owned
                 and not _automation_leases and not conflicting_mods() and _monitor_registered
                 and _monitor_thread==threading.get_ident()
@@ -1350,7 +1362,8 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                          lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
                          adaptive_api=adaptive,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
     resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill)
-    return NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection,continuous=persistent)
+    trial=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection,continuous=persistent)
+    return trial
 
 
 def begin_native_resource_rate(mode,selection):
@@ -2191,6 +2204,8 @@ def automation_fault():
 def stop_automation_lane(kind, reason):
     lease = _automation_leases.get(kind)
     if lease is not None:
+        if kind in NATIVE_AUTO_OPTIONS:
+            lease.next_selection=None
         if kind not in NATIVE_AUTO_OPTIONS or (not lease.stop_requested and not lease.fault):
             lease.stop(reason)
         if not lease.fault and (kind not in NATIVE_AUTO_OPTIONS or lease.record is None):
@@ -2509,10 +2524,16 @@ def automation_tick():
             # A failed permission observation denies new actions, but must not
             # prevent the original handle from reaching its cleanup path.
             permitted=False
+        rearmed=set()
         for kind in NATIVE_AUTO_OPTIONS:
             lease=_automation_leases.get(kind)
             if lease is None or lease.fault:continue
             if not permitted or lease.stop_requested or not native_rate_allowed(kind,lease.selection):
+                pending=lease.next_selection
+                if (not permitted or pending is None or not native_rate_allowed(kind,pending)
+                        or not feature_enabled(NATIVE_AUTO_OPTIONS[kind])):
+                    lease.next_selection=None
+                original=lease.record
                 if not lease.stop_requested:lease.stop('native rate permission or selection ended')
                 _automation_attempted.add(kind)
                 lease.tick(False)
@@ -2520,14 +2541,23 @@ def automation_tick():
                     request_stop('native rate cleanup fault',immediate=False)
                     permitted=False
                 elif lease.record is None:
-                    _automation_leases.pop(kind,None)
-                    _automation_status[kind]='Restored / toggle lane to rearm'
+                    pending=lease.next_selection
+                    lease.next_selection=None
+                    if (pending is not None and original is not None and automation_permitted()
+                            and native_rate_allowed(kind,pending) and feature_enabled(NATIVE_AUTO_OPTIONS[kind])
+                            and lease.rearm_verified(original,pending)):
+                        rearmed.add(kind)
+                        _automation_status[kind]='Edited native rate armed (gameplay unverified)'
+                    else:
+                        _automation_leases.pop(kind,None)
+                        _automation_status[kind]='Restored / toggle lane to rearm'
                 else:_automation_status[kind]='Restoring; wait for verification'
         if not permitted or not automation_permitted():
             stop_automation('permission or modifier compatibility ended')
             return
         # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
         for kind in (*AUTOMATION_OPTIONS,*NATIVE_AUTO_OPTIONS):
+            if kind in rearmed:continue
             if lane_options[kind].value is not True:
                 stop_automation_lane(kind,'disabled')
                 continue

@@ -160,6 +160,7 @@ class NativeRateTrial:
         trial_amount(mode,selection)
         self.record=None;self.fault=False;self.busy=False;self.used=False;self.stop_requested=False
         self.handle=None;self.phase='idle';self.baseline=None;self.expected=None;self.anomaly=False;self.due=0.
+        self.next_selection=None
 
     def dispatch_target(self,cleanup=False):
         objs,key,d=self.resolve()
@@ -220,6 +221,28 @@ class NativeRateTrial:
         _,_,_,value=self.stable_snapshot()
         if not close(value,self.baseline):raise ValueError('immediate removal did not restore baseline')
         self.phase='verify';self.verify_at=self.clock()+.15
+
+    def rearm_verified(self, original, selection):
+        """Only a saved explicit edit, following successful delayed cleanup, may rearm.
+        Revalidate the original weak scope and captured baseline; never follow a replacement pool.
+        """
+        if not self.continuous or self.phase!='done' or self.record is not None or self.handle is not None or self.fault or self.anomaly:
+            return False
+        try:
+            trial_amount(self.mode,selection)
+            self.selection=selection
+            self.record=original
+            _,_,_,value=self.stable_snapshot()
+            if not close(value,self.baseline) or not self.permission():
+                raise ValueError('original rate or permission changed after restoration')
+            self.target_value(value)
+        except Exception as exc:
+            self.record=None
+            self.report('HOLD: native rate update '+str(exc)[:100])
+            return False
+        self.used=False;self.stop_requested=False;self.phase='armed';self.expected=None
+        self.report('EXPERIMENT: edited native rate armed after verified restoration.')
+        return True
 
     def tick(self,permitted):
         if self.record is None or self.busy:return
