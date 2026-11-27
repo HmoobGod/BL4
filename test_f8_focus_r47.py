@@ -27,15 +27,15 @@ class FocusRows(unittest.TestCase):
         self.m._focus_controls=True
         label=next(o.display_name+'##'+o.identifier for o in self.m.PREVIEW if o.identifier=='jump')
         self.render(edits={label:2.0});self.render(['Next controls##focus_next'])
-        self.assertEqual(self.m._pending['jump'],2.0);self.assertEqual(self.b.jump.JumpZVelocity,620.)
+        self.assertEqual(self.m.displayed_selection(self.m._PREVIEW_BY_KEY['jump']),2.0);self.assertEqual(self.b.jump.JumpZVelocity,620.)
     def test_disable_focus_restores_full_view(self):
         baseline=self.sliders(self.render());self.m._focus_controls=True;self.render(['Next controls##focus_next'])
         self.assertEqual(self.sliders(self.render(edits={'Reduced feature rows (6 per page)':False})),baseline)
     def test_active_restore_global_even_when_hidden(self):
         self.b.activate('jump',2);self.m._focus_controls=True
         self.render(['Next controls##focus_next']);labels=self.render()
-        self.assertIn('Restore ALL active gameplay values',labels)
-        self.render(['Restore ALL active gameplay values']);self.assertEqual(self.b.jump.JumpZVelocity,620.)
+        self.assertIn('Restore All',labels)
+        self.render(['Restore All']);self.assertEqual(self.b.jump.JumpZVelocity,620.)
     def test_category_and_compact_pages_separate(self):
         self.m._focus_controls=True
         self.render(['Next controls##focus_next']);self.assertEqual(self.m._focus_pages[(4,False)],1)
@@ -43,9 +43,9 @@ class FocusRows(unittest.TestCase):
         self.render(edits={'Compact menu (hide preview-only controls)':False});self.assertEqual(self.m._focus_pages[(4,False)],1)
     def test_safety_and_automation_controls_not_paginated(self):
         self.m._focus_controls=True;self.m._category=5
-        labels=self.render();self.assertIn('Restore vanilla defaults',labels);self.assertIn('Close menu',labels)
+        labels=self.render();self.assertIn('Restore All',labels);self.assertIn('Close menu',labels)
         self.assertIn('Vacuum ammo##vacuum_ammo',labels)
-        self.assertIn('Offline Local Only; other tuning mods disabled##owner_confirm',labels)
+        self.assertIn('I use Offline Local Only; tuning mods disabled##persistent_offline',labels)
     def test_page_navigation_does_not_save_or_write(self):
         self.m._focus_controls=True
         self.m.apply=lambda *_:self.fail('paging must not save')

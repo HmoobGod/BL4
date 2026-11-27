@@ -40,7 +40,7 @@ class Experimental(unittest.TestCase):
         self.b.activate('damage',2.)
         self.assertEqual(self.e.p.DamageCauserData.DamageDealtMultiplier.writes,[])
     def test_explicit_f8_activation(self):
-        self.m._category=0; self.m._pending['damage_taken']=.5
-        self.b.gui.imgui.clicks={'Activate / Update Damage taken multiplier##activate_damage_taken'}
+        self.m._category=0; self.m.auto_consent.value=True
+        self.b.gui.imgui.edits={'Damage taken multiplier##damage_taken':.5,'Enable Damage taken multiplier##persistent_damage_taken':True}
         self.m.draw(); self.assertEqual(self.a.writes,[]); self.m.monitor_tick()
         self.assertEqual(self.a.Value,.5)

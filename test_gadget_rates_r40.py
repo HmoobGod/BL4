@@ -33,7 +33,7 @@ class GadgetCooldown(unittest.TestCase):
     def test_foreign_drift(self):self.activate(2.);self.g.CooldownTime._values['Value']=7.;self.m.monitor_tick();self.assertTrue(self.m._controller.fault);self.assertEqual(self.vals(),(7.,6.))
     def test_partial_write_rollback(self):self.g.CooldownTime.raise_after='BaseValue';self.activate(2.);self.assertEqual(self.vals(),(12.,12.));self.assertFalse(self.m._controller.fault)
     def test_f8_queued(self):
-        self.m._category=6;self.m._pending['grenade_cooldown']=3.;self.b.gui.imgui.clicks={'Activate / Update Grenade gadget cooldown speed (experimental)##activate_grenade_cooldown'};self.m.draw();self.assertFalse(self.g.CooldownTime.writes);self.m.monitor_tick();self.assertEqual(self.vals(),(4.,4.))
+        self.m._category=6;self.m.auto_consent.value=True;self.b.gui.imgui.edits={'Grenade gadget cooldown speed (experimental)##grenade_cooldown':3.,'Enable Grenade gadget cooldown speed (experimental)##persistent_grenade_cooldown':True};self.m.draw();self.assertFalse(self.g.CooldownTime.writes);self.m.monitor_tick();self.assertEqual(self.vals(),(4.,4.))
     def test_getter_changes_owner(self):
         old=self.p.GetGrenadeGadget;calls=[]
         def changed():

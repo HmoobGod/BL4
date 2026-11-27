@@ -150,14 +150,15 @@ class Test(unittest.TestCase):
     def test_draft_and_apply(self):
         self.open(); self.gui.imgui.edits={'Damage multiplier##damage':2.7}; self.m.draw()
         self.assertEqual(self.m.ALL[0].value,1.0); self.assertEqual(self.m.mod.save_count,0)
-        self.gui.imgui.edits={}; self.gui.imgui.clicks={'Apply and save'}; self.m.draw()
+        self.gui.imgui.edits={}; self.m.flush_auto_edits(force=True); self.m.draw(); self.assertNotIn('Apply and save', self.gui.imgui.labels)
         self.assertEqual(self.m.ALL[0].value,2.7); self.assertEqual(self.m.mod.save_count,1)
     def test_each_category(self):
         self.open()
         for i,(_,label,options) in enumerate(self.m.CATEGORIES):
             self.gui.imgui.clicks={label+(' *' if i==self.m._category else '')+'##cat'+str(i)}
             self.gui.imgui.labels=[]; self.m.draw(); self.assertEqual(self.m._category,i)
-            for o in options: self.assertIn(o.display_name+'##'+o.identifier,self.gui.imgui.labels)
+            for o in options:
+                if o.identifier not in ('auto_reload','auto_loot'): self.assertIn(o.display_name+'##'+o.identifier,self.gui.imgui.labels)
     def test_reset(self):
         self.m.apply({'damage':4,'settings_test':True}); self.m.reset()
         self.assertEqual(self.m.ALL[0].value,1); self.assertFalse(self.m.probe.value)
@@ -169,7 +170,7 @@ class Test(unittest.TestCase):
         self.open(); self.m._pending['damage']=2.0; self.m.close_menu(); self.assertFalse(self.m._pending); self.assertEqual(self.m.ALL[0].value,1)
     def test_discard_preserves_console(self):
         self.open(); self.m._pending['damage']=2; self.m.ALL[0].value=3
-        self.gui.imgui.clicks={'Discard draft'}; self.m.draw(); self.assertFalse(self.m._pending); self.assertEqual(self.m.ALL[0].value,3)
+        self.gui.imgui.clicks={'Restore All'}; self.m.draw(); self.assertFalse(self.m._pending); self.assertEqual(self.m.ALL[0].value,3)
     def test_disable_closes(self): self.open(); self.m.disabled(); self.assertEqual(self.gui.closes,1)
     def test_no_write_on_draw(self): self.open(); self.m.draw(); self.assertEqual(self.m.mod.save_count,0)
 

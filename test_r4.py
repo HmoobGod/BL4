@@ -37,11 +37,11 @@ class R4(unittest.TestCase):
         self.assertFalse(self.m.auto_master.value); self.assertFalse(self.m._auto_edits)
         self.assertEqual(self.p.b.jump.MinAnalogWalkSpeed,0.)
     def test_compact_persistent_hides_held_controls(self):
-        self.p.configure(damage_taken=.5); self.m.open_key.callback(); self.m._category=0
+        self.p.configure(damage_taken=.5); self.m.open_key.callback(); self.m._category=0; self.m._compact_view=True
         ui=self.p.b.gui.imgui; ui.labels=[]; self.m.draw(); compact_count=len(ui.labels)
         self.assertIn('Damage multiplier##damage',ui.labels)
         self.assertIn('Damage taken multiplier##damage_taken',ui.labels)
-        self.assertIn('Auto-enable Damage taken multiplier##persistent_damage_taken',ui.labels)
+        self.assertIn('Enable Damage taken multiplier##persistent_damage_taken',ui.labels)
         ui.edits={'Compact menu (hide preview-only controls)':False}; ui.labels=[]; self.m.draw()
         self.assertIn('Damage multiplier##damage',ui.labels); self.assertGreaterEqual(len(ui.labels),compact_count)
     def test_status_does_not_query_sdk(self):

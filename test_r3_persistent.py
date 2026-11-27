@@ -130,8 +130,8 @@ class Persistent(unittest.TestCase):
         self.m.ground_tick(self.anim); self.assertEqual(self.b.jump.MinAnalogWalkSpeed,0.)
     def test_ui_saved_master_feature_toggles(self):
         self.m.open_key.callback(); self.m._category=2
-        self.b.gui.imgui.edits={'I use Offline Local Only; tuning mods disabled##persistent_offline':True,'Persistent gameplay (experimental)##persistent_master':True}
-        self.m.draw(); self.b.gui.imgui.edits={'Auto-enable Legendary rarity weight##persistent_legendary_weight':True,'Legendary rarity weight (selected)##legendary_weight':3.}
+        self.b.gui.imgui.edits={'I use Offline Local Only; tuning mods disabled##persistent_offline':True}
+        self.m.draw(); self.b.gui.imgui.edits={'Enable Legendary rarity weight##persistent_legendary_weight':True,'Legendary rarity weight (selected)##legendary_weight':3.}
         self.m.draw(); self.assertEqual(self.f.writes,[]); self.m.close_menu(); self.tick()
         self.assertEqual(self.f.writes,[3.])
 

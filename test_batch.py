@@ -66,8 +66,8 @@ class Batch(unittest.TestCase):
         self.assertEqual(self.f.writes,[2.,3.]);self.assertEqual(self.f.weight,3)
         self.activate('legendary_weight',3);self.assertEqual(self.f.writes,[2.,3.]);self.activate('legendary_weight',1);self.assertEqual(self.f.weight,1)
     def test_gui_button(self):
-        self.m._category=2;self.m._pending['legendary_weight']=2.
-        self.gui.imgui.clicks={'Activate / Update Legendary rarity weight##activate_legendary_weight'};self.m.draw();self.assertEqual(self.f.weight,1);self.m.monitor_tick();self.assertEqual(self.f.weight,2)
+        self.m._category=2;self.m.auto_consent.value=True
+        self.gui.imgui.edits={'Legendary rarity weight (selected)##legendary_weight':2.,'Enable Legendary rarity weight##persistent_legendary_weight':True};self.m.draw();self.assertEqual(self.f.weight,1);self.m.monitor_tick();self.assertEqual(self.f.weight,2)
     def test_all_four_active_then_restore(self):
         for k,v in [('legendary_weight',4),('jump',2),('repair_cooldown',.5)]:self.activate(k,v)
         self.assertEqual(len(self.m._controller.records),3);self.assertEqual((self.f.weight,self.jump.JumpZVelocity,self.fire.Value,self.cool.Value),(4,1240,1,10));self.assertEqual(self.cool.BaseValue,10)

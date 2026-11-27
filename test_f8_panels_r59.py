@@ -31,15 +31,15 @@ class ActionPanels(unittest.TestCase):
             o=self.m.AUTOMATION_OPTIONS[k];label=o.display_name+'##'+o.identifier
             self.assertEqual(label in rec,k in ('health','shield'));self.assertEqual(label in skill,k.startswith('skill_'))
         for o in self.m.SKILL_NATIVE.values(): self.assertIn(o.display_name+'##'+o.identifier,skill)
-        self.assertIn('Restore vanilla defaults',skill)
+        self.assertIn('Restore All',skill)
     def test_saved_draft_survives_navigation(self):
         self.m.auto_master.value=True;self.m._focus_controls=True;self.switch(6,'Action skills')
         o=self.m.SKILL_RATES['skill_duration'];self.render(6,edits={o.display_name+'##'+o.identifier:1.7})
         self.switch(6,'Recovery');self.assertEqual(self.m.displayed_selection(o),1.7)
     def test_global_restore_available_hidden(self):
         self.b.activate('jump',2);self.m._focus_controls=True
-        labels=self.switch(6,'Action skills');self.assertIn('Restore ALL active gameplay values',labels)
-        self.render(6,['Restore ALL active gameplay values']);self.assertEqual(self.b.jump.JumpZVelocity,620.)
+        labels=self.switch(6,'Action skills');self.assertIn('Restore All',labels)
+        self.render(6,['Restore All']);self.assertEqual(self.b.jump.JumpZVelocity,620.)
     def test_global_timer_warning(self):
         self.m._native_overtime_used=True;self.m._focus_controls=True
         for cat in (0,5,6):
@@ -55,4 +55,4 @@ class ActionPanels(unittest.TestCase):
     def test_stop_visible_when_lane_hidden(self):
         self.m._focus_controls=True;self.m.auto_master.value=True
         self.m._automation_leases['skill_duration']=SimpleNamespace(record=object(),fault=False)
-        self.assertIn('Stop automation / Restore ALL',self.render(6))
+        self.assertIn('Restore All',self.render(6))

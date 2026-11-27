@@ -226,6 +226,10 @@ from test_critical_damage import CriticalDamage
 for name in CriticalDamage.__dict__:
     if name.startswith("test_"):
         t=CriticalDamage(name);unique[t.id()]=t
+from test_f8_simple import SimpleF8
+for name in SimpleF8.__dict__:
+    if name.startswith('test_'):
+        t=SimpleF8(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

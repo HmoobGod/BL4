@@ -17,7 +17,7 @@ REWARD_KEYS = frozenset(('progress_enemy_xp', 'progress_money', 'progress_eridiu
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
 TITLE = 'BL4 Custom - Community Integration v0.7.61-experimental'
-DESCRIPTION = 'Manual preview by default; optional persistent solo gameplay requires separate master and feature opt-in.'
+DESCRIPTION = 'Individual gameplay toggles; saved selections apply in eligible offline solo sessions. Experimental tests remain isolated.'
 
 
 def changed(option, value):
@@ -49,7 +49,7 @@ def toggle(identifier, label):
 
 
 CATEGORIES = [
-    ('combat', 'Combat', [SliderOption('damage', 1., .5, 5., step=.1, is_integer=False, display_name='Damage multiplier', description='Experimental equipped ordinary gun damage; 1x restores. Not a global damage multiplier.'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Experimental native weapon rate; persistent mode follows supported idle weapons.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Experimental stock reload duration; persistent mode follows supported idle weapons. 1x restores.'), SliderOption('swap_time', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['swap_time'][0], description='Local native time scale candidate; manual or persistent opt-in; direction of gameplay effect unverified. 1x restores.'), *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental weapon field; persistent mode follows supported idle weapons. Lower scales the field down. Native effect unverified. 1x restores.') for k in ('weapon_spread', 'weapon_recoil')], slider('fire_damage', 'Fire damage multiplier'), SliderOption('critical_damage', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['critical_damage'][0], description='Existing pawn default critical-hit multiplier only; does not force critical hits. Manual experimental activation; 1x restores.'),
+    ('combat', 'Combat', [SliderOption('damage', 1., .5, 5., step=.1, is_integer=False, display_name='Damage multiplier', description='Experimental equipped ordinary gun damage; 1x restores. Not a global damage multiplier.'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Experimental native weapon rate; enabled feature follows supported idle weapons.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Experimental stock reload duration; enabled feature follows supported idle weapons. 1x restores.'), SliderOption('swap_time', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['swap_time'][0], description='Local native time scale candidate; individual toggle; direction of gameplay effect unverified. 1x restores.'), *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental weapon field; enabled feature follows supported idle weapons. Lower scales the field down. Native effect unverified. 1x restores.') for k in ('weapon_spread', 'weapon_recoil')], slider('fire_damage', 'Fire damage multiplier'), SliderOption('critical_damage', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['critical_damage'][0], description='Existing pawn default critical-hit multiplier only; does not force critical hits. Manual experimental activation; 1x restores.'),
         slider('damage_taken', 'Damage taken multiplier', minimum=0.1), slider('shock_damage', 'Shock damage multiplier'),
         slider('corrosive_damage', 'Corrosive damage multiplier'), slider('cryo_damage', 'Cryo damage multiplier'),
         slider('radiation_damage', 'Radiation damage multiplier')]),
@@ -61,9 +61,9 @@ CATEGORIES = [
         progression_slider('progress_mission_xp', 'Mission XP')]),
     ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), progression_slider('overall_loot_luck', 'Overall loot luck'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
     ('inventory', 'Inventory', [SliderOption(k, 1., 1., 1000., step=1, is_integer=True, display_name=FEATURES[k][0], description='Experimental absolute slots; 1 restores captured original. Never fill above original capacity during testing.') for k in ('backpack_capacity','bank_capacity')]),
-    ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement attribute; manual or persistent opt-in; 1x restores. Actual speed/distance unverified.') for k in ('dash_speed', 'glide_speed', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration')], *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Existing positive vault-power cost; lower may reduce consumption. 1x restores. No free energy or new jump actions.') for k in ('double_jump_cost','dash_cost','glide_cost','grapple_cost','slam_cost')], *[SliderOption(k, 1., FEATURES[k][1], FEATURES[k][2], step=.1, is_integer=False, display_name=FEATURES[k][0], description=('Only while exact native slide is active; persistent mode recommended. 1x restores.' if k=='slide_speed' else 'Local movement field only; native effect unverified. 1x restores.')) for k in ('ladder_ascend','ladder_descend','slam_height','ground_friction','braking_friction','slide_speed')], SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
+    ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement attribute; individual toggle; 1x restores. Actual speed/distance unverified.') for k in ('dash_speed', 'glide_speed', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration')], *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Existing positive vault-power cost; lower may reduce consumption. 1x restores. No free energy or new jump actions.') for k in ('double_jump_cost','dash_cost','glide_cost','grapple_cost','slam_cost')], *[SliderOption(k, 1., FEATURES[k][1], FEATURES[k][2], step=.1, is_integer=False, display_name=FEATURES[k][0], description=('Only while exact native slide is active; toggle ON to follow active slides. 1x restores.' if k=='slide_speed' else 'Local movement field only; native effect unverified. 1x restores.')) for k in ('ladder_ascend','ladder_descend','slam_height','ground_friction','braking_friction','slide_speed')], SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
-    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), SliderOption('overshield_duration', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['overshield_duration'][0], description='Existing positive overshield duration only; manual activation; does not grant shields. 1x restores.'), SliderOption('lifesteal_fraction', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['lifesteal_fraction'][0], description='Existing positive normalized life-steal only; manual or persistent opt-in. 1x restores. Restore other life-steal control first.'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental: existing positive native rate only; 1x restores. Weapon ammo, grenade and shield controls support persistent opt-in; player ammo regeneration and existing positive life-steal support persistent opt-in.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'shield_regen_rate', 'shield_regen_delay', 'grenade_cooldown', 'player_ammo_regen')]]),
+    ('quality', 'Quality of Life', [toggle('auto_ammo', 'Automatic ammo pickup'), slider('cooldown', 'Cooldown multiplier'), slider('repair_cooldown', 'Repair-kit cooldown duration multiplier', minimum=0.1), slider('healing_received', 'Healing received multiplier'), slider('repair_duration', 'Repair-kit healing duration multiplier'), slider('repair_health', 'Repair-kit healing amount multiplier'), SliderOption('overshield_duration', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['overshield_duration'][0], description='Existing positive overshield duration only; manual activation; does not grant shields. 1x restores.'), SliderOption('lifesteal_fraction', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['lifesteal_fraction'][0], description='Existing positive normalized life-steal only; individual toggle. 1x restores. Restore other life-steal control first.'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental: existing positive native rate only; 1x restores. Weapon ammo, grenade and shield controls support persistent opt-in; player ammo regeneration and existing positive life-steal support persistent opt-in.') for k in ('ammo_regen_rate', 'ammo_regen_delay', 'lifesteal_rate', 'shield_regen_rate', 'shield_regen_delay', 'grenade_cooldown', 'player_ammo_regen')]]),
     ('enemies', 'Enemy Difficulty', [slider('enemy_health', 'Enemy health multiplier'), slider('enemy_damage', 'Enemy damage multiplier')]),
     ('menu', 'Custom Menu', [probe]),
 ]
@@ -71,15 +71,15 @@ PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 _PREVIEW_BY_KEY = {o.identifier: o for o in PREVIEW}
 _COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
-auto_master = BoolOption('persistent_master', False, display_name='Persistent gameplay (experimental)')
+auto_master = BoolOption('persistent_master', False, display_name='Internal activation gate (legacy settings)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
 MANUAL_ONLY = frozenset(('sprint', 'overshield_duration', 'critical_damage'))
 LIFE_KEYS = frozenset(('lifesteal_rate', 'lifesteal_fraction'))
 PLAYER_AMMO_KEY = 'player_ammo_regen'
 AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
-AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Auto-enable ' + FEATURES[k][0])
+AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
-AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Auto-enable '+label)
+AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Enable '+label)
                       for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'))}
 DOUBLE_JUMP_RATE = SliderOption('double_jump_velocity_scale', 1., .5, 2., step=.1, is_integer=False, display_name='Double-jump upward velocity multiplier (experimental)')
 RELOAD_EVENT = BoolOption('persistent_reload_event_window',False,display_name='Experimental reload request timing (instead of persistent weapon values)')
@@ -113,11 +113,11 @@ SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct re
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
 NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=.1,is_integer=False,display_name=label)
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'))}
-NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name='Auto-enable native '+k+' rate (experimental)') for k in NATIVE_RATE_OPTIONS}
+NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name='Enable native '+k+' rate (experimental)') for k in NATIVE_RATE_OPTIONS}
 ALL = PREVIEW + list(NATIVE_AUTO_OPTIONS.values()) + list(NATIVE_RATE_OPTIONS.values()) + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
-_auto_status = 'Not active; opt in to persistent gameplay.'
+_auto_status = 'Not active; enable a feature.'
 _auto_ground = None
 _auto_api = None
 _auto_next = 0.0
@@ -346,17 +346,110 @@ def displayed_selection(option):
     return normalize(option, option.value)
 
 
+def feature_enabled(option):
+    # A legacy master-off save must never silently rearm dormant flags.
+    return auto_master.value is True and option.value is True
+
+
+def feature_flags():
+    return (*AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), *NATIVE_AUTO_OPTIONS.values())
+
+
+def set_feature_enabled(option, value):
+    """Single saved UI toggle, preserving the old internal engine gate.
+
+    On first enable, discard only dormant enable flags, not slider preferences.
+    A failed disable must disarm in memory even if persistence fails.
+    """
+    global _auto_blocked, _auto_next, _auto_ground, _ground_retry_at, _reload_handoff
+    flags = feature_flags()
+    if not any(option is f for f in flags) or type(value) is not bool:
+        return
+    if value and (health_active() or health_fault() or automation_fault()
+                  or (_controller is not None and (_controller.fault or _controller.stop_pending is not None or (not _auto_owned and _controller.records) or (not auto_master.value and _controller.records)))
+                  or (not auto_master.value and _automation_leases)):
+        report_live('HOLD: restore isolated experiment before enabling gameplay')
+        return
+    was_on = auto_master.value is True
+    edits = dict(_auto_edits)
+    desired = {f.identifier: feature_enabled(f) for f in flags}
+    desired[option.identifier] = value
+    gate = any(desired.values())
+    try:
+        apply({**edits, **desired, auto_master.identifier: gate})
+    except Exception:
+        _auto_blocked = 'Settings save failed; Restore All before retrying'
+        if not value:
+            # A failed OFF cannot leave an enabled lane running this session.
+            option.value = False
+            auto_master.value = False
+            stop_automation('feature disable save failed')
+            _auto_ground = None
+            _reload_handoff = None
+            _auto_edits.clear()
+        report_live('HOLD: settings save failed; check saved toggles before restart')
+        return
+    _auto_edits.clear()
+    _auto_next = 0.0
+    if option is AUTO_OPTIONS['reload'] or gate != was_on:
+        _reload_handoff = None
+    if option is AUTO_OPTIONS['walk_speed'] or gate != was_on:
+        _auto_ground = None
+        _ground_retry_at = 0.0
+    lanes = {**AUTOMATION_OPTIONS, **NATIVE_AUTO_OPTIONS}
+    for kind, flag in lanes.items():
+        if flag is option:
+            stop_automation_lane(kind, 'gameplay toggle changed')
+            if value and not automation_fault() and kind not in _automation_leases:
+                _automation_attempted.discard(kind)
+                _automation_status[kind] = 'Waiting for eligible session'
+    if not was_on and gate:
+        _auto_blocked = ('Capacity restore waiting: remove excess items' if _controller is not None and any(r.get('overfull_warning') for r in _controller.records.values()) else '')
+        _automation_attempted.clear()
+        cancel_activation('gameplay feature enabled')
+        ensure_monitor()
+    if not gate:
+        stop_automation('all gameplay toggles off')
+        _auto_ground = None
+        _reload_handoff = None
+
+
+def restore_all_ui():
+    """One global action: disable all saved flags, keep selected values, restore safely."""
+    global _auto_blocked, _auto_ground, _reload_handoff, _status
+    flags = feature_flags()
+    saved = True
+    try:
+        apply({**_auto_edits, **{f.identifier: False for f in flags}, auto_master.identifier: False})
+    except Exception:
+        saved = False
+        for f in flags:
+            f.value = False
+        auto_master.value = False
+        report_live('HOLD: all toggles off in memory; save failed, check settings before restarting')
+    _auto_edits.clear()
+    _auto_ground = None
+    _reload_handoff = None
+    _auto_blocked = 'Restore All requested'
+    _pending.clear()
+    request_stop('F8 restore all', immediate=True)
+    _status = ('All toggles OFF; verify restoration before leaving the session.' if saved else 'SAVE FAILED: toggles OFF in memory; check settings before restarting.')
+
+
+def draw_feature_toggle(ui, option):
+    changed, chosen = ui.checkbox(option.display_name+'##'+option.identifier, feature_enabled(option))
+    if changed:
+        set_feature_enabled(option, chosen)
+
+
 def native_rate_selection(ui, mode):
     option=NATIVE_RATE_OPTIONS[mode]
     edited,value=ui.slider_float(option.display_name+'##'+option.identifier,float(displayed_selection(option)),1.,5.,'%.1fx')
     if edited:
-        if auto_master.value is True:queue_auto_edit(option,value)
-        else:_pending[option.identifier]=normalize(option,value)
-    if auto_master.value is True:
-        flag=NATIVE_AUTO_OPTIONS['native_rate_'+mode]
-        changed,chosen=ui.checkbox(flag.display_name+'##'+flag.identifier,flag.value is True)
-        if changed:set_auto_setting(flag,chosen)
-        ui.text(mode+' native rate: '+_automation_status.get('native_rate_'+mode,'Waiting / off'))
+        queue_auto_edit(option,value)
+    flag=NATIVE_AUTO_OPTIONS['native_rate_'+mode]
+    draw_feature_toggle(ui,flag)
+    ui.text(mode+' native rate: '+(_automation_status.get('native_rate_'+mode,'Waiting') if feature_enabled(flag) else 'Off'))
     return displayed_selection(option)
 
 
@@ -373,24 +466,29 @@ def draw():
         close_menu()
         return
     ui.text('BL4 CUSTOM | v0.7.61-experimental')
-    ui.text_wrapped('Manual or persistent solo activation. Earned reward trials are manual only; unsupported fields HOLD.')
-    ui.text_wrapped('Restore all BEFORE travel, character changes, or network changes. Offline Local Only only.')
+    ui.text_wrapped('Enable individual features; sliders save automatically. Isolated experimental tests require all gameplay toggles off.')
+    ui.text_wrapped('Restore All BEFORE travel, character changes, or network changes. Offline Local Only only.')
     global _offline_confirmed
-    if auto_master.value is not True:
-        edited, confirmed = ui.checkbox('Offline Local Only; other tuning mods disabled##owner_confirm', _offline_confirmed)
-        if edited:
-            _offline_confirmed = bool(confirmed)
-            if not _offline_confirmed:
-                request_stop('offline confirmation withdrawn', immediate=True)
-    for option in (auto_consent, auto_master):
-        changed_auto, selected_auto = ui.checkbox(option.display_name + '##' + option.identifier, option.value is True)
-        if changed_auto and selected_auto is not option.value:
-            set_auto_setting(option, selected_auto)
+    changed_auto, selected_auto = ui.checkbox(auto_consent.display_name+'##'+auto_consent.identifier, auto_consent.value is True)
+    if changed_auto:
+        set_auto_setting(auto_consent, selected_auto)
+        if not selected_auto:
+            # Save failure must not leave offline permission granted in memory.
+            auto_consent.value = False
+            request_stop('offline confirmation withdrawn', immediate=True)
+        _offline_confirmed = auto_consent.value is True
+    elif auto_consent.value is True and not auto_master.value:
+        # Same explicit saved offline consent used by the existing automatic path.
+        # A manual experiment still requires its separate test button.
+        _offline_confirmed = True
     if auto_master.value is True:
-        ui.text_wrapped('Persistent: ' + (_auto_blocked or _auto_status))
+        ui.text_wrapped('Gameplay: ' + (_auto_blocked or _auto_status))
         if auto_consent.value is not True:
-            ui.text_wrapped('HOLD: enable saved offline preference first.')
-    compact = auto_master.value is True if _compact_view is None else _compact_view
+            ui.text_wrapped('HOLD: confirm Offline Local Only above.')
+    if ui.button('Restore All'):
+        restore_all_ui()
+        return
+    compact = False if _compact_view is None else _compact_view
     edited_compact, compact_value = ui.checkbox('Compact menu (hide preview-only controls)', compact)
     if edited_compact:
         _compact_view = compact = bool(compact_value)
@@ -406,20 +504,12 @@ def draw():
         ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' ' + str(r.get('selection', '?')) + (' slots' if k in CAPACITY_KEYS else 'x') for k, r in _controller.records.items()) or 'None / vanilla'))
         if any(r.get('overfull_warning') for r in _controller.records.values()):
             ui.text_wrapped('CAPACITY RESTORE HOLD: remove excess items in this offline session, then restore. Do not travel, buy SDUs or exit while over capacity.')
-        if _controller.records and not _controller.fault and ui.button('Restore ALL active gameplay values'):
-            pause_auto('F8 restore all')
-            request_stop('F8 restore all', immediate=True)
     if any(l.record is not None for l in _automation_leases.values()) or (RELOAD_EVENT.value is True and AUTO_OPTIONS['reload'].value is True and auto_allowed()):
-        ui.text_wrapped('Persistent automation armed (native outcomes unverified).')
-        if ui.button('Stop automation / Restore ALL'):
-            pause_auto('F8 restore all')
-            request_stop('F8 restore all', immediate=True)
+        ui.text_wrapped('Automation armed (native outcomes unverified).')
     if _native_overtime_used:
         ui.text_wrapped('Native timed flesh test attempted: stay offline, do not travel, and exit game after the test.')
     if health_active():
         ui.text_wrapped('Native attribute trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
-        if ui.button('Stop experimental action / Restore ALL'):
-            request_stop('F8 restore all', immediate=True)
     ui.separator()
     for i, (_, name, _) in enumerate(CATEGORIES):
         if i % 2:
@@ -436,7 +526,7 @@ def draw():
     if _category == 0 and not compact:
         ui.text_wrapped('Damage applies to the equipped ordinary gun fire behavior only. Elemental and incoming modifiers are separate; actual hit effects unverified.')
     if _category == 1 and not compact:
-        ui.text_wrapped('Experimental enemy-kill XP, pickup cash and Eridium: existing typed native key only; one 30-second trial at a time. Other reward sliders remain preview only. Use a backup character; earned rewards are not reversed.')
+        ui.text_wrapped('Pickup cash and Eridium: isolated experimental 30-second trials. XP experiment failed; XP controls are preview only. Use a backup character; earned rewards are not reversed.')
         ui.text_wrapped(_reward_summary)
         if ui.button('Run read-only reward compatibility check'):
             inspect_attribute_compatibility()
@@ -452,23 +542,20 @@ def draw():
         ui.text('Rarity weight is not guaranteed drop probability; 1x restores.')
     if compact and _category == 4:
         ui.text('Ground speed is a reference floor; 1x restores.')
-    if _category == 4 and auto_master.value is True:
+    if _category == 4:
         option = AUTOMATION_OPTIONS['double_jump']
-        edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
-        if edited: set_auto_setting(option,selected)
+        draw_feature_toggle(ui,option)
         edited, selected = ui.slider_float(DOUBLE_JUMP_RATE.display_name+'##'+DOUBLE_JUMP_RATE.identifier,float(displayed_selection(DOUBLE_JUMP_RATE)),.5,2.,'%.1fx')
         if edited: queue_auto_edit(DOUBLE_JUMP_RATE,selected)
-        ui.text('double_jump: '+_automation_status.get('double_jump','Waiting / off'))
+        ui.text('double_jump: '+(_automation_status.get('double_jump','Waiting') if feature_enabled(option) else 'Off'))
         ui.text_wrapped('Experimental second-jump velocity only; actual height unverified. Land before use; toggle lane to rearm after changing scale. First jump and shared goals unchanged.')
     if _category == 5:
         panels = visible_action_panels(ui, 5, ('Loot Vacuum', 'Automatic reload'))
-        if auto_master.value is True:
-            ui.text_wrapped('Persistent automation: movement, elemental, rarity weights and selected recovery fields compatible. Save vacuum changes to update the active lease. Reload waits for a supported loaded idle gun and reserve, including after weapon/mode swaps. Empty guns need a normal reload first; unsupported guns stop the lane. Toggle a stopped lane off/on to rearm.')
-            for kind, option in AUTOMATION_OPTIONS.items():
-                if kind not in ('vacuum','reload') or ('Loot Vacuum' if kind == 'vacuum' else 'Automatic reload') not in panels: continue
-                edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
-                if edited: set_auto_setting(option, selected)
-                ui.text(kind+': '+_automation_status.get(kind, 'Waiting / off'))
+        ui.text_wrapped('Automation: movement, elemental, rarity weights and selected recovery fields compatible. Vacuum settings save automatically and update the active lease. Reload waits for a supported loaded idle gun and reserve, including after weapon/mode swaps. Empty guns need a normal reload first; unsupported guns stop the lane. Toggle a stopped lane off/on to rearm.')
+        for kind, option in AUTOMATION_OPTIONS.items():
+            if kind not in ('vacuum','reload') or ('Loot Vacuum' if kind == 'vacuum' else 'Automatic reload') not in panels: continue
+            draw_feature_toggle(ui,option)
+            ui.text(kind+': '+(_automation_status.get(kind, 'Waiting') if feature_enabled(option) else 'Off'))
         if 'Loot Vacuum' in panels:
             ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only. Completed moves are not reversed.')
             if not health_active():
@@ -476,18 +563,15 @@ def draw():
                     edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
                     if edited:
                         _vacuum_filters[kind] = selected is True
+                        queue_auto_edit(VACUUM_PREFS[kind], selected is True)
                 edited, selected = ui.checkbox('Gear: legendary/pearlescent beams only##vacuum_high_gear', _vacuum_high_gear)
-                if edited: _vacuum_high_gear = selected is True
+                if edited:
+                    _vacuum_high_gear = selected is True
+                    queue_auto_edit(VACUUM_HIGH_PREF, _vacuum_high_gear)
                 edited, radius = ui.slider_float('Pickup radius##vacuum_radius', _vacuum_radius, 5., 100., '%.0f m')
                 if edited and type(radius) in (int,float) and math.isfinite(radius):
                     _vacuum_radius = max(5., min(100., radius))
-                if ui.button('Save vacuum preferences'):
-                    try:
-                        save_vacuum_preferences(); _status = 'Vacuum preferences saved; active persistent vacuum updates on gameplay callback.'
-                    except Exception:
-                        _status = 'Vacuum preferences save failed.'
-                if ui.button('Load saved vacuum preferences'):
-                    load_vacuum_preferences()
+                    queue_auto_edit(VACUUM_RADIUS_PREF, _vacuum_radius)
                 if not health_fault() and auto_master.value is not True and ui.button('Start continuous Loot Vacuum (session only)'):
                     activate_feature('loot_vacuum_continuous', (tuple(k for k,v in _vacuum_filters.items() if v), _vacuum_radius) + ((True,) if _vacuum_high_gear else ()))
                 if not health_fault() and auto_master.value is not True and ui.button('Arm experimental Loot Vacuum (30 sec)'):
@@ -501,46 +585,44 @@ def draw():
                 activate_feature('reload_continuous', 1.0)
     if _category == 6:
         panels = visible_action_panels(ui, 6, ('Recovery', 'Action skills'))
-        if auto_master.value is True:
-            ui.text_wrapped('Continuous recovery assists: native refill pulses, not native regen-rate or recharge-delay modifiers. Stop on lost scope or ineffective refill; toggle to rearm. Already recovered health is not reversed.')
-            for kind in ('health','shield','skill_cooldown','skill_duration'):
-                if ('Recovery' if kind in ('health','shield') else 'Action skills') not in panels: continue
-                option = AUTOMATION_OPTIONS[kind]
-                edited, selected = ui.checkbox(option.display_name+'##'+option.identifier, option.value is True)
-                if edited: set_auto_setting(option, selected)
-                ui.text(kind+': '+_automation_status.get(kind, 'Waiting / off'))
-                if kind in RECOVERY_RATES:
-                    rate=RECOVERY_RATES[kind]
-                    edited, selected=ui.slider_float(rate.display_name+'##'+rate.identifier, float(displayed_selection(rate)), .1,1.,'%.1f%%')
-                    if edited: queue_auto_edit(rate, selected)
-                if kind in SKILL_ADAPTIVE:
-                    adaptive=SKILL_ADAPTIVE[kind]
-                    edited,selected=ui.checkbox(adaptive.display_name+'##'+adaptive.identifier,adaptive.value is True)
-                    if edited:set_auto_setting(adaptive,selected)
-                    rate=SKILL_RATES[kind]
-                    edited,selected=ui.slider_float(rate.display_name+'##'+rate.identifier,float(displayed_selection(rate)),1.,3.,'%.1fx')
-                    if edited:queue_auto_edit(rate,selected)
-                    native=SKILL_NATIVE[kind]
-                    edited,selected=ui.checkbox(native.display_name+'##'+native.identifier,native.value is True)
-                    if edited:set_auto_setting(native,selected)
-                    if kind=='skill_duration':
-                        edited,selected=ui.checkbox(CROSSFIRE_GATE.display_name+'##'+CROSSFIRE_GATE.identifier,CROSSFIRE_GATE.value is True)
-                        if edited:set_auto_setting(CROSSFIRE_GATE,selected)
-                    follow=SKILL_FOLLOW[kind]
-                    edited,selected=ui.checkbox(follow.display_name+'##'+follow.identifier,follow.value is True)
-                    if edited:set_auto_setting(follow,selected)
-            if 'Action skills' in panels:
-                ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each addition at 1%, and checks readback. Supported named main cooldowns with charge/auxiliary pools use a separate pawn resource API; charge and auxiliary pools are not targeted. Rearm on mode changes. Native effect unverified.')
-            if 'Action skills' in panels:
-                ui.text_wrapped('Cross-Fire event gate: dedicated adaptive duration only; follow OFF; wait for a new activation after arming. Other skills are not admitted in this mode.')
-                ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct supported replacement; changing follow mode requires lane rearm.')
-            ui.text_wrapped('Player and weapon ammo regeneration cannot overlap. If both are selected, all ammo regeneration modifiers restore until you choose one.')
-            if 'Action skills' in panels:
-                ui.text_wrapped('Adaptive skill mode uses observed native pool change, capped at 3% per eligible sample; 1x adds nothing. Mode change requires toggling lane to rearm. Not an exact native multiplier.')
-            if 'Recovery' in panels:
-                ui.text_wrapped('Native shield modifiers take priority over the shield pulse assist; flesh recovery remains independent. Restore before changing equipment if possible.')
-            if 'Action skills' in panels:
-                ui.text_wrapped('Skill assists: unique ordinary skills, plus supported named primary cooldowns in dedicated adaptive mode. Charge and auxiliary pools are not modified. Not exact cooldown/duration multipliers.')
+        ui.text_wrapped('Continuous recovery assists: native refill pulses, not native regen-rate or recharge-delay modifiers. Stop on lost scope or ineffective refill; toggle to rearm. Already recovered health is not reversed.')
+        for kind in ('health','shield','skill_cooldown','skill_duration'):
+            if ('Recovery' if kind in ('health','shield') else 'Action skills') not in panels: continue
+            option = AUTOMATION_OPTIONS[kind]
+            draw_feature_toggle(ui,option)
+            ui.text(kind+': '+(_automation_status.get(kind, 'Waiting') if feature_enabled(option) else 'Off'))
+            if kind in RECOVERY_RATES:
+                rate=RECOVERY_RATES[kind]
+                edited, selected=ui.slider_float(rate.display_name+'##'+rate.identifier, float(displayed_selection(rate)), .1,1.,'%.1f%%')
+                if edited: queue_auto_edit(rate, selected)
+            if kind in SKILL_ADAPTIVE:
+                adaptive=SKILL_ADAPTIVE[kind]
+                edited,selected=ui.checkbox(adaptive.display_name+'##'+adaptive.identifier,adaptive.value is True)
+                if edited:set_auto_setting(adaptive,selected)
+                rate=SKILL_RATES[kind]
+                edited,selected=ui.slider_float(rate.display_name+'##'+rate.identifier,float(displayed_selection(rate)),1.,3.,'%.1fx')
+                if edited:queue_auto_edit(rate,selected)
+                native=SKILL_NATIVE[kind]
+                edited,selected=ui.checkbox(native.display_name+'##'+native.identifier,native.value is True)
+                if edited:set_auto_setting(native,selected)
+                if kind=='skill_duration':
+                    edited,selected=ui.checkbox(CROSSFIRE_GATE.display_name+'##'+CROSSFIRE_GATE.identifier,CROSSFIRE_GATE.value is True)
+                    if edited:set_auto_setting(CROSSFIRE_GATE,selected)
+                follow=SKILL_FOLLOW[kind]
+                edited,selected=ui.checkbox(follow.display_name+'##'+follow.identifier,follow.value is True)
+                if edited:set_auto_setting(follow,selected)
+        if 'Action skills' in panels:
+            ui.text_wrapped('Dedicated native refill requires adaptive mode, caps each addition at 1%, and checks readback. Supported named main cooldowns with charge/auxiliary pools use a separate pawn resource API; charge and auxiliary pools are not targeted. Rearm on mode changes. Native effect unverified.')
+        if 'Action skills' in panels:
+            ui.text_wrapped('Cross-Fire event gate: dedicated adaptive duration only; follow OFF; wait for a new activation after arming. Other skills are not admitted in this mode.')
+            ui.text_wrapped('Follow skill is optional: requires two fresh observations of a distinct supported replacement; changing follow mode requires lane rearm.')
+        ui.text_wrapped('Player and weapon ammo regeneration cannot overlap. If both are selected, all ammo regeneration modifiers restore until you choose one.')
+        if 'Action skills' in panels:
+            ui.text_wrapped('Adaptive skill mode uses observed native pool change, capped at 3% per eligible sample; 1x adds nothing. Mode change requires toggling lane to rearm. Not an exact native multiplier.')
+        if 'Recovery' in panels:
+            ui.text_wrapped('Native shield modifiers take priority over the shield pulse assist; flesh recovery remains independent. Restore before changing equipment if possible.')
+        if 'Action skills' in panels:
+            ui.text_wrapped('Skill assists: unique ordinary skills, plus supported named primary cooldowns in dedicated adaptive mode. Charge and auxiliary pools are not modified. Not exact cooldown/duration multipliers.')
         if 'Recovery' in panels:
             ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
@@ -551,7 +633,7 @@ def draw():
             ui.text_wrapped('Native regeneration start/stop test: uses a distinct constant-rate initializer and existing flesh tags. Rate units and stop/expiry are unverified; share one timed attempt per process. Exit after testing.')
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native regeneration start/stop (2 sec)'):
                 activate_feature('health_regen_native', 1.0)
-            ui.text_wrapped('Native passive regeneration rate: small additive native rate, not a refill. Manual ten-second trial or separate persistent opt-in; restore before travel. Rate units and actual healing unverified.')
+            ui.text_wrapped('Native passive regeneration rate: small additive native rate, not a refill. Manual ten-second trial or separate toggle; restore before travel. Rate units and actual healing unverified.')
             rate=native_rate_selection(ui,'health')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native passive health rate (10 sec)'):
                 activate_feature('native_rate_health',rate)
@@ -560,7 +642,7 @@ def draw():
                 activate_feature('shield_pulse', 1.0)
         if 'Action skills' in panels:
             ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
-            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or independent persistent opt-in; choose native OR matching refill assist. Changes to active rates restore and require toggle to rearm. Restore before skill changes.')
+            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or individual toggle; choose native OR matching refill assist. Changes to active rates restore and require toggle to rearm. Restore before skill changes.')
             for mode in ('cooldown','duration'):
                 rate=native_rate_selection(ui,mode)
                 if rate>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
@@ -570,7 +652,7 @@ def draw():
     if _category == 8:
         ui.text_wrapped('Change the Open Custom Menu key in the SDK console Keybinds section. Default: F8.')
         ui.text('Current hotkey: ' + str(open_key.key or 'Unbound'))
-    options = focused_options(ui, _category, compact, options)
+    options = focused_options(ui, _category, compact, [o for o in options if o.identifier not in ('auto_reload','auto_loot')])
     for o in options:
         value = displayed_selection(o)
         label = o.display_name + '##' + o.identifier
@@ -591,16 +673,23 @@ def draw():
                     except (TypeError, AttributeError):
                         pass
         if edited:
-            if auto_master.value is True and o.identifier in AUTO_OPTIONS:
-                queue_auto_edit(o, value)
-            else:
-                _pending[o.identifier] = normalize(o, value)
-                _status = 'Unapplied changes.' 
-    for selected in options:
-        key = selected.identifier
+            queue_auto_edit(o, value)
+        if o.identifier in AUTO_OPTIONS:
+            draw_feature_toggle(ui,AUTO_OPTIONS[o.identifier])
+            if o.identifier == 'reload':
+                edited_event, event = ui.checkbox(RELOAD_EVENT.display_name+'##'+RELOAD_EVENT.identifier, RELOAD_EVENT.value is True)
+                if edited_event: set_auto_setting(RELOAD_EVENT,event)
+                if RELOAD_EVENT.value is True: ui.text_wrapped('Experimental reload request timing; automatic reload lane must be off.')
+            ui.text(persistent_feature_status(o.identifier) if feature_enabled(AUTO_OPTIONS[o.identifier]) else ('Off / restoring' if _controller is not None and o.identifier in _controller.records else 'Off'))
+        # Keep manual experiments next to their selection, not below all sliders.
+        selected = o
+        key = o.identifier
         if key in REWARD_KEYS:
+            if key == 'progress_enemy_xp':
+                ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
+                continue
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test earned '+selected.display_name+' (30 sec)##reward_'+key):
-                activate_feature(key, _pending.get(key, selected.value))
+                activate_feature(key, displayed_selection(selected))
             continue
         if key not in FEATURES or key in DAMAGE_HOLD:
             continue
@@ -614,7 +703,7 @@ def draw():
         if key == 'sprint':
             ui.text_wrapped('Experimental sprint-only floor. Restore combined ground speed first. Manual activation only; not an exact speed multiplier.')
             if auto_master.value is True:
-                ui.text('Disable persistent master to use sprint-only mode.')
+                ui.text('Restore All before using this isolated sprint test.')
                 continue
         if key in CAPACITY_KEYS:
             ui.text_wrapped('EXPERIMENTAL: absolute slots, 1 restores original. Use a backup character; do not fill beyond original capacity. Restore before SDU purchase, travel or exit.')
@@ -625,47 +714,17 @@ def draw():
         if key in MANUAL_ONLY - {'sprint'}:
             ui.text_wrapped('Experimental local instance control; gameplay effect unverified. 1x restores. Restore before switching gear or travel.')
             if auto_master.value is True:
-                ui.text('Disable persistent master to use this manual experiment.')
+                ui.text('Restore All before using this isolated experiment.')
                 continue
-        if auto_master.value is True:
-            option = AUTO_OPTIONS[key]
-            changed_auto, selected_auto = ui.checkbox(option.display_name + '##' + option.identifier, option.value is True)
-            if changed_auto and selected_auto is not option.value:
-                set_auto_setting(option, selected_auto)
-            if key == 'reload':
-                edited_event, event = ui.checkbox(RELOAD_EVENT.display_name+'##'+RELOAD_EVENT.identifier, RELOAD_EVENT.value is True)
-                if edited_event: set_auto_setting(RELOAD_EVENT,event)
-                if RELOAD_EVENT.value is True: ui.text_wrapped('Experimental: only observed native reload requests; automatic reload lane must be off. No persistent weapon value writes.')
-            ui.text(name + ': ' + persistent_feature_status(key))
-            continue
         if key in ('damage_taken', 'repair_cooldown', 'fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('EXPERIMENTAL: gameplay effect unverified. Test separately on a backup character.')
         if key in ('repair_cooldown', 'damage_taken'):
             ui.text_wrapped('1x restores baseline. ' + ('Lower duration is faster.' if key == 'repair_cooldown' else 'Lower means less damage taken.'))
+        if key in AUTO_OPTIONS:
+            continue
         if not (_controller is not None and _controller.fault) and ui.button('Activate / Update ' + name + '##activate_' + key):
-            activate_feature(key, _pending.get(key, selected.value))
-        if _controller is not None and key in _controller.records and not _controller.fault:
-            if ui.button('Restore ' + name + '##restore_' + key):
-                if _valid_test_backend() and _monitor_thread == threading.get_ident():
-                    _controller.restore_selected(key, 'F8 restore')
-                else:
-                    request_stop('F8 restore requested outside verified hook', immediate=False)
+            activate_feature(key, displayed_selection(selected))
     ui.separator()
-    if ui.button('Apply and save'):
-        try:
-            apply(_pending)
-            _pending.clear()
-            _status = 'Saved preview settings. No gameplay changes.'
-        except Exception as exc:
-            _status = 'Save failed; check SDK settings before restarting.'
-            print(f'[BL4 Custom] {exc}')
-    ui.same_line()
-    if ui.button('Discard draft'):
-        _pending.clear()
-        _status = 'Draft discarded.'
-    if ui.button('Restore vanilla defaults'):
-        reset()
-    ui.same_line()
     if ui.button('Close menu'):
         close_menu()
         return
@@ -1346,7 +1405,7 @@ def request_stop(reason, *, immediate=False):
     stop_health_pulse(reason)
     stop_automation(reason)
     if _auto_owned or auto_master.value is True:
-        _auto_blocked = reason + '; toggle master to retry'
+        _auto_blocked = reason + '; Restore All, then enable the feature again'
         _auto_ground = None
     cancel_activation(reason)
     if _controller is None or not _controller.records or _controller.fault:
@@ -1473,7 +1532,7 @@ def ground_tick(obj, *_):
                         report_live('HOLD ground admission; retrying: ' + str(exc)[:100])
                         return
                 if not _controller.activate('walk_speed', request[1], ground_sprinting=stance):
-                    _auto_blocked = 'Ground activation failed; toggle master to retry'
+                    _auto_blocked = 'Ground activation failed; Restore All, then enable the feature again'
                 return
             _activation_request = None
             if _controller is None or not _controller.records:
@@ -1482,13 +1541,13 @@ def ground_tick(obj, *_):
         elif active:
             _controller.ground_frame(stance, observed=(pc, pawn, state, eligible))
             if _auto_owned and 'walk_speed' not in _controller.records:
-                _auto_blocked = 'Ground frame stopped; toggle master to retry'
+                _auto_blocked = 'Ground frame stopped; Restore All, then enable the feature again'
                 _auto_ground = None
     except Exception as exc:
         if queued:
             if automatic:
                 _auto_ground = None
-                _auto_blocked = 'Ground callback failed; toggle master to retry'
+                _auto_blocked = 'Ground callback failed; Restore All, then enable the feature again'
             else:
                 cancel_activation('ground callback failed: ' + str(exc)[:100])
         if active:
@@ -1596,7 +1655,7 @@ def activate_feature(key, selection):
         if not mod.is_enabled:
             raise ValueError('mod disabled')
         if auto_master.value is True or _auto_owned or _automation_leases:
-            raise ValueError('disable persistent master and finish automation restoration before manual activation')
+            raise ValueError('Restore All and finish restoration before manual activation')
         if not _valid_menu_backend():
             raise ValueError('verified BLImGui 1.1 hook-based F8 window required')
         if not _offline_confirmed:
@@ -1676,13 +1735,13 @@ def set_auto_setting(option, value):
         edits = dict(_auto_edits) if option is auto_master and value is False else {}
         apply({**edits, option.identifier: value})
     except Exception as exc:
-        _auto_blocked = 'Settings save failed; toggle master to retry'
+        _auto_blocked = 'Settings save failed; Restore All, then enable the feature again'
         if option is auto_master and value is False:
             stop_automation('master save failed')
             auto_master.value = False
             _auto_edits.clear()
             _auto_ground = None
-            report_live('HOLD: master off in memory; saved settings may still be on, check before restart')
+            report_live('HOLD: gameplay off in memory; saved settings may still be on, check before restart')
         report_live('HOLD: ' + str(exc)[:120])
         return
     lane_options={**AUTOMATION_OPTIONS,**NATIVE_AUTO_OPTIONS}
@@ -1733,7 +1792,7 @@ def flush_auto_edits(force=False):
         apply(edits)
         _auto_next = 0.0
     except Exception as exc:
-        _auto_blocked = 'Settings save failed; toggle master to retry'
+        _auto_blocked = 'Settings save failed; Restore All, then enable the feature again'
         report_live('HOLD: ' + str(exc)[:120])
 
 
@@ -1750,7 +1809,7 @@ def pause_auto(reason):
         except Exception:
             # Do not allow a failed disk write to keep gameplay active this run.
             auto_master.value = False
-            report_live('HOLD: master off in memory; settings save failed, check before restart')
+            report_live('HOLD: gameplay off in memory; settings save failed, check before restart')
 
 
 def raw_auto_desired(keys=None):
@@ -1832,7 +1891,7 @@ def fast_slide_admission(selection):
         return
     if not _controller.activate('slide_speed', selection):
         _auto_ground = None
-        _auto_blocked = 'Activation failed: slide_speed; toggle master to retry'
+        _auto_blocked = 'Activation failed: slide_speed; Restore All, then enable the feature again'
 
 
 def fast_reload_handoff(now, observed):
@@ -1868,7 +1927,7 @@ def fast_reload_handoff(now, observed):
     _reload_handoff = None
     if not _controller.activate('reload', selection):
         _auto_ground = None
-        _auto_blocked = 'Activation failed: reload; toggle master to retry'
+        _auto_blocked = 'Activation failed: reload; Restore All, then enable the feature again'
     else:
         _controller.clear_reload_wait()
     return True  # at most one activation attempt per camera callback
@@ -1899,7 +1958,7 @@ def auto_tick():
         permitted = auto_allowed() and not conflicting_mods()
         if not permitted:
             _auto_status = ('HOLD: disable overlapping tuning mods' if auto_allowed() else
-                            'Paused; enable master and saved offline preference')
+                            'Paused; confirm Offline Local Only and enable a feature')
         hooks = sys.modules['unrealsdk'].hooks
         monitor_ok = _monitor_registered and hooks.has_hook(_MONITOR_PATH, hooks.Type.POST_UNCONDITIONAL, _MONITOR_ID) is True
         if permitted and not monitor_ok:
@@ -1952,7 +2011,7 @@ def auto_tick():
         transitioned = _controller.tick(True, observed=observed, follow_weapon=True, follow_shield=True, follow_gadget=True) or set()
         if set(_controller.records) != before - transitioned or _controller.fault:
             _auto_ground = None
-            _auto_blocked = 'Unexpected active field change; toggle master to retry'
+            _auto_blocked = 'Unexpected active field change; Restore All, then enable the feature again'
             _reload_handoff = None
             return
         if 'reload' in transitioned:
@@ -2017,14 +2076,14 @@ def auto_tick():
     if _controller.stop_pending is not None:
         _controller.restore_all('persistent stop pending')
         _auto_ground = None
-        _auto_blocked = 'Stopped; toggle master to retry'
+        _auto_blocked = 'Stopped; Restore All, then enable the feature again'
         return
     _auto_status = 'Eligible solo session; reconciling saved feature settings'
     for key in tuple(_controller.records):
         if key not in desired:
             if not _controller.restore_selected(key, 'persistent feature disabled'):
                 if _controller.records.get(key, {}).get('overfull_warning') and not _controller.fault:
-                    _auto_blocked = 'Capacity restore waiting: remove excess items; toggle master only after restoration'
+                    _auto_blocked = 'Capacity restore waiting: remove excess items; enable features only after restoration'
                     stop_automation('capacity restore waiting')
                     _controller.restore_all('capacity restore waiting')
                 else:
@@ -2118,7 +2177,7 @@ def auto_tick():
                 continue
         if not _controller.activate(key, selection):
             _auto_ground = None
-            _auto_blocked = 'Activation failed: ' + key + '; toggle master to retry'
+            _auto_blocked = 'Activation failed: ' + key + '; Restore All, then enable the feature again'
             return
         if key == 'reload':
             _controller.clear_reload_wait()
@@ -2563,9 +2622,12 @@ def automation_tick():
         _automation_busy = False
 
 def enabled():
+    load_vacuum_preferences()
+    if auto_master.value is True and not any(f.value is True for f in feature_flags()):
+        auto_master.value = False  # legacy ON without any enabled features
     if auto_master.value is True and auto_consent.value is True:
         ensure_monitor()
-    print('[BL4 Custom] v0.7.61-experimental enabled; F8 opens menu. Persistent gameplay requires explicit opt-in.')
+    print('[BL4 Custom] v0.7.61-experimental enabled; F8 opens menu. Enable individual features in F8.')
 
 
 def disabled():
@@ -2580,7 +2642,7 @@ open_key = keybind('open_custom_menu', 'F8', lambda: toggle_menu(), display_name
 options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_press=toggle_menu),
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
-options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Persistent gameplay (experimental)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
+options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Saved gameplay settings (use F8)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
 options += [NestedOption('native_rate_options', [*NATIVE_RATE_OPTIONS.values(),*NATIVE_AUTO_OPTIONS.values()], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
