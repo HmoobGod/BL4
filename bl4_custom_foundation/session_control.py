@@ -1,6 +1,8 @@
 """Single owner of persistent gameplay fields; fail closed on drift or lost context.
 No SDK imports, background threads, raw memory, rewards or save writes.
 """
+from time import monotonic
+
 from .gameplay_fields import FEATURES, RARITY_KEYS, read_fields, target_values, identity, describe_fields, lifesteal_peer_context, validate_overshield, slide_scale, slide_active
 from . import weapon_rates, inventory_capacity, shield_rates, gadget_rates
 
@@ -175,6 +177,8 @@ class Controller:
             if applying and not eligible_now:
                 raise ValueError('inventory session became ineligible')
             inventory_capacity.validate(inv, count, value, applying=applying)
+        if applying and record['key'] == 'reload':
+            weapon_rates.validate_reload_floor(record['weapon_scope'], (value,))
         if values[index] != value:
             owner, field, _, _ = fields[index]
             setattr(owner, field, value)  # exact allowlisted reflected property only
@@ -266,6 +270,7 @@ class Controller:
             if self.stop_pending is not None:
                 raise ValueError('restoration pending')
             record = self.records.get(key) or self.capture(key)
+            record.pop('reload_watch', None)
             _, values, eligible = self.resolve(record)
             # Ground animation maintenance already accepts the captured baseline
             # as an engine reset. Allow the same exact reset during a live update,
@@ -362,6 +367,39 @@ class Controller:
         finally:
             self.busy = False
 
+    def reload_tick_values(self, record, observed):
+        """Full metadata re-audit every 100 ms; live read-only checks each callback.
+
+        Fast observations cannot authorize a write or restore. Any mismatch
+        immediately falls back to the existing full resolution path.
+        """
+        now = monotonic()
+        pc, pawn, state, eligible = observed
+        witness = record.get('reload_watch')
+        if witness is not None and eligible and witness[0] <= now < witness[0] + .1:
+            try:
+                if self.thread() != record['thread'] or any(
+                    record[name]() is None or identity(record[name]()) != record[name+'_id']
+                    or obj is None or identity(obj) != record[name+'_id']
+                    for name,obj in (('pc',pc),('pawn',pawn),('state',state))):
+                    raise ValueError('reload scope changed')
+                schema, values = weapon_rates.reload_watch(pawn, record['weapon_scope'], record['tokens'])
+                if schema == witness[1] and values == record['expected']:
+                    return values, True
+            except Exception:
+                pass  # Never trust an uncertain fast observation.
+        record.pop('reload_watch', None)
+        _, values, eligible = self.resolve(record, observed=observed)
+        if eligible:
+            weapon_rates.validate_reload_floor(record['weapon_scope'], values)
+            try:
+                schema, checked = weapon_rates.reload_watch(pawn, record['weapon_scope'], record['tokens'])
+                if checked == values:
+                    record['reload_watch'] = (now, schema)
+            except Exception:
+                pass  # Unsupported lightweight observation retains full audit.
+        return values, eligible
+
     def tick(self, permitted, *, observed=None, follow_weapon=False, follow_shield=False, follow_gadget=False):
         if self.busy or not self.records or self.fault:
             return
@@ -379,7 +417,11 @@ class Controller:
                 return
             for key, record in tuple(self.records.items()):
                 try:
-                    _, values, eligible = self.resolve(record, observed=observed)
+                    light_reload = key == 'reload' and follow_weapon
+                    if light_reload:
+                        values, eligible = self.reload_tick_values(record, observed)
+                    else:
+                        _, values, eligible = self.resolve(record, observed=observed)
                     if not eligible:
                         if observed[3] and key == 'slide_speed':
                             if not self.restore(key, 'slide ended; original restored'):
@@ -417,7 +459,7 @@ class Controller:
                         raise ValueError('overshield base changed')
                     if key in weapon_rates.AMMO_KEYS:
                         weapon_rates.validate_ammo(record['weapon_scope'])
-                    if key == 'reload':
+                    if key == 'reload' and not light_reload:
                         weapon_rates.validate_reload_floor(record['weapon_scope'], values)
                     if values != record['expected'] and not (key in GROUND_KEYS and values == record['baseline']):
                         self.restore_all('engine or another writer changed active field; no reapply')

@@ -205,6 +205,10 @@ from test_weapon_workload import WeaponWorkload
 for name in WeaponWorkload.__dict__:
     if name.startswith("test_"):
         t=WeaponWorkload(name);unique[t.id()]=t
+from test_reload_fps import ReloadFPS
+for name in ReloadFPS.__dict__:
+    if name.startswith("test_"):
+        t=ReloadFPS(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

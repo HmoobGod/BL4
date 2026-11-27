@@ -2,6 +2,7 @@
 Historical GbxWeapon declarations support firerate/ReloadTime; actual game
 consumption and reflection remain unverified. Identity tokens are not dereferenced.
 """
+import math
 import re
 
 AMMO_KEYS = frozenset(('ammo_regen_rate', 'ammo_regen_delay'))
@@ -122,6 +123,13 @@ def matching_behavior(w, key, index):
     arr = w.behaviors
     if not 0 < len(arr) <= 256:
         raise ValueError('unexpected weapon behavior count')
+    return matching_behavior_entries(w, key, index, arr)
+
+
+def matching_behavior_entries(w, key, index, arr):
+    """Fresh behavior membership; metadata checked separately by full resolver."""
+    if not 0 < len(arr) <= 256:
+        raise ValueError('unexpected weapon behavior count')
     found = {}
     for b in arr:
         if b is None:
@@ -209,3 +217,44 @@ def validate_ammo(scope):
     w, b = scope['weapon'](), scope['behavior']()
     matching_behavior(w, 'reload', scope['mode'])
     pair(nested(b, 'RegenRate', 'GbxAttributeFloat'))
+
+
+def reload_watch(pawn, scope, field_tokens):
+    """Read-only steady reload observation; full descriptor audit is external.
+
+    No cached UObject/descriptor/permission, no write target returned. All live
+    membership, owner, mode, pending, field identity, scalar and floor checks
+    run each callback. A changed schema identity requires the full resolver.
+    """
+    w, b = scope['weapon'](), scope['behavior']()
+    if live(w) != scope['weapon_id'] or live(b) != scope['behavior_id']:
+        raise ValueError('original weapon or behavior lost')
+    active = pawn.ActiveWeapons
+    entries = active.Slots
+    if not 0 < len(entries) <= 32:
+        raise ValueError('unexpected active slot count')
+    slot_types = tuple(token(slot._type) for slot in entries)
+    if any(slot.PendingWeapon is not None or slot.ClientPredictedPendingWeapon is not None for slot in entries):
+        raise ValueError('weapon transition pending')
+    found = weapons_from_entries(entries)
+    owned_weapon(w, pawn, observed_slots=found)
+    candidates = [wid for wid, obj in found.items() if str(obj.CurrentState) in STATES]
+    if candidates != [scope['weapon_id']] or mode(w) != scope['mode']:
+        raise ValueError('active weapon or mode changed')
+    current = matching_behavior_entries(w, 'reload', scope['mode'], w.behaviors)
+    if live(current) != scope['behavior_id']:
+        raise ValueError('original behavior changed')
+    reload, minimum = current.ReloadTime, current.MinReloadTime
+    schema = (token(active._type), slot_types, token(w.Class), token(current.Class),
+              token(reload._type), token(minimum._type), token(minimum))
+    if tuple((token(reload), name) for name in ('Value', 'BaseValue')) != tuple((i,n) for i,n,_ in field_tokens):
+        raise ValueError('reflected field identity changed')
+    values = (reload.Value, reload.BaseValue)
+    floor = (minimum.Value, minimum.BaseValue)
+    if any(type(v) not in (int,float) or not math.isfinite(v) or not 0 < v <= 1e6 for v in values):
+        raise ValueError('invalid reload value')
+    if any(type(v) not in (int,float) or not math.isfinite(v) or not 0 <= v <= 1e6 for v in floor):
+        raise ValueError('invalid reload minimum')
+    if min(values) < max(floor):
+        raise ValueError('reload target below native minimum')
+    return schema, tuple(float(v) for v in values)
