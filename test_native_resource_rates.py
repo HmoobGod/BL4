@@ -212,7 +212,7 @@ class NativeRateTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.R.trial_amount(mode,selection)
     def test_native_rate_options_default_inert(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration'})
+        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive'})
         self.assertTrue(all(o.value==1. for o in m.NATIVE_RATE_OPTIONS.values()))
         self.assertFalse(self.native)
 
@@ -228,7 +228,7 @@ class NativeRateTests(unittest.TestCase):
 
     def test_persistent_native_rates_default_off(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration'})
+        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_vaultregen','native_rate_vaultdelay','native_rate_vaultdepleted','native_rate_shieldpassive'})
         self.assertTrue(all(o.value is False for o in m.NATIVE_AUTO_OPTIONS.values()))
 
     def test_persistent_native_skill_and_refill_mutually_exclusive(self):
@@ -294,7 +294,7 @@ class NativeRateTests(unittest.TestCase):
         m=self.base.m
         for mode in ('health','cooldown','duration'):
             m.NATIVE_AUTO_OPTIONS['native_rate_'+mode].value=True;m.NATIVE_RATE_OPTIONS[mode].value=2.
-        self.assertTrue(all(m.native_rate_allowed(k,2.) for k in m.NATIVE_AUTO_OPTIONS))
+        self.assertTrue(all(m.native_rate_allowed('native_rate_'+k,2.) for k in ('health','cooldown','duration')))
         m.NATIVE_AUTO_OPTIONS['native_rate_cooldown'].value=False
         self.assertFalse(m.native_rate_allowed('native_rate_cooldown',2.));self.assertTrue(m.native_rate_allowed('native_rate_duration',2.))
 
@@ -318,10 +318,10 @@ class NativeRateTests(unittest.TestCase):
             lane=self.R.NativeRateTrial(mode,binding,lambda:((self.pc,self.pawn,self.world),(mode,),object()),lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:m.native_rate_allowed(kind,2.),selection=2.,continuous=True)
             lanes[kind]=lane;return lane
         m.make_automation_lane=factory
-        for kind,flag in m.NATIVE_AUTO_OPTIONS.items():
-            flag.value=True;m.NATIVE_RATE_OPTIONS[kind.rsplit('_',1)[1]].value=2.
+        for mode in ('health','cooldown','duration'):
+            m.NATIVE_AUTO_OPTIONS['native_rate_'+mode].value=True;m.NATIVE_RATE_OPTIONS[mode].value=2.
         for _ in range(5):self.now+=.3;m.automation_tick()
-        self.assertEqual(set(lanes),set(m.NATIVE_AUTO_OPTIONS));self.assertTrue(all(l.phase=='active' for l in lanes.values()))
+        self.assertEqual(set(lanes),{'native_rate_health','native_rate_cooldown','native_rate_duration'});self.assertTrue(all(l.phase=='active' for l in lanes.values()))
         self.assertEqual(rates,{'health':.002,'cooldown':8.,'duration':2.})
         m.NATIVE_AUTO_OPTIONS['native_rate_cooldown'].value=False
         for _ in range(2):self.now+=.3;m.automation_tick()

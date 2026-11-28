@@ -29,14 +29,21 @@ CONTAGION_MODE='contagion_cooldown'
 CONTAGION_RESOURCE='Resource_Corpohacker_ActionSkill_Contagion_Cooldown'
 CONTAGION_AUX='Resource_Corpohacker_ActionSkill_Contagion_ExecutableCooldown'
 CONTAGION_PEER='Att_Corpohacker_ActionSkill_Contagion_Executable_CooldownRate'
+VAULT_RESOURCE='Vault_Power'
+VAULT_MODES=frozenset(('vaultregen','vaultdelay','vaultdepleted'))
+VAULT_TOOLTIP={'vaultregen':'vault_power_resource_on_idle_regen_tooltip','vaultdelay':'vault_power_resource_on_idle_regen_delay_tooltip'}
 WEAPON_CONTEXT='/Script/GbxWeapon.WeaponAttributeContextResolver'
 WEAPON_FIRE='/Script/GbxWeapon.WeaponBehavior_Fire'
 # Name, native property, exact context, selector, modifier, bounded experiment.
 TARGETS={
+    'vaultregen': ('vault_power_resource_on_idle_regen','OnIdleRegenerationRate',HEALTH_CONTEXT,VAULT_RESOURCE,'ScaleMultiply',2.),
+    'vaultdelay': ('vault_power_resource_on_idle_regen_delay','OnIdleRegenerationDelay',HEALTH_CONTEXT,VAULT_RESOURCE,'ScaleMultiply',.5),
+    'vaultdepleted': ('vault_power_resource_on_depleted_idle_regen_delay','OnDepletedIdleRegenerationDelay',HEALTH_CONTEXT,VAULT_RESOURCE,'ScaleMultiply',.5),
     FORGE_MODE: ('Att_PLD_ForgeSkill_Pool_Cooldown_Rate','ActiveRegenerationRate',HEALTH_CONTEXT,FORGE_RESOURCE,'ScaleMultiply',2.),
     CONTAGION_MODE: ('Att_Corpohacker_ActionSkill_Contagion_Contagion_CooldownRate','ActiveRegenerationRate',HEALTH_CONTEXT,CONTAGION_RESOURCE,'ScaleMultiply',2.),
     WEAPON_MODE: ('weapon_damage','Damage',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
+    'shieldpassive': ('shield_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Shield','PostAdd',.001),
     'health': ('health_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'missing_health': ('health_resource_passive_missing_pct_regen','PassiveMissingPercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'shield_idle_rate': ('shield_resource_idle_regen_rate','OnIdleRegenerationRate',HEALTH_CONTEXT,'Shield','ScaleMultiply',2.),
@@ -45,8 +52,10 @@ TARGETS={
     'duration': ('Att_PlayerShared_ActionSkill_Pool_Duration_Rate','ConsumptionRate',SKILL_CONTEXT,'Duration','ScaleMultiply',.5),
 }
 HEALTH_MODES=frozenset(('health','missing_health'))
-SHIELD_MODES=frozenset(('shield_idle_rate','shield_idle_delay'))
-RESOURCE_MODES=HEALTH_MODES | SHIELD_MODES
+SHIELD_PASSIVE_MODE='shieldpassive'
+SHIELD_MODES=frozenset(('shield_idle_rate','shield_idle_delay',SHIELD_PASSIVE_MODE))
+ADDITIVE_MODES=HEALTH_MODES | {SHIELD_PASSIVE_MODE}
+RESOURCE_MODES=HEALTH_MODES | SHIELD_MODES | VAULT_MODES
 SPECS={
     'GetValueOfAttribute':(('AttributeDef','ZNameProperty'),('ContextSource','ZObjectProperty'),('DefaultValue','ZFloatProperty'),('ReturnValue','ZFloatProperty')),
     'AddModifierToGbxAttribute':(('attribute','ZGbxDefPtrProperty'),('ContextSource','ZObjectProperty'),('ModifierType','ZEnumProperty'),('modifiervalue','ZFloatProperty'),('bAutoRefresh','ZBoolProperty'),('ModifierActionResult','ZEnumProperty'),('ReturnValue','ZStructProperty')),
@@ -70,6 +79,14 @@ def trial_amount(mode,selection=None):
         if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<selection<=10:
             raise ValueError('choose gear luck above 1x through 10x')
         return selection
+    if mode in VAULT_MODES:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<selection<=5:
+            raise ValueError('choose Vault Power speed above 1x through 5x')
+        return selection if mode=='vaultregen' else 1./selection
+    if mode==SHIELD_PASSIVE_MODE:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<selection<=5:
+            raise ValueError('choose shield passive increment above 1x through 5x')
+        return .001*selection
     if mode in SHIELD_MODES:
         if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=3 or selection==1:
             raise ValueError('choose .5–3x shield speed other than 1x')
@@ -172,11 +189,33 @@ class NativeBinding:
         if str(element.PropertyName)!=field or element.bUsesArrayIndex is not False:raise ValueError('native parsed path disagrees with rate property')
         return d,(identity(d),identity(d._type),identity(c._type),identity(v._type),field,context_key)
 
+    def vault_tooltip(self,mode,pawn,ht,expected_resource):
+        # A distinct native value resolver is read-only and corroborates the
+        # property resolver, not a second modifier or a shared definition write.
+        name=VAULT_TOOLTIP[mode];field=TARGETS[mode][1]
+        d=self.def_type(name,self.attr_type,True)
+        if type(d) is not self.def_type or d._name!=name or identity(d._type)!=identity(self.attr_type):
+            raise ValueError('Vault Power tooltip unavailable')
+        for key in ('Context','Value'):prop(d._type,key,'ZGbxInlineStructProperty')
+        c,v=d.Context,d.Value
+        if c._type._path_name()!=HEALTH_CONTEXT or v._type._path_name()!='/Script/GbxGame.GameResourcePoolValueResolver':
+            raise ValueError('Vault Power tooltip resolver mismatch')
+        for item in (c,v):
+            h=item.ResourceDef;desc=prop(item._type,'ResourceDef','ZGameDataHandleProperty')
+            if type(h) is not ht or (h._name,h._type_handle)!=expected_resource or desc.TypeHandle!=h._type_handle:
+                raise ValueError('Vault Power tooltip resource mismatch')
+        if prop(v._type,'ValueType','ZEnumProperty').Enum._path_name()!='/Script/GbxGame.EGameResourcePoolValueType' or enum_name(v.ValueType)!=field:
+            raise ValueError('Vault Power tooltip value type mismatch')
+        value=numeric(self.calls['GetValueOfAttribute'](name,pawn,-123456.))
+        if not 0<value<=1e4 or not close(value,self.read(mode,pawn)):
+            raise ValueError('Vault Power tooltip and native property disagree')
+        return (identity(d),identity(c._type),identity(v._type),handle_identity(c.ResourceDef),handle_identity(v.ResourceDef))
+
     def read(self,mode,pawn):
         value=numeric(self.calls['GetValueOfAttribute'](TARGETS[mode][0],pawn,-123456.))
-        if not (0<=value<=(1e6 if mode==WEAPON_MODE else 1e4) if mode not in HEALTH_MODES else 0<=value<=.1):
+        if not (0<=value<=(1e6 if mode==WEAPON_MODE else 1e4) if mode not in ADDITIVE_MODES else 0<=value<=.1):
             raise ValueError('native rate unresolved or outside conservative range')
-        if mode not in HEALTH_MODES and value<=0:raise ValueError('positive native skill rate required')
+        if mode not in ADDITIVE_MODES and value<=0:raise ValueError('positive native skill rate required')
         return value
 
     def valid_handle(self,h):
@@ -217,7 +256,7 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
-        if mode in SHIELD_MODES | {'missing_health',LUCK_MODE,WEAPON_MODE} and continuous:
+        if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health',LUCK_MODE,WEAPON_MODE} and continuous:
             raise ValueError('native rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)
@@ -257,7 +296,7 @@ class NativeRateTrial:
     def target_value(self,base):
         modifier=TARGETS[self.mode][-2];amount=trial_amount(self.mode,self.selection)
         expected=base+amount if modifier=='PostAdd' else base*amount
-        if not 0<expected<=(.1 if self.mode in HEALTH_MODES else 1e6 if self.mode==WEAPON_MODE else 1e4):raise ValueError('native trial target outside conservative bound')
+        if not 0<expected<=(.1 if self.mode in ADDITIVE_MODES else 1e6 if self.mode==WEAPON_MODE else 1e4):raise ValueError('native trial target outside conservative bound')
         return expected
 
     def begin(self):
@@ -442,6 +481,8 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
     parsed-path mapping; this does not assert actual timing or rate units.
     """
     shield_scope=None
+    vault_scope=None
+    vault_max=None
     def check_recovery_eligibility(pawn):
         from .weapon_rates import nested
         health=nested(pawn,'HealthState','OakCharacterHealthState')
@@ -449,7 +490,7 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
         if enum_name(pawn.HealthCondition) not in (None,'Healthy') or health.bCurrentlyDead is True or type(disabled) is int and disabled!=0:
             raise EligibilityLost('native recovery state no longer eligible')
     def resolve(include_peer=True,cleanup_only=False):
-        nonlocal shield_scope
+        nonlocal shield_scope,vault_scope,vault_max
         pc,pawn,state,ok=context()
         if ok is False and not cleanup_only:
             raise EligibilityLost('local native rate eligibility ended')
@@ -481,6 +522,42 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                 if identity(peer)==identity(d) or handle_identity(peer.Context.ResourceDef)!=handle_identity(d.Context.ResourceDef):
                     raise ValueError('missing-health and ordinary rate must be distinct on the same Health resource')
                 pool_key=(*pool_key,peer_key,binding.read('health',pawn))
+        elif mode in VAULT_MODES:
+            from .weapon_rates import nested
+            if not cleanup_only:check_recovery_eligibility(pawn)
+            comp=pawn.CharacterMovement
+            if (comp is None or comp.Class._path_name()!='/Script/OakGame.OakCharacterMovementComponent'
+                    or 'Default__' in comp._path_name() or identity(comp.OakCharacterOwner)!=identity(pawn)
+                    or identity(pc.Pawn)!=identity(pawn)):
+                raise ValueError('original local Vault Power movement component required')
+            for member in ('CharacterOwner','PawnOwner'):
+                owner=getattr(comp,member,None)
+                if owner is not None and identity(owner)!=identity(pawn):raise ValueError('Vault Power movement owner mismatch')
+            vs=nested(comp,'VaultPowerState','VaultPowerState')
+            if vs._type._path_name()!='/Script/OakGame.VaultPowerState':raise ValueError('Vault Power state schema mismatch')
+            res=d.Context.ResourceDef
+            if type(res) is not ht or res._type_handle!=health_readers[2]:raise ValueError('Vault Power resource type mismatch')
+            objs=(pc,pawn,state,comp)
+            pool_key=(identity(vs),handle_identity(res))
+            candidate=(tuple(identity(o) for o in objs),def_key,pool_key)
+            if vault_scope is not None and candidate!=vault_scope:raise ValueError('original Vault Power state changed')
+            if include_peer:
+                cur=numeric(health_readers[0](pawn,res));ratio=numeric(health_readers[1](pawn,res))
+                if cur>0 and 0<ratio<=1 and 0<cur/ratio<=1e9:
+                    maximum=cur/ratio
+                    if vault_max is not None and not math.isclose(maximum,vault_max,rel_tol=.005):
+                        raise ValueError('Vault Power inferred maximum changed')
+                elif cur==ratio==0 and vault_scope is not None and vault_max is not None:
+                    maximum=vault_max
+                else:raise ValueError('positive native Vault Power pool witness unavailable')
+                # Both independently decoded tooltip selectors must agree with
+                # their property getter. No peer values pinned (independent lanes).
+                peer=tuple(binding.vault_tooltip(m,pawn,ht,(res._name,res._type_handle)) for m in VAULT_TOOLTIP)
+                if identity(pawn.CharacterMovement)!=identity(comp) or identity(nested(comp,'VaultPowerState','VaultPowerState'))!=identity(vs):
+                    raise ValueError('Vault Power component changed during readback')
+                pool_key=(*pool_key,peer)
+            if vault_scope is None and not cleanup_only and include_peer:
+                vault_scope=candidate;vault_max=maximum
         elif mode in SHIELD_MODES:
             if not cleanup_only:check_recovery_eligibility(pawn)
             shield,pool_key=local_shield_target(pawn,d,ht,health_readers,shield_getter,allow_empty=shield_scope is not None,cleanup_only=cleanup_only)

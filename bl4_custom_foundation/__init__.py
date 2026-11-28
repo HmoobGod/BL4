@@ -115,7 +115,7 @@ _crossfire_attempted = False
 SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct replacement '+k.replace('_',' ')+' (experimental)') for k in SKILL_ADAPTIVE}
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
 NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=.1,is_integer=False,display_name=label)
-                       for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'))}
+                       for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'),('vaultregen','Vault Power recharge speed'),('vaultdelay','Vault Power idle delay speed'),('vaultdepleted','Vault Power depleted delay speed'),('shieldpassive','Native passive shield increment (x 0.001)'))}
 NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name='Enable native '+k+' rate (experimental)') for k in NATIVE_RATE_OPTIONS}
 ALL = PREVIEW + list(NATIVE_AUTO_OPTIONS.values()) + list(NATIVE_RATE_OPTIONS.values()) + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
@@ -563,6 +563,10 @@ def draw():
         edited, selected = ui.slider_float(DOUBLE_JUMP_RATE.display_name+'##'+DOUBLE_JUMP_RATE.identifier,float(displayed_selection(DOUBLE_JUMP_RATE)),.5,2.,'%.1fx')
         if edited: queue_auto_edit(DOUBLE_JUMP_RATE,selected)
         ui.text('double_jump: '+(_automation_status.get('double_jump','Waiting') if feature_enabled(option) else 'Off'))
+        if 'Vault Power' in visible_action_panels(ui,4,('Movement','Vault Power')):
+            ui.text_wrapped('Vault Power native recharge (experimental): individual persistent toggles; 1x restores. Higher delay speed shortens delay. No refill or cost changes.')
+            for mode in ('vaultregen','vaultdelay','vaultdepleted'):
+                native_rate_selection(ui,mode)
         ui.text_wrapped('Experimental second-jump velocity only; actual height unverified. Land before use; toggle lane to rearm after changing scale. First jump and shared goals unchanged.')
     if _category == 5:
         panels = visible_action_panels(ui, 5, ('Loot Vacuum', 'Automatic reload'))
@@ -661,6 +665,8 @@ def draw():
                 selected=displayed_selection(_PREVIEW_BY_KEY[key])
                 if selected!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native shield pool '+mode.removeprefix('shield_idle_')+' ('+str(selected)+'x, 10 sec)'):
                     activate_feature('native_rate_'+mode,selected)
+            native_rate_selection(ui,'shieldpassive')
+            ui.text_wrapped('Passive shield rate is separate from idle recharge and refill; toggle ON with a selection above 1x. Actual rate units unverified.')
             ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
                 activate_feature('shield_pulse', 1.0)
@@ -1375,7 +1381,7 @@ def begin_blackboard_reward(key, selection):
 
 def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
-                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, LUCK_MODE, WEAPON_MODE, CONTAGION_MODE, FORGE_MODE, FORGE_RESOURCE, bind_health_readers, make_local_resolver, original_pool_identity)
+                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, SHIELD_PASSIVE_MODE, LUCK_MODE, WEAPON_MODE, CONTAGION_MODE, FORGE_MODE, FORGE_RESOURCE, bind_health_readers, make_local_resolver, original_pool_identity)
     from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent, bind_direct_cooldown
     if mode not in TARGETS or mode in (WEAPON_MODE,CONTAGION_MODE,FORGE_MODE) or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
@@ -1396,7 +1402,7 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     readers=None;skill=None
     shield_getter=None
-    if mode in SHIELD_MODES | {'missing_health',LUCK_MODE} and persistent:raise ValueError('native rate trial is manual only')
+    if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health',LUCK_MODE} and persistent:raise ValueError('native rate trial is manual only')
     if mode in RESOURCE_MODES:
         readers=bind_health_readers(functions,loot_bound)
         if mode in SHIELD_MODES:
@@ -1929,6 +1935,9 @@ def auto_desired():
     native_health=_automation_leases.get('native_rate_health')
     if native_health is not None and (native_health.record is not None or native_health.fault):
         desired={k:v for k,v in desired.items() if k not in LIFE_KEYS|{'healing_received'}}
+    native_shield=_automation_leases.get('native_rate_shieldpassive')
+    if native_shield is not None and (native_shield.record is not None or native_shield.fault):
+        desired={k:v for k,v in desired.items() if k not in SHIELD_KEYS|{'healing_received'}}
     return desired
 
 
@@ -2418,7 +2427,7 @@ def jump_event_tick(obj,*_):
 
 
 def recovery_conflict(kind):
-    counterpart={'health':'native_rate_health','skill_cooldown':'native_rate_cooldown','skill_duration':'native_rate_duration'}.get(kind)
+    counterpart={'health':'native_rate_health','shield':'native_rate_shieldpassive','skill_cooldown':'native_rate_cooldown','skill_duration':'native_rate_duration'}.get(kind)
     if counterpart and (NATIVE_AUTO_OPTIONS[counterpart].value is True or counterpart in _automation_leases):
         return 'choose native rate OR corresponding refill assist'
     if kind not in ('health', 'shield'):
@@ -2493,6 +2502,10 @@ def native_rate_allowed(kind,selection):
     if NATIVE_AUTO_OPTIONS[kind].value is not True or normalize(option,option.value)!=selection:
         return False
     if mode!='health' and selection<=1.:return False
+    if mode in ('vaultregen','vaultdelay','vaultdepleted'):return True
+    if mode=='shieldpassive':
+        active=set(_controller.records) if _controller is not None else set()
+        return not (AUTOMATION_OPTIONS['shield'].value is True or 'shield' in _automation_leases or (SHIELD_KEYS|{'healing_received'}).intersection(set(raw_auto_desired())|active))
     counterpart='health' if mode=='health' else 'skill_'+mode
     if AUTOMATION_OPTIONS[counterpart].value is True or counterpart in _automation_leases:return False
     if mode=='health':
