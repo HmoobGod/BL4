@@ -62,14 +62,16 @@ def count(v):
 
 
 class ReloadAssist:
-    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False,session_mode=False):
+    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False,session_mode=False,track_outstanding_on_swap=False):
         self.context,self.weak,self.api,self.fn=context,weak,api,fn
         self.continuous=continuous
         self.session_mode=session_mode and continuous
+        self.track_outstanding_on_swap=bool(track_outstanding_on_swap) and self.session_mode
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
         self.recent=deque();self.swap_paused=False;self.reserve_paused=False
         self.event_live=lambda:False;self.event_start=None;self.event_complete=False;self.event_busy=False
+        self._outstanding={}
         self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
 
     def reset_event(self):
@@ -80,36 +82,69 @@ class ReloadAssist:
                     and self.event_start[0]() is not None and identity(self.event_start[0]())==self.event_start[1])
         except Exception:return False
 
+    def _park_outstanding(self, refs, key):
+        if len(refs)!=7 or len(self._outstanding)>=8:
+            raise ValueError('cannot park unresolved reload receipt')
+        self._outstanding[key[0][3]]={
+            'refs':refs,'key':key,'deadline':self.completion_deadline,
+            'saw_reload':self.saw_reload,'event_start':self.event_start,
+            'event_complete':self.event_complete,'cancelled':False,
+        }
+        self.waiting=False;self.saw_reload=False;self.completion_samples=0
+        self.completion_deadline=0;self.reset_event()
+
+    def _observe_parked(self, collector, weapon, flag, started, wid, tid, end):
+        parked=self._outstanding.get(wid)
+        if parked is None:return
+        refs=parked['refs'];key=parked['key']
+        if (self.clock()>=min(end,parked['deadline'])
+                or refs[3]() is None or identity(refs[3]())!=key[0][3]):
+            parked['cancelled']=True;return
+        cid=live(collector)
+        if started:
+            if parked['event_start'] is not None:
+                parked['event_start']=();parked['event_complete']=False;parked['cancelled']=True;return
+            parked['event_start']=(self.weak(collector),cid)
+        elif parked['event_start'] and not parked['event_complete']:
+            ref,original=parked['event_start']
+            if cid!=original or ref() is None or identity(ref())!=original:return
+            if flag is True:parked['event_complete']=True
+            else:parked['event_start']=();parked['cancelled']=True
+
     def observe_reload(self, collector, weapon, flag, started):
         """Read-only paired native notification; never dispatch or rearm here."""
-        if (not self.session_mode or self.record is None or not self.waiting
+        if (not self.session_mode or self.record is None
+                or (not self.waiting and not self._outstanding)
                 or self.event_busy or self.fault or type(flag) is not bool):return
         self.event_busy=True
         try:
             snapshot=self.record;refs,key,tid,end,_=snapshot
-            if (self.thread()!=tid or self.clock()>=min(end,self.completion_deadline)
-                    or self.event_live() is not True or len(refs)!=7
-                    or live(weapon)!=key[0][3] or refs[3]() is None
-                    or identity(refs[3]())!=key[0][3]
+            if (self.thread()!=tid or self.event_live() is not True
                     or collector.Class._path_name()!=EVENT_OWNER):return
-            pc,pawn,state=self.session_owner()
-            w=active_weapon(pawn);index=mode(w)
-            objects=(pc,pawn,state,w,matching_behavior(w,'reload',index),
-                     matching_behavior(w,'ammo_regen_rate',index),matching_behavior(w,'fire_rate',index))
-            if ((tuple(identity(o) for o in objects),index)!=key
-                    or any(r() is None or identity(r())!=i for r,i in zip(refs,key[0],strict=True))
-                    or self.record is not snapshot or not self.waiting):return
-            cid=live(collector)
-            if started:
-                # One start per outstanding request. Ambiguous repeated starts invalidate the witness.
-                if self.event_start is not None:
-                    self.event_start=();self.event_complete=False;return
-                self.event_start=(self.weak(collector),cid)
-            elif self.event_start and not self.event_complete:
-                ref,original=self.event_start
-                if cid!=original or ref() is None or identity(ref())!=original:return
-                self.event_complete=flag is True
-                if not flag:self.event_start=()
+            wid=live(weapon)
+            if self.waiting and len(refs)==7 and wid==key[0][3]:
+                if (self.clock()>=min(end,self.completion_deadline)
+                        or refs[3]() is None or identity(refs[3]())!=key[0][3]):return
+                pc,pawn,state=self.session_owner()
+                w=active_weapon(pawn);index=mode(w)
+                objects=(pc,pawn,state,w,matching_behavior(w,'reload',index),
+                         matching_behavior(w,'ammo_regen_rate',index),matching_behavior(w,'fire_rate',index))
+                if ((tuple(identity(o) for o in objects),index)!=key
+                        or any(r() is None or identity(r())!=i for r,i in zip(refs,key[0],strict=True))
+                        or self.record is not snapshot or not self.waiting):return
+                cid=live(collector)
+                if started:
+                    # One start per outstanding request. Ambiguous repeated starts invalidate the witness.
+                    if self.event_start is not None:
+                        self.event_start=();self.event_complete=False;return
+                    self.event_start=(self.weak(collector),cid)
+                elif self.event_start and not self.event_complete:
+                    ref,original=self.event_start
+                    if cid!=original or ref() is None or identity(ref())!=original:return
+                    self.event_complete=flag is True
+                    if not flag:self.event_start=()
+            elif self.track_outstanding_on_swap and wid in self._outstanding:
+                self._observe_parked(collector,weapon,flag,started,wid,tid,end)
         except Exception:
             self.reset_event()
         finally:self.event_busy=False
@@ -178,13 +213,13 @@ class ReloadAssist:
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),float("inf") if self.session_mode else now+30,now+.1)
             self.previous=None if waiting else loaded;self.empty_seen=False
             self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
-            self.reset_event();self.recent.clear();self.swap_paused=waiting;self.reserve_paused=False
+            self.reset_event();self._outstanding.clear();self.recent.clear();self.swap_paused=waiting;self.reserve_paused=False
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
         self.report('EXPERIMENT: session reload armed (ten requests per rolling 30s; supported idle swaps)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
     def stop(self,reason):
         if self.record is not None:
-            self.record=None;self.previous=None;self.empty_seen=False;self.reset_event()
+            self.record=None;self.previous=None;self.empty_seen=False;self.reset_event();self._outstanding.clear()
             self.report('STOP: auto reload '+reason+'; an already started normal reload is not cancelled')
 
     def session_sample(self, snapshot):
@@ -200,7 +235,9 @@ class ReloadAssist:
                 or self.api[2](pawn) is not True):
             raise ValueError('original reload session changed')
         if self.waiting_for_weapon(pawn):
-            if self.waiting:raise ValueError('swap during unconfirmed reload')
+            if self.waiting:
+                if not self.track_outstanding_on_swap:raise ValueError('swap during unconfirmed reload')
+                self._park_outstanding(refs,key)
             if self.record is snapshot:
                 self.swap_paused=True;self.previous=None;self.empty_seen=False
                 self.record=(refs,key,tid,end,self.clock()+.1)
@@ -219,12 +256,29 @@ class ReloadAssist:
         if not changed and any(r() is None or identity(r())!=i for r,i in zip(refs[3:],key[0][3:],strict=True)):
             raise ValueError('original weapon identity lost')
         if changed or self.swap_paused:
-            if self.waiting:raise ValueError('swap during unconfirmed reload')
+            if self.waiting:
+                if not self.track_outstanding_on_swap:raise ValueError('swap during unconfirmed reload')
+                self._park_outstanding(refs,key)
             if native_state not in STATES:raise ValueError('unsupported replacement state')
             new_refs=tuple(self.weak(o) for o in objs)
             if self.record is not snapshot:return None
             if tuple(identity(o) for o in self.session_owner())!=fresh_key[0][:3]:raise ValueError('session changed during weapon admission')
             if self.record is not snapshot:return None
+            wid=fresh_key[0][3]
+            if self.track_outstanding_on_swap and wid in self._outstanding:
+                parked=self._outstanding.pop(wid)
+                if (parked['key']!=fresh_key or parked['cancelled']
+                        or self.clock()>=parked['deadline']
+                        or any(r() is None or identity(r())!=i for r,i in zip(parked['refs'],fresh_key[0],strict=True))):
+                    raise ValueError('outstanding weapon reload receipt expired or cancelled')
+                self.record=(parked['refs'],parked['key'],tid,end,self.clock()+.1)
+                self.waiting=True;self.saw_reload=parked['saw_reload']
+                self.completion_deadline=parked['deadline']
+                self.event_start=parked['event_start'];self.event_complete=parked['event_complete']
+                self.completion_samples=0;self.previous=None;self.empty_seen=False
+                self.swap_paused=False;self.reserve_paused=False
+                self.report('EXPERIMENT: restored outstanding reload receipt on original weapon')
+                return None
             ready=native_state=='Active' and loaded>0 and min(reserve)>0
             self.record=(new_refs,fresh_key,tid,end,self.clock()+.1)
             self.previous=None;self.empty_seen=False;self.swap_paused=not ready;self.reserve_paused=False

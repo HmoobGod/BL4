@@ -339,6 +339,22 @@ from test_reload_notifications import ReloadNotifications
 for name in ReloadNotifications.__dict__:
     if name.startswith("test_"):
         t=ReloadNotifications(name);unique[t.id()]=t
+from test_reload_outstanding_swap import ReloadOutstandingSwapTests
+for name in ReloadOutstandingSwapTests.__dict__:
+    if name.startswith('test_'):
+        t=ReloadOutstandingSwapTests(name);unique[t.id()]=t
+from test_gear_pickup import GearPickupTests
+for name in GearPickupTests.__dict__:
+    if name.startswith('test_'):
+        t=GearPickupTests(name);unique[t.id()]=t
+from test_xp_observer import XPObserverTests
+for name in XPObserverTests.__dict__:
+    if name.startswith('test_'):
+        t=XPObserverTests(name);unique[t.id()]=t
+from test_currency_observer import CurrencyObserverTests
+for name in CurrencyObserverTests.__dict__:
+    if name.startswith('test_'):
+        t=CurrencyObserverTests(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
