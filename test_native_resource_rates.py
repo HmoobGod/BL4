@@ -212,7 +212,7 @@ class NativeRateTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.R.trial_amount(mode,selection)
     def test_native_rate_options_default_inert(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive','gear_luck'})
+        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive','gear_luck','shield_idle_rate','shield_idle_delay'})
         self.assertTrue(all(o.value==1. for o in m.NATIVE_RATE_OPTIONS.values()))
         self.assertFalse(self.native)
 
@@ -228,7 +228,7 @@ class NativeRateTests(unittest.TestCase):
 
     def test_persistent_native_rates_default_off(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_vaultregen','native_rate_vaultdelay','native_rate_vaultdepleted','native_rate_shieldpassive','native_rate_gear_luck'})
+        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_vaultregen','native_rate_vaultdelay','native_rate_vaultdepleted','native_rate_shieldpassive','native_rate_gear_luck','native_rate_shield_idle_rate','native_rate_shield_idle_delay'})
         self.assertTrue(all(o.value is False for o in m.NATIVE_AUTO_OPTIONS.values()))
 
     def test_persistent_native_skill_and_refill_mutually_exclusive(self):
@@ -516,8 +516,9 @@ class NativeRateTests(unittest.TestCase):
     def test_native_shield_pool_reject_current_mismatch(self):
         lane=self.shield_pool_trial();self.native_cur=40.;self.assertFalse(lane.begin());self.assertFalse(self.native)
 
-    def test_native_shield_pool_no_persistent(self):
-        lane=self.shield_pool_trial();self.assertRaises(ValueError,self.R.NativeRateTrial,self.mode,self.binding,self.resolve,lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:True,continuous=True)
+    def test_native_shield_pool_persistent_opt_in(self):
+        lane=self.shield_pool_trial();lane=self.R.NativeRateTrial(self.mode,self.binding,self.resolve,lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:True,continuous=True)
+        self.assertTrue(lane.begin());self.tick(lane);self.tick(lane,31.);self.assertEqual(lane.phase,'active');lane.stop('restore');self.tick(lane);self.tick(lane);self.assertEqual(lane.phase,'done')
 
     def test_native_shield_pool_reject_swap_before_dispatch(self):
         from test_shield_rates_r37 import ShieldRates
@@ -529,7 +530,7 @@ class NativeRateTests(unittest.TestCase):
     def test_native_shield_pool_routes_existing_selection(self):
         m=self.base.m;calls=[];m.begin_native_resource_rate=lambda mode,selection:calls.append((mode,selection))
         for mode in ('shield_idle_rate','shield_idle_delay'):
-            m.execute_activation('native_rate_'+mode,2.);self.assertNotIn('native_rate_'+mode,m.NATIVE_AUTO_OPTIONS);self.assertRaises(ValueError,m.execute_activation,'native_rate_'+mode,1.)
+            m.execute_activation('native_rate_'+mode,2.);self.assertFalse(m.NATIVE_AUTO_OPTIONS['native_rate_'+mode].value);self.assertRaises(ValueError,m.execute_activation,'native_rate_'+mode,1.)
         self.assertEqual(calls,[('shield_idle_rate',2.),('shield_idle_delay',2.)])
 
     def set_shield_charge(self,current,ratio=None):

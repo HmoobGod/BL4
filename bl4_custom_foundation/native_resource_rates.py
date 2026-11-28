@@ -267,7 +267,7 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
-        if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health'} | WEAPON_MODES and continuous:
+        if mode in {'missing_health'} | WEAPON_MODES and continuous:
             raise ValueError('native rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)

@@ -91,7 +91,9 @@ _reload_event = None
 _reload_event_attempted = False
 _reload_event_registered = False
 _reload_event_status = 'Not armed'
-AUTO_SETTINGS = [auto_master, auto_consent, RELOAD_EVENT, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
+SHIELD_POOL_BACKEND = BoolOption('native_shield_pool_backend',False,display_name='Use native shield pool recharge instead of equipped shield fields (experimental)')
+SHIELD_POOL_KEYS = {'shield_idle_rate':'shield_regen_rate','shield_idle_delay':'shield_regen_delay'}
+AUTO_SETTINGS = [auto_master, auto_consent, RELOAD_EVENT, SHIELD_POOL_BACKEND, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
 # Independent persistent lanes. Isolated manual experiments remain unchanged.
 _automation_leases = {}
 _automation_attempted = set()
@@ -119,7 +121,9 @@ NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'),('vaultregen','Vault Power recharge speed'),('vaultdelay','Vault Power idle delay speed'),('vaultdepleted','Vault Power depleted delay speed'),('shieldpassive','Native passive shield increment (x 0.001)'))}
 NATIVE_RATE_OPTIONS['gear_luck'] = _PREVIEW_BY_KEY['overall_loot_luck']
 NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
-ALL = PREVIEW + list(NATIVE_AUTO_OPTIONS.values()) + [o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck'] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+NATIVE_RATE_OPTIONS.update({mode:_PREVIEW_BY_KEY[key] for mode,key in SHIELD_POOL_KEYS.items()})
+NATIVE_AUTO_OPTIONS.update({'native_rate_'+mode:AUTO_OPTIONS[key] for mode,key in SHIELD_POOL_KEYS.items()})
+ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck' and k not in SHIELD_POOL_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; enable a feature.'
@@ -343,6 +347,9 @@ def persistent_feature_status(key):
         return 'Restoring' if record else 'Vanilla capacity' if key in CAPACITY_KEYS else '1x / vanilla'
     if record is not None and record.get('selection') == selected:
         return 'Active: ' + str(selected) + (' slots' if key in CAPACITY_KEYS else 'x') + ' (value verified)'
+    if key in SHIELD_KEYS and SHIELD_POOL_BACKEND.value is True:
+        mode=next(m for m,k in SHIELD_POOL_KEYS.items() if k==key)
+        return _automation_status.get('native_rate_'+mode,'Waiting for eligible shield pool')
     if key == 'reload' and RELOAD_EVENT.value is True:
         if AUTOMATION_OPTIONS['reload'].value is True or 'reload' in _automation_leases:
             return 'HOLD: turn off automatic reload for request timing'
@@ -369,7 +376,7 @@ def feature_enabled(option):
 
 
 def feature_flags():
-    return (*AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), *NATIVE_AUTO_OPTIONS.values())
+    return (*AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), *(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS))
 
 
 def set_feature_enabled(option, value):
@@ -662,6 +669,9 @@ def draw():
                 activate_feature('native_rate_health',rate)
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native missing-health regeneration (10 sec)'):
                 activate_feature('native_rate_missing_health',rate)
+            changed_backend,chosen_backend=ui.checkbox(SHIELD_POOL_BACKEND.display_name+'##'+SHIELD_POOL_BACKEND.identifier,SHIELD_POOL_BACKEND.value is True)
+            if changed_backend:set_auto_setting(SHIELD_POOL_BACKEND,chosen_backend)
+            ui.text_wrapped('Native shield pool backend uses the same saved recharge rate and delay sliders and toggles. Turn both off and restore before switching backend. Keep the original shield equipped.')
             ui.text_wrapped('Native shield pool recharge tests: use the existing equipped shield rate/delay speed selections, restore other modifiers first. Separate 10-second removable rate or inverse-delay experiment, not a refill. Keep the original shield equipped. Gameplay unverified.')
             for mode,key in (('shield_idle_rate','shield_regen_rate'),('shield_idle_delay','shield_regen_delay')):
                 selected=displayed_selection(_PREVIEW_BY_KEY[key])
@@ -1416,7 +1426,7 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     readers=None;skill=None
     shield_getter=None
-    if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health'} and persistent:raise ValueError('native rate trial is manual only')
+    if mode=='missing_health' and persistent:raise ValueError('native rate trial is manual only')
     if mode in RESOURCE_MODES:
         readers=bind_health_readers(functions,loot_bound)
         if mode in SHIELD_MODES:
@@ -1826,6 +1836,10 @@ def auto_allowed():
 
 def set_auto_setting(option, value):
     global _auto_blocked, _auto_ground, _auto_next, _ground_retry_at, _reload_handoff
+    if option is SHIELD_POOL_BACKEND:
+        if (any(AUTO_OPTIONS[k].value is True for k in SHIELD_KEYS) or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS)
+                or (_controller is not None and SHIELD_KEYS.intersection(_controller.records)) or health_active() or health_fault() or automation_fault()):
+            report_live('HOLD: turn off both shield recharge controls and verify restoration before switching backend');return
     if option is auto_master or option is auto_consent or option is AUTO_OPTIONS['reload'] or option is RELOAD_EVENT:
         _reload_handoff = None
     try:
@@ -1935,6 +1949,9 @@ def auto_desired():
     desired = raw_auto_desired()
     if RELOAD_EVENT.value is True:
         desired.pop('reload',None)
+    # Keep the legacy pair backend disjoint from native pool handle lifetime.
+    if SHIELD_POOL_BACKEND.value is True or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS):
+        desired={k:v for k,v in desired.items() if k not in SHIELD_KEYS}
     # Refuse ambiguous saved selections rather than silently choosing a winner.
     if ammo_selection_conflict(desired):
         desired = {k: v for k, v in desired.items() if k not in AMMO_GROUP}
@@ -1949,6 +1966,8 @@ def auto_desired():
     native_health=_automation_leases.get('native_rate_health')
     if native_health is not None and (native_health.record is not None or native_health.fault):
         desired={k:v for k,v in desired.items() if k not in LIFE_KEYS|{'healing_received'}}
+    if any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS):
+        desired.pop('healing_received',None)
     native_shield=_automation_leases.get('native_rate_shieldpassive')
     if native_shield is not None and (native_shield.record is not None or native_shield.fault):
         desired={k:v for k,v in desired.items() if k not in SHIELD_KEYS|{'healing_received'}}
@@ -2452,7 +2471,7 @@ def recovery_conflict(kind):
         return 'healing multiplier incompatible'
     if kind == 'health' and LIFE_KEYS.intersection(set(auto_desired()) | active):
         return 'native life-steal modifier incompatible with flesh assist'
-    if kind == 'shield' and SHIELD_KEYS.intersection(selected | active):
+    if kind == 'shield' and (SHIELD_KEYS.intersection(selected | active) or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS)):
         return 'native shield modifier incompatible with shield assist'
     return ''
 
@@ -2515,11 +2534,17 @@ def native_rate_allowed(kind,selection):
     # Preserve an active committed setting while its draft is waiting to save.
     if NATIVE_AUTO_OPTIONS[kind].value is not True or normalize(option,option.value)!=selection:
         return False
+    if mode in SHIELD_POOL_KEYS:
+        active=set(_controller.records) if _controller is not None else set()
+        return (SHIELD_POOL_BACKEND.value is True and .5<=selection<=3. and selection!=1.
+                and not SHIELD_KEYS.intersection(active) and 'healing_received' not in set(raw_auto_desired())|active
+                and AUTOMATION_OPTIONS['shield'].value is not True and 'shield' not in _automation_leases
+                and NATIVE_AUTO_OPTIONS['native_rate_shieldpassive'].value is not True and 'native_rate_shieldpassive' not in _automation_leases)
     if mode!='health' and selection<=1.:return False
     if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
-        return not (AUTOMATION_OPTIONS['shield'].value is True or 'shield' in _automation_leases or (SHIELD_KEYS|{'healing_received'}).intersection(set(raw_auto_desired())|active))
+        return not (AUTOMATION_OPTIONS['shield'].value is True or 'shield' in _automation_leases or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS) or (SHIELD_KEYS|{'healing_received'}).intersection(set(raw_auto_desired())|active))
     counterpart='health' if mode=='health' else 'skill_'+mode
     if AUTOMATION_OPTIONS[counterpart].value is True or counterpart in _automation_leases:return False
     if mode=='health':
@@ -2649,6 +2674,9 @@ def automation_tick():
         # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
         for kind in (*AUTOMATION_OPTIONS,*NATIVE_AUTO_OPTIONS):
             if kind in rearmed:continue
+            # The legacy equipped-field backend must not incur pool admission work.
+            if kind.removeprefix('native_rate_') in SHIELD_POOL_KEYS and SHIELD_POOL_BACKEND.value is not True:
+                continue  # original native cleanup was handled above
             if lane_options[kind].value is not True:
                 stop_automation_lane(kind,'disabled')
                 continue
@@ -2764,7 +2792,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Saved gameplay settings (use F8)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck'),*NATIVE_AUTO_OPTIONS.values()], display_name='Native rate selections and persistent opt-in (experimental)')]
+options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck' and k not in SHIELD_POOL_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
