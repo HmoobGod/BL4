@@ -11,9 +11,10 @@ ACTION_NAMES=tuple('Get'+mode+'AsPercent'+suffix for mode in ('Cooldown','Durati
 SPECS={n:(('ComponentReference','ZStructProperty'),('ResourcePool','ZGameDataHandleProperty'),('ReturnValue','ZFloatProperty')) for n in ('GetCurrentPercentage','GetCurrentValue','GetMaxValue')}
 SPECS['RefillPercentage']=(('ComponentReference','ZStructProperty'),('ResourcePool','ZGameDataHandleProperty'),('Percentage','ZFloatProperty'),('MaxPercentage','ZFloatProperty'))
 
-def bind(functions, existing):
+def bind(functions, existing, *, read_only=False):
     out=[]; ref_type=None
     for name,sig in SPECS.items():
+        if read_only and name=='RefillPercentage':continue
         matches=[f for f in functions if f._path_name()==PATH+name]
         if len(matches)!=1: raise ValueError('skill pool function missing or ambiguous')
         fn=matches[0]; ps=tuple(fn._properties())
@@ -252,15 +253,19 @@ def distinct_layouts(old,new):
     return not any(a & b for a,b in zip(members(old),members(new),strict=True))
 
 class SkillPulse:
-    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False,native_refill=None,event_class=None,direct_api=None):
+    def __init__(self,context,weak,ht,inline,construct,ref_type,api,find,clock,thread,report,mode,continuous=False,adaptive_api=None,rate=2.,soft_identifier=None,follow=False,native_refill=None,event_class=None,direct_api=None,read_only=False):
         if mode not in ('cooldown','duration'): raise ValueError('unknown skill mode')
         self.context,self.weak,self.ht,self.inline,self.construct,self.ref_type,self.api,self.find=context,weak,ht,inline,construct,ref_type,api,find
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
+        if type(read_only) is not bool:raise ValueError('invalid skill reader mode')
+        self.read_only=read_only
+        if read_only and (len(api)!=3 or adaptive_api is None or continuous or follow or native_refill is not None or event_class is not None or direct_api is not None):
+            raise ValueError('read-only skill reader requires three getters, two cross-checks and no refill lane')
         self.continuous=continuous is True
         self.follow=self.continuous and follow is True
         self.soft_identifier=soft_identifier
         self.record=None;self.fault=False;self.busy=False;self.prev=None;self.pending=None;self.rises=0;self.follow_candidate=None
-        if adaptive_api is not None and (not self.continuous or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
+        if adaptive_api is not None and (not (self.continuous or self.read_only) or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
         if native_refill is not None and (adaptive_api is None or not callable(native_refill)):raise ValueError('native refill requires adaptive cross-checks')
         self.native_refill=native_refill
         if direct_api is not None and (mode!='cooldown' or native_refill is None or len(direct_api)!=4):
@@ -385,6 +390,7 @@ class SkillPulse:
                 raise ValueError('skill layout changed during getters')
         return (pc,pawn,state,skill,script),k,ref,resources,tuple(values),named
     def begin(self):
+        if self.read_only:raise ValueError('read-only skill reader cannot arm a refill lane')
         if self.record or self.fault or self.busy:return False
         try:
             objs,key,_,_,v,named=self.resolve(True);now=self.clock()
@@ -398,7 +404,7 @@ class SkillPulse:
             self.record=None;self.pending=None;self.prev=None;self.rises=0;self.sample_at=None;self.last_delta=None;self.follow_candidate=None;self.event_active=False;self.event_epoch+=1
             self.report('STOP: skill assist '+reason+'; no future refill; recovered resource not reversed')
     def tick(self,permitted):
-        if self.record is None or self.busy:return
+        if self.read_only or self.record is None or self.busy:return
         now=self.clock();refs,ids,tid,end,due,key=self.record
         if not permitted or self.thread()!=tid or now>=end:self.stop('permission/thread/lifetime ended');return
         if now<due:return

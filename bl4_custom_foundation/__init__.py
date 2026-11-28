@@ -1365,11 +1365,11 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
     if mode=='missing_health' and persistent:raise ValueError('missing-health trial is manual only')
     if mode in HEALTH_MODES:readers=bind_health_readers(functions,loot_bound)
     else:
-        ref,api=bind(functions,loot_bound)
+        ref,api=bind(functions,loot_bound,read_only=True)
         adaptive=bind_action_percent(functions,loot_bound,mode,ref)
         skill=SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,
                          lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
-                         adaptive_api=adaptive,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
+                         adaptive_api=adaptive,read_only=True,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
     resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill)
     trial=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection,continuous=persistent)
     return trial

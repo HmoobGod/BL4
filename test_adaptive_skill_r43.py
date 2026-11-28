@@ -69,3 +69,76 @@ class AdaptiveSkill(unittest.TestCase):
         def read(*a):
             value=old(*a);self.s.now+=.3;return value
         lease.adaptive_api=(read,lease.adaptive_api[1]);self.s.advance(.4);self.assertEqual(self.s.calls,[])
+
+    def native_rate_fixture(self, mode):
+        # Real F8 integration, real SkillPulse constructor / descriptor readers,
+        # synthetic attribute modifier boundary (covered separately by native-rate tests).
+        from unittest.mock import patch
+        import importlib
+        R=importlib.import_module(self.m.__package__+".native_resource_rates")
+        self.s.p.Class._path_name=lambda:'/Script/OakGame.OakCharacter'
+        self.s.p._path_name=lambda:'/Game/Test.LocalPawn'
+        self.s.b.f.sdk.unreal.FGbxDefPtr=object
+        self.rate_value=2.;self.rate_calls=[];self.rate_definition=object();self.rate_handle=object()
+        def read(m,pawn):
+            self.assertEqual(m,mode);self.assertIs(pawn,self.s.p);return self.rate_value
+        def add(m,d,pawn,selection):
+            self.assertEqual(m,mode);self.assertIs(d,self.rate_definition);self.assertIs(pawn,self.s.p)
+            self.rate_calls.append('add');self.rate_value=2.*R.trial_amount(m,selection);return self.rate_handle,True
+        def remove(h):
+            self.assertIs(h,self.rate_handle);self.rate_calls.append('remove');self.rate_value=2.
+        fake=N(definition=lambda m:(self.rate_definition,('native definition',m)),read=read,add=add,remove=remove)
+        patcher=patch.object(R,'NativeBinding',return_value=fake);patcher.start();self.addCleanup(patcher.stop)
+
+    def native_manual_cycle(self,mode,target):
+        self.native_rate_fixture(mode)
+        self.m.activate_feature('native_rate_'+mode,2.);self.m.monitor_tick()
+        self.assertTrue(self.m.health_active(),self.s.b.report());self.assertEqual(self.rate_calls,[])
+        self.s.advance(dt=.2);self.assertEqual(self.rate_value,target);self.assertEqual(self.rate_calls,['add'])
+        self.m.request_stop('test');self.s.advance(dt=.2);self.s.advance(dt=.2)
+        self.assertEqual(self.rate_calls,['add','remove']);self.assertEqual(self.rate_value,2.)
+        self.assertFalse(self.m.health_fault());self.assertFalse(self.m.health_active());self.assertEqual(self.s.calls,[])
+
+    def test_native_rate_manual_cooldown_integration(self):self.native_manual_cycle('cooldown',4.)
+    def test_native_rate_manual_duration_integration(self):self.native_manual_cycle('duration',1.)
+    def test_native_rate_persistent_cooldown_integration(self):
+        self.native_rate_fixture('cooldown')
+        self.m.apply({'persistent_master':True,'persistent_offline':True,'persistent_native_rate_cooldown':True,'native_rate_selection_cooldown':2.})
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertIn('native_rate_cooldown',self.m._automation_leases,str(self.m._automation_status));self.assertEqual(self.rate_calls,['add']);self.assertEqual(self.rate_value,4.)
+        self.m.restore_all_ui()
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_calls,['add','remove']);self.assertEqual(self.rate_value,2.);self.assertEqual(self.s.calls,[])
+    def test_native_rate_uses_no_refill_binding(self):
+        self.s.funcs[:]=[f for f in self.s.funcs if f.Name!='RefillPercentage']
+        self.native_manual_cycle('cooldown',4.)
+    def test_native_rate_wrong_percent_no_add(self):
+        self.native_rate_fixture('cooldown');self.override['GetCooldownAsPercentInternal']=.7
+        self.m.activate_feature('native_rate_cooldown',2.);self.m.monitor_tick();self.s.advance(dt=.2)
+        self.assertFalse(self.m.health_active());self.assertEqual(self.rate_calls,[])
+        self.assertIn('native action skill percent disagrees',self.s.b.report())
+    def test_native_rate_persistent_duration_live_edit(self):
+        self.native_rate_fixture('duration')
+        self.m.apply({'persistent_master':True,'persistent_offline':True,'persistent_native_rate_duration':True,'native_rate_selection_duration':2.})
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_value,1.);self.assertEqual(self.rate_calls,['add'])
+        self.m.apply({'native_rate_selection_duration':4.})
+        for _ in range(6):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_value,.5);self.assertEqual(self.rate_calls,['add','remove','add'])
+        self.m.restore_all_ui()
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_value,2.);self.assertEqual(self.rate_calls,['add','remove','add','remove']);self.assertEqual(self.s.calls,[])
+    def test_native_rate_charge_pool_still_excluded(self):
+        self.native_rate_fixture('cooldown');self.s.d.ChargeComponentID=self.s.g
+        self.m.activate_feature('native_rate_cooldown',2.);self.m.monitor_tick();self.s.advance(dt=.2)
+        self.assertFalse(self.m.health_active());self.assertEqual(self.rate_calls,[]);self.assertEqual(self.s.calls,[])
+    def test_native_rate_reader_cannot_arm_pulse(self):
+        import importlib
+        S=importlib.import_module(self.m.__package__+'.skill_pulse')
+        f=self.s.b.f;u=f.sdk.unreal
+        ref,api=S.bind(self.s.funcs,self.m.loot_bound,read_only=True)
+        cross=S.bind_action_percent(self.s.funcs,self.m.loot_bound,'cooldown',ref)
+        reader=S.SkillPulse(lambda:(f.pc,f.pawn,f.state,True),u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,lambda:self.s.skills,lambda:self.s.now,lambda:1,lambda x:None,'cooldown',adaptive_api=cross,read_only=True)
+        self.assertEqual(len(reader.api),3);self.assertEqual(reader.resolve(initial=True,refresh=True)[4],(.2,.8))
+        with self.assertRaisesRegex(ValueError,'cannot arm'):reader.begin()
+        reader.tick(True);self.assertIsNone(reader.record);self.assertEqual(self.s.calls,[])
