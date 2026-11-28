@@ -285,6 +285,11 @@ from test_native_fire_rate import NativeFireRateTests
 for name in NativeFireRateTests.__dict__:
     if name.startswith('test_'):
         t=NativeFireRateTests(name);unique[t.id()]=t
+from test_ammo_need_vacuum import AmmoNeedVacuumTests, AmmoNeedBindingTests
+for cls in (AmmoNeedVacuumTests,AmmoNeedBindingTests):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

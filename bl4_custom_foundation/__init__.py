@@ -1478,7 +1478,7 @@ def begin_skill_pulse(mode):
 
 def begin_loot_vacuum(selection,continuous=False):
     global _health_pulse
-    from .loot_vacuum import Vacuum
+    from .loot_vacuum import Vacuum, lazy_ammo_reader
     if health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
         raise ValueError('restore active modifiers before isolated vacuum')
     sdk = sys.modules['unrealsdk']
@@ -1487,7 +1487,7 @@ def begin_loot_vacuum(selection,continuous=False):
     categories, radius = selection[:2]
     high_gear_only = selection[2] if len(selection)==3 else False
     _health_pulse = Vacuum(lambda: current_session(session), sdk.unreal.WeakPointer, sdk.find_all,
-                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius, continuous=continuous,high_gear_only=high_gear_only)
+                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius, continuous=continuous,high_gear_only=high_gear_only,ammo_reader=lazy_ammo_reader(sdk,loot_bound))
     _health_pulse.begin()
 
 
@@ -2592,10 +2592,10 @@ def make_automation_lane(kind, session):
         from .double_jump import DoubleJump
         return DoubleJump(context,sdk.unreal.WeakPointer,time.monotonic,threading.get_ident,report_live,jump_rate)
     if kind == 'vacuum':
-        from .loot_vacuum import Vacuum
+        from .loot_vacuum import Vacuum, lazy_ammo_reader
         categories = tuple(k for k,o in VACUUM_PREFS.items() if o.value is True)
         radius = normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value)
-        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True,high_gear_only=VACUUM_HIGH_PREF.value is True)
+        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True,high_gear_only=VACUUM_HIGH_PREF.value is True,ammo_reader=lazy_ammo_reader(sdk,loot_bound))
     if kind in ('health','shield'):
         from .health_pulse import Pulse, bind, SPECS
         functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]

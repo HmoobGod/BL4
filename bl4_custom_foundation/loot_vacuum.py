@@ -37,6 +37,79 @@ HEALTH_PICKUP_BODY = '/Game/Pickups/Health/Body_Health_Pickup.Body_Health_Pickup
 EXACT_PICKUP_BODIES = {**dict.fromkeys(AMMO_BODIES,'ammo'), HEALTH_PICKUP_BODY:'health',
                        ERIDIUM_SINGLE_STACK_BODY:'eridium', CASH_SINGLE_STACK_BODY:'cash'}
 
+# Only decoded standard bodies identify the corresponding reserve. Never infer
+# reserve type from broad path tokens or the generic ammo beam.
+AMMO_TYPES = {('/Game/World/Interactives/Pickups/Ammo/SM_ammo_'+n+'.SM_ammo_'+n): (key,enum)
+              for n,key,enum in (('assault','assaultrifle','AssaultRifle'),('pistol','pistol','Pistol'),
+                                 ('shotgun','shotgun','Shotgun'),('smg','smg','SMG'),('sniper','sniper','Sniper'))}
+
+
+class AmmoNeedReader:
+    """Read-only exact native ammo current/max resolver, never a setter."""
+    def __init__(self,functions,bound,def_type,def_struct):
+        from .native_resource_rates import LIB, DEF, SPECS
+        self.def_type,self.def_struct=def_type,def_struct
+        if def_struct._path_name()!=DEF:raise ValueError('ammo attribute definition type mismatch')
+        name='GetValueOfAttribute';sig=SPECS[name];path=LIB+name
+        fs=[f for f in functions if f._path_name()==path]
+        if len(fs)!=1:raise ValueError('ammo getter missing or ambiguous')
+        fn=fs[0];ps=tuple(fn._properties())
+        if (fn.Outer._path_name()!=LIB[:-1] or fn.NumParams!=len(sig)
+                or tuple((str(p.Name),type(p).__name__) for p in ps)!=sig
+                or any(p.ArrayDim!=1 for p in ps)
+                or ps[1].PropertyClass._path_name()!='/Script/CoreUObject.Object'):
+            raise ValueError('ammo getter signature mismatch')
+        self.get=bound(functions,path,sig)
+
+    def definition(self,key,ammo_type,which):
+        name='ammo_'+key+'_'+which.lower()+'value'
+        d=self.def_type(name,self.def_struct,True)
+        if type(d) is not self.def_type or d._name!=name or identity(d._type)!=identity(self.def_struct):
+            raise ValueError('ammo definition identity mismatch')
+        for member in ('Context','Value'):prop(d._type,member,'ZGbxInlineStructProperty')
+        c,v=d.Context,d.Value
+        if (c._type._path_name()!='/Script/GbxEngine.ActorContextResolver'
+                or v._type._path_name()!='/Script/OakGame.OakAmmoValueResolver'):
+            raise ValueError('ammo resolver mismatch')
+        for member,path in (('AmmoType','/Script/OakGame.EOakAmmoType'),('Value','/Script/OakGame.EOakAmmoResolverValue')):
+            if prop(v._type,member,'ZEnumProperty').Enum._path_name()!=path:raise ValueError('ammo enum mismatch')
+        prop(v._type,'bFromPickup','ZBoolProperty')
+        if enum_name(v.AmmoType)!=ammo_type or enum_name(v.Value)!=which or v.bFromPickup is not False:
+            raise ValueError('ammo reserve selector mismatch')
+        return name,identity(d)
+
+    def __call__(self,pawn,body):
+        key,ammo_type=AMMO_TYPES[body]
+        if pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+            raise ValueError('local character required')
+        c,ci=self.definition(key,ammo_type,'Current');m,mi=self.definition(key,ammo_type,'Max')
+        if ci==mi:raise ValueError('ammo definitions alias')
+        current=self.get(c,pawn,-123456.);maximum=self.get(m,pawn,-123456.)
+        if (type(current) not in (int,float) or type(maximum) not in (int,float)
+                or not math.isfinite(current) or not math.isfinite(maximum)
+                or not 0<=current<=maximum<=1e6 or maximum<=0
+                or current!=int(current) or maximum!=int(maximum)):
+            raise ValueError('ammo reserve readback unresolved')
+        return current/maximum
+
+
+def lazy_ammo_reader(sdk,bound):
+    # Optional read-only compatibility enhancement; no binding scan until an
+    # exact ammo candidate is encountered. Unsupported builds retain old path.
+    reader=None;attempted=False
+    def read(pawn,body):
+        nonlocal reader,attempted
+        if not attempted:
+            attempted=True
+            from .native_resource_rates import DEF
+            defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
+            if len(defs)!=1:return None
+            fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name)=='GetValueOfAttribute']
+            reader=AmmoNeedReader(fs,bound,sdk.unreal.FGbxDefPtr,defs[0])
+        return reader(pawn,body) if reader is not None else None
+    return read
+
+
 PICKUP = '/Script/GbxGame.InventoryPickup'
 TELEPORT = '/Script/Engine.Actor:K2_TeleportTo'
 LOCATION = '/Script/Engine.Actor:K2_GetActorLocation'
@@ -268,12 +341,12 @@ class Airborne(ValueError):
 
 class Vacuum:
     """One lease, one attempt per object, no retry or automatic gear collection."""
-    def __init__(self,context,weak,find,make,clock,thread,report,categories,radius,continuous=False,high_gear_only=False):
+    def __init__(self,context,weak,find,make,clock,thread,report,categories,radius,continuous=False,high_gear_only=False,ammo_reader=None):
         self.context,self.weak,self.find,self.make=context,weak,find,make
         self.clock,self.thread,self.report=clock,thread,report
         self.categories=frozenset(categories);self.radius=radius;self.continuous=continuous
         if type(high_gear_only) is not bool:raise ValueError('invalid rarity filter')
-        self.high_gear_only=high_gear_only
+        self.high_gear_only=high_gear_only;self.ammo_reader=ammo_reader
         self.recent=deque();self.total_attempts=0;self.gear_targets={}
         self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.gear_ids=set();self.moved=0;self.next_due=0
 
@@ -358,6 +431,13 @@ class Vacuum:
         dlc = dlc_gear_witness(a) if kind == 'gear' else None
         return dist,key+(native,dlc,pickup_body_witness(a)),kind
 
+    def ammo_need(self,pawn,body):
+        if self.ammo_reader is None or body not in AMMO_TYPES:return None
+        try:
+            ratio=self.ammo_reader(pawn,body)
+            return ratio if type(ratio) in (int,float) and math.isfinite(ratio) and 0<=ratio<=1 else None
+        except Exception:return None
+
     def tick(self,permitted):
         if self.record is None or self.busy:return
         now=self.clock();snapshot=self.record
@@ -373,18 +453,27 @@ class Vacuum:
             vendors=self.vendors(pc,lev)
             actors=self.find('InventoryPickup',exact=True)
             if len(actors)>1024:raise ValueError('pickup scan exceeds limit')
-            candidates=[]
+            candidates=[];ammo_ratios={}
             gear_space='gear' in self.categories and self.gear_position(origin,vendors[0]) is not None
             for a in actors:
                 try:
                     result=self.inspect(a,lev,origin,vendors)
-                    if result is not None and (result[2]!='gear' or gear_space):candidates.append((result,self.weak(a)))
+                    if result is not None and (result[2]!='gear' or gear_space):
+                        ratio=None
+                        if result[2]=='ammo':
+                            body=result[1][4][0]
+                            if body not in ammo_ratios:ammo_ratios[body]=self.ammo_need(pawn,body)
+                            ratio=ammo_ratios[body]
+                            if ratio==1:continue
+                        candidates.append((result,self.weak(a),ratio))
                 except Exception:continue
             # Two actors presenting the same positive item ID in one candidate
             # scan are ambiguous; relocate neither, rather than pick one.
-            counts = Counter(result[1][2][0] for result, _ in candidates if result[1][2] is not None)
+            counts = Counter(result[1][2][0] for result, _, _ in candidates if result[1][2] is not None)
             candidates = [c for c in candidates if c[0][1][2] is None or counts[c[0][1][2][0]] == 1]
-            for result,ref in nsmallest(4,candidates,key=lambda c:c[0][0]):
+            # Keep nearest-first except a modest preference (at most 2x in
+            # squared-distance score) for positively identified depleted ammo.
+            for result,ref,ratio in nsmallest(4,candidates,key=lambda c:c[0][0]*(1 if c[2] is None else .5+.5*c[2])):
                 if self.record is not snapshot:return
                 if self.continuous:
                     while self.recent and self.recent[0]<=self.clock()-30:self.recent.popleft()
@@ -418,6 +507,11 @@ class Vacuum:
                 except Exception:continue
                 if fresh is None or fresh[1:]!=result[1:]:continue
                 teleport=bound(a,'K2_TeleportTo',TELEPORT,TP_SIG)
+                if kind=='ammo':
+                    latest_ratio=self.ammo_need(pawn,item_key[4][0])
+                    # Do not spend the attempt when a reserve is now full or
+                    # a previously witnessed reserve becomes unreadable.
+                    if latest_ratio==1 or (ratio is not None and latest_ratio is None):continue
                 _,_,_,_,final_origin=self.resolve()
                 if self.record is not snapshot:return
                 if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
