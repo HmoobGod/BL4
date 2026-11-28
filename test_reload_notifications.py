@@ -73,3 +73,25 @@ class ReloadNotifications(SwapReload):
         self.bind_observers();hooks=self.r.b.f.sdk.hooks;original=hooks.add_hook
         hooks.add_hook=lambda p,*args: False if p.endswith('OnReloadEnded') else original(p,*args)
         self.assertFalse(self.r.m.ensure_reload_observers(self.r.b.f.sdk));self.assertFalse(self.r.m._reload_observers_owned)
+
+    # Independent integration of Antigravity 692bd3c's transition-only finding.
+    def test_equipping_putting_down_benign_wait(self):
+        for state in ('PuttingDown','Equipping'):
+            self.tick(state=state)
+            self.assertIsNotNone(self.a.record)
+            self.assertTrue(self.a.swap_paused)
+            self.assertFalse(self.r.calls)
+        self.tick(4,'Active');self.tick(4,'Active');self.empty()
+        self.assertEqual(len(self.r.calls),1)
+    def test_unrecognized_transition_still_stops(self):
+        self.tick(state='CorruptedUnknownState')
+        self.assertIsNone(self.a.record);self.assertFalse(self.r.calls)
+    def test_transition_during_outstanding_request_never_discards_receipt(self):
+        self.empty();self.start_event();self.tick(state='PuttingDown')
+        self.assertIsNone(self.a.record);self.assertEqual(len(self.r.calls),1)
+    def test_arming_in_transition_waits_for_idle(self):
+        self.a.stop('test rearm');self.r.w.CurrentState='Equipping'
+        self.assertTrue(self.a.begin());self.assertTrue(self.a.swap_paused)
+        self.tick(0,'Equipping');self.assertFalse(self.r.calls)
+        self.tick(4,'Active');self.tick(4,'Active');self.empty()
+        self.assertEqual(len(self.r.calls),1)

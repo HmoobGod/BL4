@@ -753,7 +753,7 @@ def draw():
                 flag=NATIVE_AUTO_OPTIONS['native_rate_cash']
                 draw_feature_toggle(ui,flag)
                 ui.text(_automation_status.get('native_rate_cash','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_cash' in _automation_leases else 'Off')
-                ui.text_wrapped('Continuous earned pickup cash requires native formula agreement. Cash can coexist with actor gun damage after cash is active. Changing cash restores actor gun first; toggle it off/on to rearm after cash settles. Actual awards unverified.')
+                ui.text_wrapped('Continuous pickup cash requires native formula agreement. Decoded Eridium pickup data also references the cash formula; currency isolation is unverified. Cash can coexist with actor gun damage after cash is active. Changing cash restores actor gun first; toggle it off/on to rearm after cash settles. Actual awards unverified.')
             if key == FAILED_XP_KEY:
                 ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
                 continue

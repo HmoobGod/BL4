@@ -13,6 +13,9 @@ SPECS = {
 }
 EVENT_OWNER = '/Script/OakGame.OakUIDataCollector_WeaponStatus'
 EVENTS = {'OnReloadStarted':'bAutoReload', 'OnReloadEnded':'bCompleted'}
+# Antigravity candidate: these native-named transitions permit read-only waiting,
+# never dispatch or retire an outstanding request.
+TRANSITION_STATES = frozenset(('Inactive', 'Equipping', 'PuttingDown'))
 
 
 def event_functions(sdk):
@@ -152,7 +155,7 @@ class ReloadAssist:
             return True
         states=tuple(str(w.CurrentState) for w in weapons_from_entries(entries).values())
         if any(state in STATES for state in states):return False
-        if any(state!='Inactive' for state in states):raise ValueError('unknown weapon state during wait')
+        if any(state not in TRANSITION_STATES for state in states):raise ValueError('unknown weapon state during wait')
         return True
 
     def begin(self):
