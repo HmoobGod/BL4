@@ -350,11 +350,11 @@ def regen_rate(make,init_type,handle_type,def_type):
     return rate
 
 
-def regen_tags(pawn,handle_type,tag_type,expected):
+def regen_tags(pawn,handle_type,tag_type,expected,mode="flesh"):
     # Select from existing health definitions only. Explicit tags must be
-    # nonempty and unique to flesh, including hierarchical prefix matching.
-    h,key,ratio=select_flesh(pawn,handle_type)
-    if key!=expected:raise ValueError('regen flesh identity changed')
+    # nonempty and unique to the selected layer, including hierarchical prefix matching.
+    h,key,ratio=select_health(pawn,handle_type,mode)
+    if key!=expected:raise ValueError('regen selected layer identity changed')
     health=nested(pawn,'HealthState','OakCharacterHealthState')
     groups=[];selected=None
     for st in health.HealthTypeStates:
@@ -380,13 +380,13 @@ def regen_tags(pawn,handle_type,tag_type,expected):
             raise ValueError('unclassified or incoherent health layer tags')
         if handle._name==h._name and identity(handle)==identity(h):selected=(tags,explicit,parents)
         else:groups.append((handle._name,identity(handle),explicit,parents))
-    if selected is None:raise ValueError('flesh tag container missing')
+    if selected is None:raise ValueError('selected health tag container missing')
     tags,explicit,parents=selected
-    if len(explicit)!=1:raise ValueError('unique flesh-only explicit tag required')
+    if len(explicit)!=1:raise ValueError('unique selected-layer explicit tag required')
     target=explicit[0]
     for _,_,other,otherparents in groups:
         if any(target==x or target.startswith(x+'.') or x.startswith(target+'.') for x in other) or target in otherparents:
-            raise ValueError('flesh tag overlaps another health layer')
+            raise ValueError('selected tag overlaps another health layer')
     return tags,(explicit,parents,tuple(groups)),ratio
 
 
@@ -396,21 +396,39 @@ class NativeRegen(Pulse):
     Stop is deferred to the original monitor thread; no cleanup against a
     replacement pawn or after the requested expiry (ID reuse unproven).
     """
-    def __init__(self,context,weak,handle_type,api,clock,thread,report,claim,make,init_type,tag_type,def_type,cleanup_context):
-        super().__init__(context,weak,handle_type,api,clock,thread,report)
+    def __init__(self,context,weak,handle_type,api,clock,thread,report,claim,make,init_type,tag_type,def_type,cleanup_context,*,mode="flesh"):
+        super().__init__(context,weak,handle_type,api,clock,thread,report,mode=mode)
         self.claim,self.make,self.init_type,self.tag_type,self.def_type,self.cleanup_context=claim,make,init_type,tag_type,def_type,cleanup_context
-        self.dispatched=False;self.native_id=None;self.stop_requested=False;self.started=None;self.tag_key=None;self.before=None
+        self.dispatched=False;self.native_id=None;self.stop_requested=False;self.started=None;self.tag_key=None;self.before=None;self.peer=None;self.shield_last=None;self.shield_rises=0;self.shield_sample_at=None
+    def shield_peer(self,pawn):
+        # No native shield-only resource mapping is assumed. Pin a distinct
+        # flesh layer and its ratio as a read-only cross-target witness.
+        h,key,ratio=select_flesh(pawn,self.handle_type)
+        layer=self.api[0](pawn,h,False)
+        if type(layer) is not int or not 0<=layer<16:raise ValueError('excluded flesh layer unavailable')
+        p=numeric(self.api[1](pawn,layer))
+        if not 0<p<=1 or abs(p-ratio)>.005:raise ValueError('excluded flesh native readback ambiguous')
+        return (key,layer),ratio,p
+    def verify_shield_peer(self,pawn):
+        if self.mode=='shield':
+            key,ratio,p=self.shield_peer(pawn)
+            if key!=self.peer[0] or abs(ratio-self.peer[1])>.005 or abs(p-self.peer[2])>.005:
+                raise ValueError('excluded flesh layer changed during shield trial')
     def begin(self):
         if self.record is not None or self.fault or self.busy or self.dispatched:return False
         try:
             objs,_,key,p=self.resolve();now=self.clock()
-            if not 0<p<.97:raise ValueError('naturally missing flesh health required')
-            _,self.tag_key,_=regen_tags(objs[1],self.handle_type,self.tag_type,key[0])
+            if not 0<p<(.80 if self.mode=='shield' else .97):raise ValueError('naturally missing selected health required')
+            _,self.tag_key,_=regen_tags(objs[1],self.handle_type,self.tag_type,key[0],self.mode)
+            if self.mode=='shield':
+                self.peer=self.shield_peer(objs[1])
+                if self.peer[0][1]==key[1]:raise ValueError('shield and flesh native layer alias')
+                self.shield_last=p;self.shield_sample_at=now;self.shield_rises=0
             regen_rate(self.make,self.init_type,self.handle_type,self.def_type)
             self.record=(tuple(self.weak(x) for x in objs),tuple(identity(x) for x in objs),self.thread(),now+5,now+1,key)
         except Exception as exc:
             self.report('HOLD: native regeneration '+str(exc)[:100]);return False
-        self.report('EXPERIMENT: native regeneration start/stop armed; rate and lifetime unverified.');return True
+        self.report('EXPERIMENT: native '+self.mode+' regeneration start/stop armed; rate and lifetime unverified.');return True
     def fail(self,reason):
         self.fault=True;self.record=None
         self.report('FAULT: native regeneration '+reason+'; exit game, do not travel.')
@@ -428,13 +446,13 @@ class NativeRegen(Pulse):
             pc,pawn,state,eligible=self.cleanup_context()
             if not eligible or any(r() is None or identity(r())!=i or identity(o)!=i for r,i,o in zip(refs,ids,(pc,pawn,state),strict=True)):
                 raise ValueError('original solo session unavailable')
-            _,fk,ratio=select_flesh(pawn,self.handle_type)
+            _,fk,ratio=select_health(pawn,self.handle_type,self.mode)
             if fk!=key[0] or ratio>=1.:raise ValueError('original health identity lost or native stop-when-full may have retired ID')
             last=self.cleanup_context()
             if (not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid
                     or self.clock()>=self.started+2. or self.record is not snapshot):
                 raise ValueError('native stop window or original session ended')
-            _,final_key,final_ratio=select_flesh(last[1],self.handle_type)
+            _,final_key,final_ratio=select_health(last[1],self.handle_type,self.mode)
             if final_key!=key[0] or final_ratio>=1. or self.clock()>=self.started+2. or self.record is not snapshot:
                 raise ValueError('health identity or native ID window changed after final scope')
             self.api[3](last[1],self.native_id)
@@ -442,7 +460,7 @@ class NativeRegen(Pulse):
             self.fail('cleanup uncertain: '+str(e)[:100]);return
         self.record=None
         if anomaly:
-            self.fail('unexpected health increase; matching stop dispatched, cancellation unverified');return
+            self.fail('unexpected health increase or excluded layer change; matching stop dispatched, cancellation unverified');return
         self.report('EXPERIMENT: matching native stop dispatched; cancellation/expiry unverified. Exit game after test.')
     def tick(self,permitted):
         if self.record is None or self.busy:return
@@ -454,33 +472,56 @@ class NativeRegen(Pulse):
                     self.cleanup(snapshot,self.clock());return
                 try:
                     objs,_,_,p=self.resolve()
-                    _,tag_key,ratio=regen_tags(objs[1],self.handle_type,self.tag_type,key[0])
+                    _,tag_key,ratio=regen_tags(objs[1],self.handle_type,self.tag_type,key[0],self.mode)
                     if tag_key!=self.tag_key or abs(p-ratio)>.005:raise ValueError('health or tags changed during regen')
+                    self.verify_shield_peer(objs[1])
                     last=self.context()
                     if not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid:raise ValueError('session changed during regen')
                 except Exception:
-                    self.cleanup(snapshot,self.clock());return
+                    self.cleanup(snapshot,self.clock(),anomaly=self.mode=='shield');return
                 if p>=1. or ratio>=1.:
                     self.fail('full health observed; native stop-when-full may have retired ID');return
                 anomaly=max(p,ratio)>self.before+.025
                 if self.stop_requested or self.clock()>=self.started+1. or anomaly:
-                    self.report('EXPERIMENT: flesh readback '+('increased (causation unverified)' if p>self.before else 'did not increase')+'.')
+                    self.report('EXPERIMENT: '+self.mode+' readback '+('increased (causation unverified)' if p>self.before else 'did not increase')+'.')
                     self.cleanup(snapshot,self.clock(),anomaly=anomaly);return
                 return
             if not permitted or self.thread()!=tid or now>=end:
                 self.stop('permission/thread/window ended');return
             if now<due:return
             try:
-                objs,_,_,p=self.resolve();rate=regen_rate(self.make,self.init_type,self.handle_type,self.def_type)
+                objs,_,_,p=self.resolve()
+                if self.mode=='shield':
+                    self.verify_shield_peer(objs[1])
+                    # Two slow, consecutive rising samples before the native
+                    # timer. Fast, flat, falling, stale or near-full observations
+                    # stop this deliberately narrow trial; no implicit retry.
+                    delta=p-self.shield_last
+                    if not .99<=now-self.shield_sample_at<=1.1 or not .001<=delta<=.02 or not 0<p<.80:
+                        raise ValueError('slow consecutive shield recharge not observed')
+                    _,tags_key,ratio=regen_tags(objs[1],self.handle_type,self.tag_type,key[0],self.mode)
+                    if tags_key!=self.tag_key or abs(p-ratio)>.005:raise ValueError('shield layer or tags changed')
+                    self.shield_last=p;self.shield_sample_at=now;self.shield_rises+=1
+                    if self.shield_rises<2:
+                        if self.record is snapshot:self.record=(refs,ids,tid,end,now+1.,key)
+                        return
+                rate=regen_rate(self.make,self.init_type,self.handle_type,self.def_type)
                 fresh=self.context()
                 if not fresh[3] or tuple(identity(x) for x in fresh[:3])!=ids or self.thread()!=tid:raise ValueError('session changed')
-                tags,tag_key,ratio=regen_tags(fresh[1],self.handle_type,self.tag_type,key[0])
-                if tag_key!=self.tag_key or abs(p-ratio)>.005 or not 0<min(p,ratio) or max(p,ratio)>=.97:raise ValueError('health or tags changed')
+                tags,tag_key,ratio=regen_tags(fresh[1],self.handle_type,self.tag_type,key[0],self.mode)
+                self.verify_shield_peer(fresh[1])
+                limit=.80 if self.mode=='shield' else .97
+                if tag_key!=self.tag_key or abs(p-ratio)>.005 or not 0<min(p,ratio) or max(p,ratio)>=limit:raise ValueError('health or tags changed')
                 last=self.context()
                 if not last[3] or tuple(identity(x) for x in last[:3])!=ids or self.thread()!=tid or self.clock()+2.>=end:raise ValueError('session/window changed before start')
-                tags,final_tag_key,final_ratio=regen_tags(last[1],self.handle_type,self.tag_type,key[0])
-                if final_tag_key!=self.tag_key or abs(final_ratio-p)>.005 or not 0<final_ratio<.97 or self.clock()+2.>=end:
+                tags,final_tag_key,final_ratio=regen_tags(last[1],self.handle_type,self.tag_type,key[0],self.mode)
+                self.verify_shield_peer(last[1])
+                if final_tag_key!=self.tag_key or abs(final_ratio-p)>.005 or not 0<final_ratio<limit or self.clock()+2.>=end:
                     raise ValueError('health or tags changed after final session scope')
+                if self.mode=='shield':
+                    final=self.context()
+                    if not final[3] or tuple(identity(x) for x in final[:3])!=ids or self.thread()!=tid or self.clock()+2.>=end:
+                        raise ValueError('shield scope changed after peer observation')
                 if self.record is not snapshot:return
                 if not self.claim():self.stop('one native timed attempt per process');return
             except Exception as exc:

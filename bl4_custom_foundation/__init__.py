@@ -521,7 +521,7 @@ def draw():
     if any(l.record is not None for l in _automation_leases.values()) or (RELOAD_EVENT.value is True and AUTO_OPTIONS['reload'].value is True and auto_allowed()):
         ui.text_wrapped('Automation armed (native outcomes unverified).')
     if _native_overtime_used:
-        ui.text_wrapped('Native timed flesh test attempted: stay offline, do not travel, and exit game after the test.')
+        ui.text_wrapped('Native timed recovery test attempted: stay offline, do not travel, and exit game after the test.')
     if health_active():
         ui.text_wrapped('Native attribute trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
     ui.separator()
@@ -644,9 +644,11 @@ def draw():
             ui.text_wrapped('Native timed flesh experiment: one small engine-timed refill per game process. Timer cancellation/expiry unverified; stay offline, do not travel, and exit game after this test.')
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native timed flesh recovery (2 sec)'):
                 activate_feature('health_overtime', 1.0)
-            ui.text_wrapped('Native regeneration start/stop test: uses a distinct constant-rate initializer and existing flesh tags. Rate units and stop/expiry are unverified; share one timed attempt per process. Exit after testing.')
+            ui.text_wrapped('Native regeneration start/stop test: uses a constant-rate initializer and existing exact flesh or energy-shield tags; shield test requires two slow rising charge samples. Rate units and stop/expiry are unverified; share one timed attempt per process. Exit after testing.')
             if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native regeneration start/stop (2 sec)'):
                 activate_feature('health_regen_native', 1.0)
+            if not _native_overtime_used and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native shield regeneration (2 sec)'):
+                activate_feature('shield_regen_native', 1.0)
             ui.text_wrapped('Native passive regeneration rate: small additive native rate, not a refill. Manual ten-second trial or separate toggle; restore before travel. Rate units and actual healing unverified. The missing-health test uses the same increment slider, but targets a separate native rate.')
             rate=native_rate_selection(ui,'health')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native passive health rate (10 sec)'):
@@ -1296,7 +1298,7 @@ def begin_native_overtime():
     _health_pulse.begin()
 
 
-def begin_native_regen():
+def begin_native_regen(mode="flesh"):
     global _health_pulse
     from .health_pulse import NativeRegen, bind_regen, SPECS, REGEN_SPECS
     if _native_overtime_used or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
@@ -1313,7 +1315,7 @@ def begin_native_regen():
                    and not conflicting_mods() and _monitor_registered
                    and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
         return pc,pawn,state,eligible and permitted
-    _health_pulse=NativeRegen(timed_context,u.WeakPointer,u.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,claim_native_overtime,sdk.make_struct,init_type,tag_type,u.FGbxDefPtr,cleanup_context)
+    _health_pulse=NativeRegen(timed_context,u.WeakPointer,u.FGameDataHandle,api,time.monotonic,threading.get_ident,report_live,claim_native_overtime,sdk.make_struct,init_type,tag_type,u.FGbxDefPtr,cleanup_context,mode=mode)
     _health_pulse.begin()
 
 
@@ -1675,7 +1677,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','health_pulse','health_overtime','health_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1728,9 +1730,9 @@ def execute_activation(key, selection):
         trial_amount(mode,selection)
         begin_native_resource_rate(mode,selection)
         return
-    if key == 'health_regen_native':
+    if key in ('health_regen_native','shield_regen_native'):
         if selection != 1.0:raise ValueError('invalid native regeneration selection')
-        begin_native_regen()
+        begin_native_regen('shield' if key=='shield_regen_native' else 'flesh')
         return
     if key == 'health_overtime':
         if selection != 1.0:raise ValueError('invalid native overtime selection')

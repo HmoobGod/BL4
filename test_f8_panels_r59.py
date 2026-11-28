@@ -43,7 +43,7 @@ class ActionPanels(unittest.TestCase):
     def test_global_timer_warning(self):
         self.m._native_overtime_used=True;self.m._focus_controls=True
         for cat in (0,5,6):
-            self.assertTrue(any('Native timed flesh test attempted' in l for l in self.render(cat)))
+            self.assertTrue(any('Native timed recovery test attempted' in l for l in self.render(cat)))
     def test_full_view_restores_all(self):
         self.m._focus_controls=True;self.switch(5,'Automatic reload')
         labels=self.render(5,edits={'Reduced feature rows (6 per page)':False})
