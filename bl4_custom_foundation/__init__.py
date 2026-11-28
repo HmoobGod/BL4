@@ -63,7 +63,7 @@ CATEGORIES = [
         progression_slider('progress_eridium', 'Eridium'),
         progression_slider('progress_enemy_xp', 'Enemy kill XP'),
         progression_slider('progress_mission_xp', 'Mission XP')]),
-    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), SliderOption('overall_loot_luck',1.,1.,10.,step=.1,is_integer=False,display_name='Overall loot luck (gear category trial)',description='Experimental gear category only; not an exact drop probability.'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
+    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), SliderOption('overall_loot_luck',1.,1.,10.,step=.1,is_integer=False,display_name='Loot luck (gear category)',description='Experimental gear category only; toggle ON for continuous native modifier. Not an exact drop probability.'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
     ('inventory', 'Inventory', [SliderOption(k, 1., 1., 1000., step=1, is_integer=True, display_name=FEATURES[k][0], description='Experimental absolute slots; 1 restores captured original. Never fill above original capacity during testing.') for k in ('backpack_capacity','bank_capacity')]),
     ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement attribute; individual toggle; 1x restores. Actual speed/distance unverified.') for k in ('dash_speed', 'glide_speed', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration')], *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Existing positive vault-power cost; lower may reduce consumption. 1x restores. No free energy or new jump actions.') for k in ('double_jump_cost','dash_cost','glide_cost','grapple_cost','slam_cost')], *[SliderOption(k, 1., FEATURES[k][1], FEATURES[k][2], step=.1, is_integer=False, display_name=FEATURES[k][0], description=('Only while exact native slide is active; toggle ON to follow active slides. 1x restores.' if k=='slide_speed' else 'Local movement field only; native effect unverified. 1x restores.')) for k in ('ladder_ascend','ladder_descend','slam_height','ground_friction','braking_friction','slide_speed')], SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
@@ -73,7 +73,7 @@ CATEGORIES = [
 ]
 PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 _PREVIEW_BY_KEY = {o.identifier: o for o in PREVIEW}
-_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
+_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier == 'overall_loot_luck' or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Internal activation gate (legacy settings)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
@@ -117,8 +117,9 @@ SKILL_FOLLOW = {k: BoolOption('follow_'+k,False,display_name='Follow distinct re
 SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=False,display_name='Adaptive '+k.replace('_',' ')+' target') for k in SKILL_ADAPTIVE}
 NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=.1,is_integer=False,display_name=label)
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'),('vaultregen','Vault Power recharge speed'),('vaultdelay','Vault Power idle delay speed'),('vaultdepleted','Vault Power depleted delay speed'),('shieldpassive','Native passive shield increment (x 0.001)'))}
-NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name='Enable native '+k+' rate (experimental)') for k in NATIVE_RATE_OPTIONS}
-ALL = PREVIEW + list(NATIVE_AUTO_OPTIONS.values()) + list(NATIVE_RATE_OPTIONS.values()) + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+NATIVE_RATE_OPTIONS['gear_luck'] = _PREVIEW_BY_KEY['overall_loot_luck']
+NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
+ALL = PREVIEW + list(NATIVE_AUTO_OPTIONS.values()) + [o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck'] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; enable a feature.'
@@ -724,6 +725,9 @@ def draw():
             continue
         if key=='overall_loot_luck':
             ui.text_wrapped('Experimental gear luck category only; not guaranteed drop rate or every luck category.')
+            flag=NATIVE_AUTO_OPTIONS['native_rate_gear_luck']
+            draw_feature_toggle(ui,flag)
+            ui.text(_automation_status.get('native_rate_gear_luck','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_gear_luck' in _automation_leases else 'Off')
             if displayed_selection(o)>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gear luck (30 sec)'):
                 activate_feature('native_rate_gear_luck',displayed_selection(o))
             continue
@@ -1412,7 +1416,7 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     readers=None;skill=None
     shield_getter=None
-    if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health',LUCK_MODE} and persistent:raise ValueError('native rate trial is manual only')
+    if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health'} and persistent:raise ValueError('native rate trial is manual only')
     if mode in RESOURCE_MODES:
         readers=bind_health_readers(functions,loot_bound)
         if mode in SHIELD_MODES:
@@ -2506,13 +2510,13 @@ def ensure_crossfire_events():
 
 
 def native_rate_allowed(kind,selection):
-    mode=kind.rsplit('_',1)[1]
+    mode=kind.removeprefix('native_rate_')
     option=NATIVE_RATE_OPTIONS[mode]
     # Preserve an active committed setting while its draft is waiting to save.
     if NATIVE_AUTO_OPTIONS[kind].value is not True or normalize(option,option.value)!=selection:
         return False
     if mode!='health' and selection<=1.:return False
-    if mode in ('vaultregen','vaultdelay','vaultdepleted'):return True
+    if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
         return not (AUTOMATION_OPTIONS['shield'].value is True or 'shield' in _automation_leases or (SHIELD_KEYS|{'healing_received'}).intersection(set(raw_auto_desired())|active))
@@ -2526,7 +2530,7 @@ def native_rate_allowed(kind,selection):
 
 def make_automation_lane(kind, session):
     if kind in NATIVE_AUTO_OPTIONS:
-        mode=kind.rsplit('_',1)[1];option=NATIVE_RATE_OPTIONS[mode]
+        mode=kind.removeprefix('native_rate_');option=NATIVE_RATE_OPTIONS[mode]
         return make_native_resource_rate(mode,normalize(option,option.value),persistent=True)
     sdk = sys.modules['unrealsdk']
     adaptive_mode = kind in SKILL_ADAPTIVE and SKILL_ADAPTIVE[kind].value is True
@@ -2659,7 +2663,7 @@ def automation_tick():
             if kind in NATIVE_AUTO_OPTIONS:
                 lease=_automation_leases.get(kind)
                 if lease is not None and lease.stop_requested:continue
-                option=NATIVE_RATE_OPTIONS[kind.rsplit('_',1)[1]]
+                option=NATIVE_RATE_OPTIONS[kind.removeprefix('native_rate_')]
                 selection=normalize(option,option.value)
                 if not native_rate_allowed(kind,selection) or (lease is None and option.identifier in _auto_edits):
                     _automation_status[kind]='Waiting: native rate selection or compatibility'
@@ -2760,7 +2764,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Saved gameplay settings (use F8)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('native_rate_options', [*NATIVE_RATE_OPTIONS.values(),*NATIVE_AUTO_OPTIONS.values()], display_name='Native rate selections and persistent opt-in (experimental)')]
+options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck'),*NATIVE_AUTO_OPTIONS.values()], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']

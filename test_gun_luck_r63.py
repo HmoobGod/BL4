@@ -84,3 +84,64 @@ class GearLuckTests(NativeRateTests):
             with self.assertRaises(ValueError):self.gear(value)
     def test_gear_dispatch(self):
         m=self.base.m;calls=[];m.begin_native_resource_rate=lambda *args:calls.append(args);m.execute_activation('native_rate_gear_luck',2.);self.assertEqual(calls,[('gear_luck',2.)]);self.assertNotIn('overall_loot_luck',m.AUTO_OPTIONS)
+
+    def persistent_gear(self,scale=2.):
+        R=self.R;mode=R.LUCK_MODE;m=self.base.m;k='native_rate_'+mode
+        resolver=R.make_local_resolver(mode,self.binding,lambda:(self.pc,self.pawn,self.world,self.eligible),None)
+        lane=R.NativeRateTrial(mode,self.binding,resolver,lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:self.allowed and m.native_rate_allowed(k,lane.selection),lambda key:R.original_pool_identity(mode,key),selection=scale,continuous=True)
+        m.auto_master.value=True;m.auto_consent.value=True
+        m.NATIVE_AUTO_OPTIONS[k].value=True;m.NATIVE_RATE_OPTIONS[mode].value=scale
+        m.automation_permitted=lambda:self.allowed
+        self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.assertEqual(lane.phase,'active',self.msg)
+        m._automation_leases[k]=lane;m._automation_attempted.add(k)
+        return m,k,lane
+
+    def advance_gear(self,m):
+        self.now+=.3;m.automation_tick()
+
+    def test_persistent_gear_no_timeout(self):
+        m,k,l=self.persistent_gear();self.now+=60.;m.automation_tick()
+        self.assertEqual(l.phase,'active');self.assertEqual(self.native,[('add',2.)]);self.assertEqual(self.entry.Value.Value,2.)
+        m.stop_automation('restore');self.advance_gear(m);self.advance_gear(m)
+        self.assertEqual(l.phase,'done');self.assertEqual(self.native,[('add',2.),('remove',)]);self.assertEqual(self.entry.Value.Value,1.)
+
+    def test_persistent_gear_slider_edit(self):
+        m,k,l=self.persistent_gear();m.queue_auto_edit(m._PREVIEW_BY_KEY['overall_loot_luck'],7.3);m.flush_auto_edits(force=True)
+        self.assertEqual(l.next_selection,7.3);self.advance_gear(m);self.assertEqual(l.phase,'verify');self.assertEqual(self.entry.Value.Value,1.)
+        self.advance_gear(m);self.assertEqual(l.phase,'armed');self.assertEqual(len(self.native),2)
+        self.advance_gear(m);self.assertEqual(l.phase,'active');self.assertAlmostEqual(self.entry.Value.Value,7.3);self.assertEqual(self.other.Value.Value,2.)
+        self.assertEqual(self.native,[('add',2.),('remove',),('add',7.3)])
+        m.stop_automation('restore');self.advance_gear(m);self.advance_gear(m);self.assertEqual(self.entry.Value.Value,1.)
+
+    def test_persistent_gear_neutral(self):
+        m,k,l=self.persistent_gear();m.queue_auto_edit(m._PREVIEW_BY_KEY['overall_loot_luck'],1.);m.flush_auto_edits(force=True)
+        self.advance_gear(m);self.advance_gear(m);self.assertNotIn(k,m._automation_leases);self.assertEqual(self.native,[('add',2.),('remove',)])
+
+    def test_persistent_gear_off(self):
+        m,k,l=self.persistent_gear();m.NATIVE_AUTO_OPTIONS[k].value=False
+        self.advance_gear(m);self.advance_gear(m);self.assertEqual(l.phase,'done');self.assertEqual(self.entry.Value.Value,1.);self.assertNotIn(k,m._automation_leases)
+
+    def test_persistent_gear_permission_loss_during_edit(self):
+        m,k,l=self.persistent_gear();m.queue_auto_edit(m._PREVIEW_BY_KEY['overall_loot_luck'],5.);m.flush_auto_edits(force=True)
+        self.advance_gear(m);self.allowed=False;self.eligible=False;self.advance_gear(m);self.assertEqual(l.phase,'done');self.assertEqual(self.native,[('add',2.),('remove',)]);self.assertNotIn(k,m._automation_leases)
+
+    def test_persistent_gear_peer_change(self):
+        m,k,l=self.persistent_gear();self.other.Value.Value=3.;self.advance_gear(m)
+        self.assertTrue(l.fault);self.assertEqual(self.native,[('add',2.),('remove',)]);self.assertEqual(self.entry.Value.Value,1.)
+
+    def test_gear_persistent_default_and_shared_selection(self):
+        m=self.base.m;k='native_rate_gear_luck';o=m._PREVIEW_BY_KEY['overall_loot_luck'];self.assertIs(m.NATIVE_RATE_OPTIONS['gear_luck'],o)
+        self.assertEqual(sum(x is o for x in m.ALL),1);self.assertFalse(m.NATIVE_AUTO_OPTIONS[k].value);self.assertFalse(m.native_rate_allowed(k,2.));self.assertIn(o,m._COMPACT_OPTIONS[2]);self.assertEqual(o.max_value,10.)
+        m.NATIVE_AUTO_OPTIONS[k].value=True;o.value=10.;self.assertTrue(m.native_rate_allowed(k,10.));self.assertFalse(m.native_rate_allowed(k,9.))
+
+    def test_gear_persistent_factory_routing(self):
+        m=self.base.m;k='native_rate_gear_luck';m._PREVIEW_BY_KEY['overall_loot_luck'].value=8.2;calls=[]
+        m.make_native_resource_rate=lambda *args,**kwargs:calls.append((args,kwargs)) or 'gear lane'
+        self.assertEqual(m.make_automation_lane(k,None),'gear lane');self.assertEqual(calls,[(('gear_luck',8.2),{'persistent':True})])
+
+    def test_gear_persistent_f8_compact(self):
+        m=self.base.m;self.base.open();m._category=2;m._compact_view=True;m.draw()
+        labels=self.base.gui.imgui.labels
+        self.assertIn('Enable native gear luck (experimental)##persistent_native_rate_gear_luck',labels)
+        self.assertEqual(sum(x.endswith('##overall_loot_luck') for x in labels),1)
+        self.assertFalse(self.native)

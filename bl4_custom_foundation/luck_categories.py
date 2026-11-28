@@ -85,5 +85,5 @@ def report_lines(rows):
     lines = ['Player luck categories (read-only; not world rarity weights):']
     for name, kind, modifier, value, base in rows:
         lines.append(f'Category={name}; CategoryType={kind}; ModifierType={modifier}; Value={value!r}; BaseValue={base!r}')
-    lines.append('No target selected by this report. Gear luck has a separate isolated experimental trial; other categories remain preview only. Native drop outcomes and restoration remain unverified.')
+    lines.append('No target selected by this report. Gear luck has isolated and opt-in continuous experimental modes; other categories remain preview only. Native drop outcomes and restoration remain unverified.')
     return lines
