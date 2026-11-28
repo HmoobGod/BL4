@@ -212,7 +212,7 @@ class NativeRateTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.R.trial_amount(mode,selection)
     def test_native_rate_options_default_inert(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive','gear_luck','cash','melee','gun_actor','shield_idle_rate','shield_idle_delay'})
+        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive','gear_luck','cash','eridium','melee','gun_actor','shield_idle_rate','shield_idle_delay'})
         self.assertTrue(all(o.value==1. for o in m.NATIVE_RATE_OPTIONS.values()))
         self.assertFalse(self.native)
 
