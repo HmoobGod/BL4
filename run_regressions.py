@@ -335,6 +335,10 @@ from test_cash_gun_integration import CashGunIntegration
 for name in CashGunIntegration.__dict__:
     if name.startswith('test_'):
         t=CashGunIntegration(name);unique[t.id()]=t
+from test_reload_notifications import ReloadNotifications
+for name in ReloadNotifications.__dict__:
+    if name.startswith("test_"):
+        t=ReloadNotifications(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

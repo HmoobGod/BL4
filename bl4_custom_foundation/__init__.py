@@ -2739,6 +2739,48 @@ def make_session_melee(session,selection):
     return SessionMeleeTrial(MELEE_MODE,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
 
 
+_reload_observers_attempted=False
+_reload_observers_owned=False
+
+
+def reload_observers_live():
+    from .reload_assist import EVENT_OWNER,EVENTS
+    hooks=sys.modules['unrealsdk'].hooks
+    return _reload_observers_owned and all(hooks.has_hook(EVENT_OWNER+':'+n,hooks.Type.POST,'bl4_custom_reload_observe_'+n) is True for n in EVENTS)
+
+
+def reload_observation(collector,args,started):
+    lease=_automation_leases.get('reload')
+    if lease is None or lease.record is None or not lease.waiting:return
+    try:
+        if not reload_observers_live() or not automation_permitted():return
+        lease.observe_reload(collector,args.EventWeapon,args.bAutoReload if started else args.bCompleted,started)
+    except Exception:pass
+
+
+def reload_started_observation(obj,args,*_):reload_observation(obj,args,True)
+def reload_ended_observation(obj,args,*_):reload_observation(obj,args,False)
+
+
+def ensure_reload_observers(sdk):
+    global _reload_observers_attempted,_reload_observers_owned
+    if _reload_observers_attempted:
+        try:return reload_observers_live()
+        except Exception:return False
+    _reload_observers_attempted=True
+    try:
+        from .reload_assist import EVENT_OWNER,EVENTS,event_functions
+        event_functions(sdk);hooks=sdk.hooks;kind=hooks.Type.POST
+        paths=[(EVENT_OWNER+':'+n,'bl4_custom_reload_observe_'+n,cb) for n,cb in zip(EVENTS,(reload_started_observation,reload_ended_observation),strict=True)]
+        if any(hooks.has_hook(p,kind,i) is not False for p,i,_ in paths):return False
+        for p,i,cb in paths:
+            result=hooks.add_hook(p,kind,i,cb)
+            if type(result) is not bool or hooks.has_hook(p,kind,i) is not True:return False
+        _reload_observers_owned=True
+    except Exception:return False
+    return reload_observers_live()
+
+
 def make_automation_lane(kind, session):
     if kind==MELEE_LANE:
         option=NATIVE_RATE_OPTIONS['melee']
@@ -2819,7 +2861,9 @@ def make_automation_lane(kind, session):
     from .reload_assist import ReloadAssist, bind, SPECS
     functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
     api,fn = bind(functions,loot_bound)
-    return ReloadAssist(context,sdk.unreal.WeakPointer,api,fn,time.monotonic,threading.get_ident,report_live,True,session_mode=True)
+    lease=ReloadAssist(context,sdk.unreal.WeakPointer,api,fn,time.monotonic,threading.get_ident,report_live,True,session_mode=True)
+    if ensure_reload_observers(sdk):lease.event_live=reload_observers_live
+    return lease
 
 
 def automation_tick():

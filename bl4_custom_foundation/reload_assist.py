@@ -11,6 +11,24 @@ SPECS = {
     'GetMaxLoadedAmmo': (('Weapon','ZObjectProperty'),('UseMode','ZByteProperty'),('ReturnValue','ZIntProperty')),
     'IsLocalWeaponAuthority': (('WeaponUser','ZObjectProperty'),('ReturnValue','ZBoolProperty')),
 }
+EVENT_OWNER = '/Script/OakGame.OakUIDataCollector_WeaponStatus'
+EVENTS = {'OnReloadStarted':'bAutoReload', 'OnReloadEnded':'bCompleted'}
+
+
+def event_functions(sdk):
+    """Both exact callbacks must be reflected before observation is enabled."""
+    functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in EVENTS]
+    for name,flag in EVENTS.items():
+        matches=[f for f in functions if f._path_name()==EVENT_OWNER+':'+name]
+        if len(matches)!=1:raise ValueError('reload event missing or ambiguous')
+        fn=matches[0];ps=tuple(fn._properties())
+        if (fn.Outer._path_name()!=EVENT_OWNER or fn.NumParams!=2
+                or tuple((str(p.Name),type(p).__name__) for p in ps)!=(('EventWeapon','ZObjectProperty'),(flag,'ZBoolProperty'))
+                or any(p.ArrayDim!=1 for p in ps)
+                or ps[0].PropertyClass._path_name()!='/Script/GbxWeapon.Weapon'):
+            raise ValueError('reload event descriptor mismatch')
+
+
 REQUEST_SIG = (('UseModeIndex','ZByteProperty'),('Flags_0','ZByteProperty'))
 
 
@@ -48,7 +66,50 @@ class ReloadAssist:
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
         self.recent=deque();self.swap_paused=False;self.reserve_paused=False
+        self.event_live=lambda:False;self.event_start=None;self.event_complete=False;self.event_busy=False
         self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
+
+    def reset_event(self):
+        self.event_start=None;self.event_complete=False
+
+    def event_ready(self):
+        try:return (self.event_complete and bool(self.event_start) and self.event_live() is True
+                    and self.event_start[0]() is not None and identity(self.event_start[0]())==self.event_start[1])
+        except Exception:return False
+
+    def observe_reload(self, collector, weapon, flag, started):
+        """Read-only paired native notification; never dispatch or rearm here."""
+        if (not self.session_mode or self.record is None or not self.waiting
+                or self.event_busy or self.fault or type(flag) is not bool):return
+        self.event_busy=True
+        try:
+            snapshot=self.record;refs,key,tid,end,_=snapshot
+            if (self.thread()!=tid or self.clock()>=min(end,self.completion_deadline)
+                    or self.event_live() is not True or len(refs)!=7
+                    or live(weapon)!=key[0][3] or refs[3]() is None
+                    or identity(refs[3]())!=key[0][3]
+                    or collector.Class._path_name()!=EVENT_OWNER):return
+            pc,pawn,state=self.session_owner()
+            w=active_weapon(pawn);index=mode(w)
+            objects=(pc,pawn,state,w,matching_behavior(w,'reload',index),
+                     matching_behavior(w,'ammo_regen_rate',index),matching_behavior(w,'fire_rate',index))
+            if ((tuple(identity(o) for o in objects),index)!=key
+                    or any(r() is None or identity(r())!=i for r,i in zip(refs,key[0],strict=True))
+                    or self.record is not snapshot or not self.waiting):return
+            cid=live(collector)
+            if started:
+                # One start per outstanding request. Ambiguous repeated starts invalidate the witness.
+                if self.event_start is not None:
+                    self.event_start=();self.event_complete=False;return
+                self.event_start=(self.weak(collector),cid)
+            elif self.event_start and not self.event_complete:
+                ref,original=self.event_start
+                if cid!=original or ref() is None or identity(ref())!=original:return
+                self.event_complete=flag is True
+                if not flag:self.event_start=()
+        except Exception:
+            self.reset_event()
+        finally:self.event_busy=False
 
     def resolve(self, check_weapon=True):
         pc,pawn,state,ok=self.context()
@@ -114,13 +175,13 @@ class ReloadAssist:
             now=self.clock();self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),float("inf") if self.session_mode else now+30,now+.1)
             self.previous=None if waiting else loaded;self.empty_seen=False
             self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
-            self.recent.clear();self.swap_paused=waiting;self.reserve_paused=False
+            self.reset_event();self.recent.clear();self.swap_paused=waiting;self.reserve_paused=False
         except Exception as e:self.report('HOLD: auto reload '+str(e)[:120]);return False
         self.report('EXPERIMENT: session reload armed (ten requests per rolling 30s; supported idle swaps)' if self.session_mode else 'EXPERIMENT: continuous reload armed for 30 sec' if self.continuous else 'EXPERIMENT: auto reload armed; one normal reload request within 30 sec');return True
 
     def stop(self,reason):
         if self.record is not None:
-            self.record=None;self.previous=None;self.empty_seen=False
+            self.record=None;self.previous=None;self.empty_seen=False;self.reset_event()
             self.report('STOP: auto reload '+reason+'; an already started normal reload is not cancelled')
 
     def session_sample(self, snapshot):
@@ -202,20 +263,20 @@ class ReloadAssist:
                     self.stop('reload completion not observed');return
                 if state=='Reloading':
                     self.saw_reload=True;self.completion_samples=0;return
-                if state!='Active' or not loaded or not self.saw_reload:
+                if state!='Active' or not loaded or not (self.saw_reload or self.event_ready()):
                     # Do not treat an external ammo increase or interrupted reload as completion.
-                    if state not in ('Active','Reloading') or (loaded and not self.saw_reload):
+                    if state not in ('Active','Reloading') or (loaded and not (self.saw_reload or self.event_ready())):
                         self.stop('unconfirmed reload completion');return
                     self.completion_samples=0;return
                 self.completion_samples+=1
                 if self.completion_samples>=2:
-                    self.waiting=False;self.reserve_paused=self.session_mode and min(reserve)<=0
+                    self.waiting=False;self.reset_event();self.reserve_paused=self.session_mode and min(reserve)<=0
                     self.previous=None if self.reserve_paused else loaded;self.empty_seen=False
                     self.report('PAUSE: reload completed; reserve exhausted' if self.reserve_paused else 'EXPERIMENT: reload state and positive idle magazine observed; new cycle armed')
                 return
             if self.session_mode and state=='Reloading':
                 # A manual/native reload is already underway. Observe, never dispatch.
-                self.waiting=True;self.saw_reload=True;self.completion_samples=0
+                self.reset_event();self.waiting=True;self.saw_reload=True;self.completion_samples=0
                 self.completion_deadline=min(end,now+10.)
                 self.previous=None;self.empty_seen=False
                 self.report('EXPERIMENT: external reload observed; waiting for native completion')
@@ -259,7 +320,7 @@ class ReloadAssist:
             self.empty_seen=False;self.previous=0
             try:
                 if self.continuous:
-                    self.waiting=True;self.saw_reload=False;self.completion_samples=0
+                    self.reset_event();self.waiting=True;self.saw_reload=False;self.completion_samples=0
                     self.completion_deadline=min(end,self.clock()+10.)
                 if self.session_mode:self.recent.append(self.clock())
                 fresh[2](key[1],0)
@@ -278,7 +339,7 @@ class ReloadAssist:
                         observed=self.resolve()
                         if self.record is None:return
                         if observed[6]=='Reloading':self.saw_reload=True
-                        elif observed[6]!='Active' or observed[3]>0:
+                        elif observed[6]!='Active' or (observed[3]>0 and not self.event_ready()):
                             self.stop('unconfirmed immediate reload state');return
                     except Exception as e:
                         self.stop('post-request observation failed: '+str(e)[:100]);return
