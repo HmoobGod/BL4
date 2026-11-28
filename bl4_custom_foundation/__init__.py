@@ -655,6 +655,11 @@ def draw():
                 activate_feature('native_rate_health',rate)
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native missing-health regeneration (10 sec)'):
                 activate_feature('native_rate_missing_health',rate)
+            ui.text_wrapped('Native shield pool recharge tests: use the existing equipped shield rate/delay speed selections, restore other modifiers first. Separate 10-second removable rate or inverse-delay experiment, not a refill. Keep the original shield equipped. Gameplay unverified.')
+            for mode,key in (('shield_idle_rate','shield_regen_rate'),('shield_idle_delay','shield_regen_delay')):
+                selected=displayed_selection(_PREVIEW_BY_KEY[key])
+                if selected!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native shield pool '+mode.removeprefix('shield_idle_')+' ('+str(selected)+'x, 10 sec)'):
+                    activate_feature('native_rate_'+mode,selected)
             ui.text_wrapped('Experimental energy shield assist: adds a small pulse only after two rising charge samples; not a native recharge delay/rate multiplier.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental shield assist (30 sec)'):
                 activate_feature('shield_pulse', 1.0)
@@ -1344,12 +1349,12 @@ def begin_blackboard_reward(key, selection):
 
 def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
-                                        TARGETS, HEALTH_MODES, bind_health_readers, make_local_resolver, original_pool_identity)
+                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, bind_health_readers, make_local_resolver, original_pool_identity)
     from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
     if mode not in TARGETS or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
-    names=set(RATE_SPECS)|set(POOL_SPECS)|set(ACTION_NAMES)|{'GetResourcePoolValue','GetResourcePoolPercent'}
+    names=set(RATE_SPECS)|set(POOL_SPECS)|set(ACTION_NAMES)|{'GetResourcePoolValue','GetResourcePoolPercent','GetShield'}
     functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in names]
     binding=NativeBinding(functions,loot_bound,u.FGbxDefPtr,u.WrappedStruct)
     session=bound_session(sdk)
@@ -1364,15 +1369,20 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                 and _monitor_thread==threading.get_ident()
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     readers=None;skill=None
-    if mode=='missing_health' and persistent:raise ValueError('missing-health trial is manual only')
-    if mode in HEALTH_MODES:readers=bind_health_readers(functions,loot_bound)
+    shield_getter=None
+    if mode in SHIELD_MODES | {'missing_health'} and persistent:raise ValueError('native rate trial is manual only')
+    if mode in RESOURCE_MODES:
+        readers=bind_health_readers(functions,loot_bound)
+        if mode in SHIELD_MODES:
+            from .shield_rates import bind as bind_shield
+            shield_getter=bind_shield(functions,loot_bound)
     else:
         ref,api=bind(functions,loot_bound,read_only=True)
         adaptive=bind_action_percent(functions,loot_bound,mode,ref)
         skill=SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,
                          lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
                          adaptive_api=adaptive,read_only=True,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
-    resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill)
+    resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill,shield_getter)
     trial=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection,continuous=persistent)
     return trial
 
@@ -1677,7 +1687,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1724,7 +1734,7 @@ def execute_activation(key, selection):
     if key in ('skill_cooldown','skill_duration'):
         begin_skill_pulse(key.split('_',1)[1])
         return
-    if key in ('native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health'):
+    if key in ('native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay'):
         from .native_resource_rates import trial_amount
         mode=key.removeprefix('native_rate_')
         trial_amount(mode,selection)

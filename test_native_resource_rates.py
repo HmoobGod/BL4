@@ -47,7 +47,7 @@ class NativeRateTests(unittest.TestCase):
         parsed=t('ParsedProperty',R.PARSED,p('PropertyPath','ZStrProperty'),p('ParsedPathLength','ZUInt32Property'),pp)
         val=Node(_type=t('PropertyValueResolver',R.VALUE,p('PropertySupportsModifierRemoval','ZBoolProperty'),p('ResolvedType','ZEnumProperty'),desc('Property',parsed)),PropertySupportsModifierRemoval=True,ResolvedType=Node(name='Float'),Property=Node(_type=parsed,PropertyPath=field,ParsedPathLength=1,ParsedPath=[Node(_type=elem,PropertyName=field,bUsesArrayIndex=False)]))
         if ctx==R.HEALTH_CONTEXT:
-            c=Node(_type=t('GameResourcePoolContextResolver',ctx,p('ResourceDef','ZGameDataHandleProperty',TypeHandle=5)),ResourceDef=Node(_name='Health',_type_handle=5))
+            c=Node(_type=t('GameResourcePoolContextResolver',ctx,p('ResourceDef','ZGameDataHandleProperty',TypeHandle=5)),ResourceDef=Node(_name=selector,_type_handle=5))
         else:
             c=Node(_type=t('OakActionSkillResourcePoolResolver',ctx,p('PoolType','ZEnumProperty',Enum=Node(Name='/Script/OakGame.EOakActionSkillResourcePoolType'))),PoolType=Node(name=selector))
         self.attr.definitions[name]=Node(Context=c,Value=val)
@@ -470,3 +470,64 @@ class NativeRateTests(unittest.TestCase):
     def test_missing_health_peer_unavailable_after_dispatch_cleans_original(self):
         lane=self.missing_health_trial();self.assertTrue(lane.begin());self.tick(lane);del self.attr.definitions[self.R.TARGETS['health'][0]]
         self.tick(lane,.3);self.assertEqual([v[0] for v in self.native],['add','remove']);self.assertTrue(lane.fault);self.assertEqual(self.rate,0.)
+
+    def shield_pool_trial(self,mode='shield_idle_rate',base=10.,selection=2.):
+        self.local_health()
+        from test_health_pulse_r17 import FGameDataHandle
+        from test_shield_rates_r37 import ShieldRates
+        self.p=self.pawn
+        self.member=lambda *a,**kw:ShieldRates.member(self,*a,**kw)
+        self.shield=ShieldRates.make_shield(self)
+        layer=self.pawn.HealthState.HealthTypeStates[0]
+        layer.HealthType=FGameDataHandle('HealthType_EnergyMock','EnergyBlue','IsShield');layer.HealthType._type_handle=5
+        res=FGameDataHandle('Shield','EnergyBlue','IsShield');res._type_handle=5
+        self.attr.definitions[self.R.TARGETS[mode][0]].Context.ResourceDef=res
+        self.resolve=self.R.make_local_resolver(mode,self.binding,lambda:(self.pc,self.pawn,self.world,self.allowed),FGameDataHandle,(lambda pawn,h:self.native_cur,lambda pawn,h:self.native_pct,5),shield_getter=lambda pawn:self.shield)
+        lane=self.trial(mode,base);lane.selection=selection;lane.cleanup_key=lambda key:self.R.original_pool_identity(mode,key)
+        return lane
+
+    def test_native_shield_pool_rate_cycle(self):
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.assertEqual(lane.phase,'active',self.msg);self.assertEqual(self.rate,20.)
+        self.assertEqual(self.shield.RegenRate.Value,10.);self.assertEqual(self.native,[('add','shield_resource_idle_regen_rate',Modifier.ScaleMultiply,2.)])
+        lane.stop('restore');self.tick(lane);self.tick(lane);self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,10.)
+
+    def test_native_shield_pool_delay_inverse(self):
+        lane=self.shield_pool_trial('shield_idle_delay',4.,2.);self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.assertEqual(self.rate,2.);self.assertEqual(self.native,[('add','shield_resource_idle_regen_delay',Modifier.ScaleMultiply,.5)])
+        self.tick(lane,10.);self.tick(lane);self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,4.)
+
+    def test_native_shield_pool_slowdown(self):
+        lane=self.shield_pool_trial('shield_idle_delay',4.,.5);self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.assertEqual(self.rate,8.)
+
+    def test_native_shield_pool_reject_armor(self):
+        lane=self.shield_pool_trial();self.shield.system='Armor';self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_pool_reject_wrong_owner(self):
+        lane=self.shield_pool_trial();self.shield.OwningCharacter=Node();self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_pool_reject_wrong_resource(self):
+        lane=self.shield_pool_trial();self.attr.definitions[self.R.TARGETS[self.mode][0]].Context.ResourceDef._name='Weapon_Shield';self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_pool_reject_wrong_property(self):
+        lane=self.shield_pool_trial();self.attr.definitions[self.R.TARGETS[self.mode][0]].Value.Property.ParsedPath[0].PropertyName='PassiveRegenerationRate';self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_pool_reject_ratio_mismatch(self):
+        lane=self.shield_pool_trial();self.native_pct=.6;self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_pool_reject_current_mismatch(self):
+        lane=self.shield_pool_trial();self.native_cur=40.;self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_pool_no_persistent(self):
+        lane=self.shield_pool_trial();self.assertRaises(ValueError,self.R.NativeRateTrial,self.mode,self.binding,self.resolve,lambda x:lambda:x,lambda:self.now,lambda:self.tid,self.msg.append,lambda:True,continuous=True)
+
+    def test_native_shield_pool_reject_swap_before_dispatch(self):
+        from test_shield_rates_r37 import ShieldRates
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin(),self.msg);self.shield=ShieldRates.make_shield(self);self.tick(lane);self.assertFalse(self.native)
+
+    def test_native_shield_pool_lost_eligibility_restores_original(self):
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.allowed=False;self.tick(lane,permit=False);self.tick(lane,permit=False);self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,10.)
+
+    def test_native_shield_pool_routes_existing_selection(self):
+        m=self.base.m;calls=[];m.begin_native_resource_rate=lambda mode,selection:calls.append((mode,selection))
+        for mode in ('shield_idle_rate','shield_idle_delay'):
+            m.execute_activation('native_rate_'+mode,2.);self.assertNotIn('native_rate_'+mode,m.NATIVE_AUTO_OPTIONS);self.assertRaises(ValueError,m.execute_activation,'native_rate_'+mode,1.)
+        self.assertEqual(calls,[('shield_idle_rate',2.),('shield_idle_delay',2.)])

@@ -23,10 +23,14 @@ SKILL_CONTEXT='/Script/OakGame.OakActionSkillResourcePoolResolver'
 TARGETS={
     'health': ('health_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'missing_health': ('health_resource_passive_missing_pct_regen','PassiveMissingPercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
+    'shield_idle_rate': ('shield_resource_idle_regen_rate','OnIdleRegenerationRate',HEALTH_CONTEXT,'Shield','ScaleMultiply',2.),
+    'shield_idle_delay': ('shield_resource_idle_regen_delay','OnIdleRegenerationDelay',HEALTH_CONTEXT,'Shield','ScaleMultiply',.5),
     'cooldown': ('Att_PlayerShared_ActionSkill_Pool_Cooldown_Rate','ActiveRegenerationRate',SKILL_CONTEXT,'Cooldown','ScaleMultiply',2.),
     'duration': ('Att_PlayerShared_ActionSkill_Pool_Duration_Rate','ConsumptionRate',SKILL_CONTEXT,'Duration','ScaleMultiply',.5),
 }
 HEALTH_MODES=frozenset(('health','missing_health'))
+SHIELD_MODES=frozenset(('shield_idle_rate','shield_idle_delay'))
+RESOURCE_MODES=HEALTH_MODES | SHIELD_MODES
 SPECS={
     'GetValueOfAttribute':(('AttributeDef','ZNameProperty'),('ContextSource','ZObjectProperty'),('DefaultValue','ZFloatProperty'),('ReturnValue','ZFloatProperty')),
     'AddModifierToGbxAttribute':(('attribute','ZGbxDefPtrProperty'),('ContextSource','ZObjectProperty'),('ModifierType','ZEnumProperty'),('modifiervalue','ZFloatProperty'),('bAutoRefresh','ZBoolProperty'),('ModifierActionResult','ZEnumProperty'),('ReturnValue','ZStructProperty')),
@@ -42,6 +46,10 @@ def trial_amount(mode,selection=None):
     """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
     if mode not in TARGETS:raise ValueError('unknown native rate trial')
     if selection is None:return TARGETS[mode][-1]
+    if mode in SHIELD_MODES:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=3 or selection==1:
+            raise ValueError('choose .5–3x shield speed other than 1x')
+        return selection if mode=='shield_idle_rate' else 1./selection
     if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<=selection<=5 or (mode not in HEALTH_MODES and selection==1):
         raise ValueError('select 1–5x health increment or above 1x skill factor')
     return .001*selection if mode in HEALTH_MODES else selection if mode=='cooldown' else 1./selection
@@ -89,11 +97,11 @@ class NativeBinding:
         c,v=d.Context,d.Value
         if c._type._path_name()!=ctx or v._type._path_name()!=VALUE:
             raise ValueError('unexpected native resolver kind')
-        if mode in HEALTH_MODES:
+        if mode in RESOURCE_MODES:
             resource_prop=prop(c._type,'ResourceDef','ZGameDataHandleProperty')
             resource=c.ResourceDef
             if resource._name!=selector or type(resource._type_handle) is not int or resource._type_handle<=0 or resource._type_handle!=resource_prop.TypeHandle:
-                raise ValueError('unexpected health resource identity')
+                raise ValueError('unexpected native resource identity')
             context_key=(resource._name,resource._type_handle,identity(resource))
         else:
             p=prop(c._type,'PoolType','ZEnumProperty')
@@ -162,8 +170,8 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
-        if mode=='missing_health' and continuous:
-            raise ValueError('missing-health rate is isolated manual only')
+        if mode in SHIELD_MODES | {'missing_health'} and continuous:
+            raise ValueError('native rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)
         self.record=None;self.fault=False;self.busy=False;self.used=False;self.stop_requested=False
@@ -347,11 +355,32 @@ def local_health_target(pawn,d,ht,readers):
     return key,handle(res,ht),maximum
 
 
+
+def local_shield_target(pawn,d,ht,readers,getter):
+    from .health_pulse import select_health
+    from .weapon_rates import nested
+    from .skill_pulse import handle
+    from .shield_rates import owned
+    shield=getter(pawn);owned(shield,pawn)
+    _,key,ratio=select_health(pawn,ht,'shield')
+    health=nested(pawn,'HealthState','OakCharacterHealthState')
+    matches=[st for st in health.HealthTypeStates if handle(st.HealthType,ht)==key]
+    if len(matches)!=1:raise ValueError('energy shield layer identity ambiguous')
+    current=numeric(nested(matches[0],'SimpleCurrentHealth','GbxAttributeFloat').Value)
+    maximum=numeric(nested(matches[0],'SimpleMaxHealth','GbxAttributeFloat').Value)
+    res=d.Context.ResourceDef
+    if type(res) is not ht or handle(res,ht)[1]!=readers[2]:raise ValueError('native Shield resource type mismatch')
+    direct_current=numeric(readers[0](pawn,res));direct_ratio=numeric(readers[1](pawn,res))
+    if not (0<current<=maximum<=1e9 and 0<direct_ratio<=1 and close(current,direct_current) and abs(ratio-direct_ratio)<=.005):
+        raise ValueError('native Shield resource does not agree with original energy layer')
+    if identity(getter(pawn))!=identity(shield):raise ValueError('equipped shield changed during observation')
+    return shield,(key,handle(res,ht),maximum)
+
 def handle_identity(h):
     return h._name,h._type_handle,identity(h)
 
 
-def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader=None):
+def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader=None,shield_getter=None):
     """Independently witness native pool ownership before allowing a modifier.
 
     Existing Health layer or action skill readers are never used to refill.
@@ -373,6 +402,9 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                 if identity(peer)==identity(d) or handle_identity(peer.Context.ResourceDef)!=handle_identity(d.Context.ResourceDef):
                     raise ValueError('missing-health and ordinary rate must be distinct on the same Health resource')
                 pool_key=(*pool_key,peer_key,binding.read('health',pawn))
+        elif mode in SHIELD_MODES:
+            shield,pool_key=local_shield_target(pawn,d,ht,health_readers,shield_getter)
+            objs=(pc,pawn,state,shield)
         else:
             # The read-only reader can inspect the same authoritative local
             # actor during cleanup even if the player-count gate is now false.
@@ -403,4 +435,4 @@ def original_pool_identity(mode,key):
     definition,pool=key
     # Maxima are witnesses, not identities. A handle must still be removable
     # after an anomalous maximum change if the original owner/pool is intact.
-    return definition,(pool[:2] if mode in HEALTH_MODES else pool[0])
+    return definition,(pool[:2] if mode in RESOURCE_MODES else pool[0])
