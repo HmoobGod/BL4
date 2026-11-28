@@ -343,9 +343,11 @@ class SkillPulse:
         self.follow_candidate=None;self.prev=values;self.pending=None;self.rises=0;self.last_delta=None;self.sample_at=now
         self.report('EXPERIMENT: distinct local skill replacement admitted; fresh trend required')
         return True
-    def resolve(self,initial=False,refresh=False):
+    def resolve(self,initial=False,refresh=False,*,cleanup_only=False):
+        if cleanup_only and not (self.read_only and initial and refresh):
+            raise ValueError('cleanup observation requires read-only skill reader')
         pc,pawn,state,ok=self.context()
-        if not ok or enum_name(pawn.HealthCondition)!='Healthy': raise ValueError('eligible living local player required')
+        if (ok is not True and not (cleanup_only and ok is False)) or enum_name(pawn.HealthCondition)!='Healthy': raise ValueError('eligible living local player required')
         if initial:
             owned=self.owned_skills(pawn)
         else:

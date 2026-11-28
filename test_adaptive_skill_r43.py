@@ -142,3 +142,30 @@ class AdaptiveSkill(unittest.TestCase):
         self.assertEqual(len(reader.api),3);self.assertEqual(reader.resolve(initial=True,refresh=True)[4],(.2,.8))
         with self.assertRaisesRegex(ValueError,'cannot arm'):reader.begin()
         reader.tick(True);self.assertIsNone(reader.record);self.assertEqual(self.s.calls,[])
+
+    def test_native_rate_manual_cooldown_join_cleanup(self):
+        self.native_rate_fixture('cooldown')
+        self.m.activate_feature('native_rate_cooldown',2.);self.m.monitor_tick();self.s.advance(dt=.2)
+        self.assertEqual(self.rate_calls,['add'])
+        self.s.b.f.players=2
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_calls,['add','remove']);self.assertEqual(self.rate_value,2.)
+        self.assertFalse(self.m.health_fault());self.assertFalse(self.m.health_active());self.assertEqual(self.s.calls,[])
+
+    def test_native_rate_persistent_duration_join_cleanup(self):
+        self.native_rate_fixture('duration')
+        self.m.apply({'persistent_master':True,'persistent_offline':True,'persistent_native_rate_duration':True,'native_rate_selection_duration':2.})
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_calls,['add']);self.assertEqual(self.rate_value,1.)
+        self.s.b.f.players=2
+        for _ in range(4):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_calls,['add','remove']);self.assertEqual(self.rate_value,2.)
+        self.assertFalse(self.m.health_fault());self.assertNotIn('native_rate_duration',self.m._automation_leases);self.assertEqual(self.s.calls,[])
+
+    def test_native_rate_join_replaced_skill_no_cleanup_dispatch(self):
+        self.native_rate_fixture('cooldown')
+        self.m.activate_feature('native_rate_cooldown',2.);self.m.monitor_tick();self.s.advance(dt=.2)
+        self.assertEqual(self.rate_calls,['add'])
+        self.s.b.f.players=2;self.s.skills=[]
+        for _ in range(3):self.s.advance(dt=.3)
+        self.assertEqual(self.rate_calls,['add']);self.assertTrue(self.m.health_fault());self.assertEqual(self.s.calls,[])

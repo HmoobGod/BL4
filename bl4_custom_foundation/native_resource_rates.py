@@ -34,6 +34,10 @@ SPECS={
 }
 
 
+class EligibilityLost(ValueError):
+    """Authoritative context returned a false eligibility flag; not an add failure."""
+
+
 def trial_amount(mode,selection=None):
     """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
     if mode not in TARGETS:raise ValueError('unknown native rate trial')
@@ -166,10 +170,12 @@ class NativeRateTrial:
         self.handle=None;self.phase='idle';self.baseline=None;self.expected=None;self.anomaly=False;self.due=0.
         self.next_selection=None
 
-    def dispatch_target(self,cleanup=False):
-        # Cleanup for the isolated missing-health lane must not depend on an
-        # independently observed peer's readback remaining available.
-        resolver=getattr(self.resolve,'original',self.resolve) if cleanup and self.mode=='missing_health' else self.resolve
+    def dispatch_target(self,cleanup=False,restore_verify=False):
+        # Only removal of an already-owned handle may use the original scope
+        # after eligibility loss. Verification still requires the full witness,
+        # including peer readbacks and maxima; it does not grant add permission.
+        resolver=(getattr(self.resolve,'original',self.resolve) if cleanup else
+                  getattr(self.resolve,'restored',self.resolve) if restore_verify else self.resolve)
         objs,key,d=resolver()
         ids=tuple(identity(o) for o in objs)
         if len(ids)<3 or len(set(ids))!=len(ids):raise ValueError('ambiguous local owner identity')
@@ -179,13 +185,13 @@ class NativeRateTrial:
                 raise ValueError('original local pool/session changed')
         return objs,key,d
 
-    def snapshot(self):
-        objs,key,d=self.dispatch_target()
+    def snapshot(self,restore_verify=False):
+        objs,key,d=self.dispatch_target(restore_verify=restore_verify)
         value=self.binding.read(self.mode,objs[1])
         return objs,key,d,value
 
-    def stable_snapshot(self):
-        a=self.snapshot();b=self.snapshot()
+    def stable_snapshot(self,restore_verify=False):
+        a=self.snapshot(restore_verify);b=self.snapshot(restore_verify)
         if tuple(identity(x) for x in a[0])!=tuple(identity(x) for x in b[0]) or a[1]!=b[1] or not close(a[3],b[3]):
             raise ValueError('local resource identity or rate changed during preflight')
         return b
@@ -225,7 +231,7 @@ class NativeRateTrial:
         self.dispatch_target(cleanup=True)
         h=self.handle;self.handle=None # never retry even if native raises
         self.binding.remove(h)
-        _,_,_,value=self.stable_snapshot()
+        _,_,_,value=self.stable_snapshot(restore_verify=True)
         if not close(value,self.baseline):raise ValueError('immediate removal did not restore baseline')
         self.phase='verify';self.verify_at=self.clock()+.15
 
@@ -261,7 +267,7 @@ class NativeRateTrial:
                 raise ValueError('original game hook thread unavailable')
             if self.phase=='verify':
                 if self.clock()<self.verify_at:return
-                _,_,_,value=self.stable_snapshot()
+                _,_,_,value=self.stable_snapshot(restore_verify=True)
                 if not close(value,self.baseline):raise ValueError('delayed removal readback differs from baseline')
                 if self.anomaly:raise ValueError('unexpected add response; original value restored')
                 self.record=None;self.phase='done';self.report('EXPERIMENT: native rate baseline restored immediately and on delayed readback; gameplay effect unverified.');return
@@ -285,6 +291,7 @@ class NativeRateTrial:
             self.expected=self.target_value(value)
             self.used=True;self.phase='active';self.due=self.clock()+.25
             self.handle,echo_ok=self.binding.add(self.mode,d,objs[1],self.selection)
+            if not echo_ok:self.anomaly=True
             _,_,_,observed=self.stable_snapshot()
             if not echo_ok or not close(observed,self.expected):
                 self.anomaly=True;self.cleanup();return
@@ -295,7 +302,9 @@ class NativeRateTrial:
             # if the original pool identity can still be proven. Never repeat a
             # native removal after an uncertain dispatch.
             if self.phase=='active' and self.handle is not None:
-                self.anomaly=True
+                # A false eligibility flag alone is a normal stop. Other
+                # failures (including uncertain add responses) stay faulted.
+                self.anomaly=self.anomaly or not isinstance(e,EligibilityLost)
                 try:self.cleanup()
                 except Exception as cleanup_error:self.fail(str(e)[:65]+'; '+str(cleanup_error)[:65])
             else:self.fail(str(e)[:120])
@@ -349,9 +358,11 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
     Skill pool maxima are pinned to catch the known erroneous duration MaxValue
     parsed-path mapping; this does not assert actual timing or rate units.
     """
-    def resolve(include_peer=True):
+    def resolve(include_peer=True,cleanup_only=False):
         pc,pawn,state,ok=context()
-        if ok is not True or pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+        if ok is False and not cleanup_only:
+            raise EligibilityLost('local native rate eligibility ended')
+        if (ok is not True and not (cleanup_only and ok is False)) or pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
             raise ValueError('eligible local OakCharacter required')
         d,def_key=binding.definition(mode)
         if mode in HEALTH_MODES:
@@ -363,19 +374,28 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                     raise ValueError('missing-health and ordinary rate must be distinct on the same Health resource')
                 pool_key=(*pool_key,peer_key,binding.read('health',pawn))
         else:
-            objs,key,ref,resources,_,_=skill_reader.resolve(initial=True,refresh=True)
+            # The read-only reader can inspect the same authoritative local
+            # actor during cleanup even if the player-count gate is now false.
+            objs,key,ref,resources,_,_=(skill_reader.resolve(initial=True,refresh=True,cleanup_only=True)
+                if cleanup_only and ok is False else skill_reader.resolve(initial=True,refresh=True))
             if tuple(identity(o) for o in objs[:3])!=tuple(identity(o) for o in (pc,pawn,state)):
                 raise ValueError('action skill local session changed')
             maxes=tuple(numeric(skill_reader.api[2](ref,h)) for h in resources)
             if len(maxes)!=2 or any(not 0<m<=1e9 for m in maxes):raise ValueError('invalid native skill maximum')
             pool_key=(key,maxes)
         fresh=context()
-        if fresh[3] is not True or tuple(identity(o) for o in fresh[:3])!=tuple(identity(o) for o in objs[:3]):
+        if fresh[3] is False and not cleanup_only:
+            raise EligibilityLost('local native rate eligibility ended during observation')
+        if (fresh[3] is not True and not (cleanup_only and fresh[3] is False)) or tuple(identity(o) for o in fresh[:3])!=tuple(identity(o) for o in objs[:3]):
             raise ValueError('local session changed during rate resolution')
         return objs,(def_key,pool_key),d
-    # The original owner and target are still fully validated for cleanup.
-    # Peer absence/drift remains a fault during immediate/delayed readback.
-    if mode=='missing_health':resolve.original=lambda:resolve(False)
+    # The caller must match the original weak owner, pool, and thread before
+    # removing its saved handle. Production context still requires local
+    # authority and a non-dedicated server; it never returns client authority.
+    # Allow the eligibility boolean to be false only for removal/readback.
+    # Missing-health peer absence remains a fault during full verification.
+    resolve.original=lambda:resolve(include_peer=False,cleanup_only=True)
+    resolve.restored=lambda:resolve(cleanup_only=True)
     return resolve
 
 
