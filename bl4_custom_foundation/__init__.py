@@ -539,7 +539,7 @@ def draw():
         if not options:
             ui.text('No supported gameplay controls here; turn off Compact menu to view previews.')
     if _category == 0 and not compact:
-        ui.text_wrapped('Damage slider uses the equipped ordinary gun fire behavior. Separate isolated actor gun test uses the same selection. Elemental and incoming modifiers are separate; hit effects unverified.')
+        ui.text_wrapped('Damage slider uses the equipped ordinary gun fire behavior. Separate isolated native gun test uses the same selection (actor entry first, removable weapon attribute fallback). Elemental and incoming modifiers are separate; hit effects unverified.')
     if _category == 1 and not compact:
         ui.text_wrapped('Pickup cash and Eridium: isolated experimental 30-second trials. XP experiment failed; XP controls are preview only. Use a backup character; earned rewards are not reversed.')
         ui.text_wrapped(_reward_summary)
@@ -725,7 +725,7 @@ def draw():
         name = FEATURES[key][0]
         if key == 'damage':
             ui.text_wrapped('Experimental equipped gun damage, not skill/melee/global damage. Apply while idle; 1x restores. Actual hit effects unverified.')
-            if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native actor gun damage (30 sec)'):
+            if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gun damage (30 sec)'):
                 activate_feature(GUN_TRIAL_KEY,displayed_selection(o))
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
@@ -1341,9 +1341,8 @@ def begin_blackboard_reward(key, selection):
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
-    if len(defs)!=1:raise ValueError('native attribute definition struct unavailable')
+    if len(defs)!=1 and key!=GUN_TRIAL_KEY:raise ValueError('native attribute definition struct unavailable')
     fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
-    binding=(GunBinding if key==GUN_TRIAL_KEY else CashPrimaryBinding if key=='progress_money' else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
     session=bound_session(sdk)
     def permitted():
         hooks=sdk.hooks
@@ -1352,7 +1351,20 @@ def begin_blackboard_reward(key, selection):
                 and _monitor_thread==threading.get_ident()
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     args=(lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
-    _health_pulse=(GunTrial if key==GUN_TRIAL_KEY else CashPrimaryTrial if key=='progress_money' else Trial)(key,selection,binding,*args)
+    if key==GUN_TRIAL_KEY:
+        from .native_resource_rates import NativeBinding, SPECS as RATE_SPECS
+        from .native_weapon_damage import make_trial, choose_gun_trial
+        def primary():
+            if len(defs)!=1:raise ValueError('native actor attribute definition unavailable')
+            binding=GunBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+            return GunTrial(key,selection,binding,*args)
+        def fallback():
+            native=NativeBinding([f for f in sdk.find_all('Function',exact=False) if str(f.Name) in RATE_SPECS],loot_bound,u.FGbxDefPtr,u.WrappedStruct)
+            return make_trial(native,*args,selection)
+        _health_pulse=choose_gun_trial(primary,fallback,report_live)
+        return
+    binding=(CashPrimaryBinding if key=='progress_money' else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    _health_pulse=(CashPrimaryTrial if key=='progress_money' else Trial)(key,selection,binding,*args)
     if key=='progress_money':
         def alternative():
             native=CashFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
@@ -1363,9 +1375,9 @@ def begin_blackboard_reward(key, selection):
 
 def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
-                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, LUCK_MODE, bind_health_readers, make_local_resolver, original_pool_identity)
+                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, LUCK_MODE, WEAPON_MODE, bind_health_readers, make_local_resolver, original_pool_identity)
     from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
-    if mode not in TARGETS or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
+    if mode not in TARGETS or mode==WEAPON_MODE or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     names=set(RATE_SPECS)|set(POOL_SPECS)|set(ACTION_NAMES)|{'GetResourcePoolValue','GetResourcePoolPercent','GetShield'}

@@ -22,8 +22,12 @@ SKILL_CONTEXT='/Script/OakGame.OakActionSkillResourcePoolResolver'
 LUCK_CONTEXT='/Script/GbxGame.GbxPlayerControllerContextResolver'
 LUCK_VALUE='/Script/OakGame.LuckCategoryValueResolver'
 LUCK_MODE='gear_luck'
+WEAPON_MODE='weapon_damage'
+WEAPON_CONTEXT='/Script/GbxWeapon.WeaponAttributeContextResolver'
+WEAPON_FIRE='/Script/GbxWeapon.WeaponBehavior_Fire'
 # Name, native property, exact context, selector, modifier, bounded experiment.
 TARGETS={
+    WEAPON_MODE: ('weapon_damage','Damage',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
     'health': ('health_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'missing_health': ('health_resource_passive_missing_pct_regen','PassiveMissingPercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
@@ -50,6 +54,10 @@ def trial_amount(mode,selection=None):
     """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
     if mode not in TARGETS:raise ValueError('unknown native rate trial')
     if selection is None:return TARGETS[mode][-1]
+    if mode==WEAPON_MODE:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=5 or selection==1:
+            raise ValueError('choose .5–5x damage other than 1x')
+        return selection
     if mode==LUCK_MODE:
         if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<selection<=10:
             raise ValueError('choose gear luck above 1x through 10x')
@@ -117,7 +125,18 @@ class NativeBinding:
             if enum_name(cat.CategoryType)!='ModifiableAttribute' or enum_name(cat.ModifierType)!='ScaleMultiply':
                 raise ValueError('gear luck must advertise a multiplicative modifiable category')
             return d,(identity(d),identity(d._type),identity(c._type),identity(v._type),selector,identity(cat))
-        if mode in RESOURCE_MODES:
+        if mode==WEAPON_MODE:
+            desc=prop(c._type,'BehaviorTypeToFurtherResolveTo','ZSoftClassProperty')
+            cls=c.BehaviorTypeToFurtherResolveTo
+            # The SDK may return None for unloaded soft classes. Never load or guess.
+            if (desc.MetaClass._path_name() not in ('/Script/GbxWeapon.WeaponBehavior','/Script/CoreUObject.Object','/Script/CoreUObject.Class') or cls is None
+                    or cls._path_name()!=WEAPON_FIRE):
+                raise ValueError('exact loaded fire behavior class unavailable')
+            prop(c._type,'usemodebitmask','ZUInt32Property')
+            mask=c.usemodebitmask
+            if type(mask) is not int or not 0<=mask<=0xffffffff:raise ValueError('invalid weapon use-mode mask')
+            context_key=(identity(cls),mask)
+        elif mode in RESOURCE_MODES:
             resource_prop=prop(c._type,'ResourceDef','ZGameDataHandleProperty')
             resource=c.ResourceDef
             if resource._name!=selector or type(resource._type_handle) is not int or resource._type_handle<=0 or resource._type_handle!=resource_prop.TypeHandle:
@@ -147,7 +166,7 @@ class NativeBinding:
 
     def read(self,mode,pawn):
         value=numeric(self.calls['GetValueOfAttribute'](TARGETS[mode][0],pawn,-123456.))
-        if not (0<=value<=1e4 if mode not in HEALTH_MODES else 0<=value<=.1):
+        if not (0<=value<=(1e6 if mode==WEAPON_MODE else 1e4) if mode not in HEALTH_MODES else 0<=value<=.1):
             raise ValueError('native rate unresolved or outside conservative range')
         if mode not in HEALTH_MODES and value<=0:raise ValueError('positive native skill rate required')
         return value
@@ -190,7 +209,7 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
-        if mode in SHIELD_MODES | {'missing_health',LUCK_MODE} and continuous:
+        if mode in SHIELD_MODES | {'missing_health',LUCK_MODE,WEAPON_MODE} and continuous:
             raise ValueError('native rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)
@@ -213,9 +232,12 @@ class NativeRateTrial:
                 raise ValueError('original local pool/session changed')
         return objs,key,d
 
+    def read_context(self,objs):
+        return objs[0] if self.mode==LUCK_MODE else objs[1]
+
     def snapshot(self,restore_verify=False):
         objs,key,d=self.dispatch_target(restore_verify=restore_verify)
-        value=self.binding.read(self.mode,objs[0] if self.mode==LUCK_MODE else objs[1])
+        value=self.binding.read(self.mode,self.read_context(objs))
         return objs,key,d,value
 
     def stable_snapshot(self,restore_verify=False):
@@ -227,7 +249,7 @@ class NativeRateTrial:
     def target_value(self,base):
         modifier=TARGETS[self.mode][-2];amount=trial_amount(self.mode,self.selection)
         expected=base+amount if modifier=='PostAdd' else base*amount
-        if not 0<expected<=(.1 if self.mode in HEALTH_MODES else 1e4):raise ValueError('native trial target outside conservative bound')
+        if not 0<expected<=(.1 if self.mode in HEALTH_MODES else 1e6 if self.mode==WEAPON_MODE else 1e4):raise ValueError('native trial target outside conservative bound')
         return expected
 
     def begin(self):
@@ -236,7 +258,7 @@ class NativeRateTrial:
             objs,key,_,base=self.stable_snapshot()
             if not self.permission():raise ValueError('local activation permission unavailable')
             self.target_value(base)
-            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+(30. if self.mode==LUCK_MODE else 10.) if not self.continuous else float('inf'))
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+(30. if self.mode in (LUCK_MODE,WEAPON_MODE) else 10.) if not self.continuous else float('inf'))
             self.baseline=base;self.phase='armed'
         except Exception as e:self.report('HOLD: native rate '+str(e)[:120]);return False
         self.report('EXPERIMENT: native '+self.mode+' rate armed; no refill pulses.');return True
@@ -318,7 +340,7 @@ class NativeRateTrial:
                 self.record=None;self.phase='idle';self.report('HOLD: native rate '+str(e)[:120]);return
             self.expected=self.target_value(value)
             self.used=True;self.phase='active';self.due=self.clock()+.25
-            self.handle,echo_ok=self.binding.add(self.mode,d,objs[0] if self.mode==LUCK_MODE else objs[1],self.selection)
+            self.handle,echo_ok=self.binding.add(self.mode,d,self.read_context(objs),self.selection)
             if not echo_ok:self.anomaly=True
             _,_,_,observed=self.stable_snapshot()
             if not echo_ok or not close(observed,self.expected):
