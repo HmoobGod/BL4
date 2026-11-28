@@ -78,7 +78,7 @@ CATEGORIES = [
 ]
 PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 _PREVIEW_BY_KEY = {o.identifier: o for o in PREVIEW}
-_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier == 'overall_loot_luck' or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
+_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier in ('overall_loot_luck','progress_money') or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Internal activation gate (legacy settings)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
@@ -125,10 +125,11 @@ SKILL_RATES = {k: SliderOption('adaptive_rate_'+k,1.,1.,3.,step=.1,is_integer=Fa
 NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=.1,is_integer=False,display_name=label)
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'),('vaultregen','Vault Power recharge speed'),('vaultdelay','Vault Power idle delay speed'),('vaultdepleted','Vault Power depleted delay speed'),('shieldpassive','Native passive shield increment (x 0.001)'))}
 NATIVE_RATE_OPTIONS['gear_luck'] = _PREVIEW_BY_KEY['overall_loot_luck']
-NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
+NATIVE_RATE_OPTIONS['cash'] = _PREVIEW_BY_KEY['progress_money']
+NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable earned pickup cash (experimental)' if k=='cash' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
 NATIVE_RATE_OPTIONS.update({mode:_PREVIEW_BY_KEY[key] for mode,key in SHIELD_POOL_KEYS.items()})
 NATIVE_AUTO_OPTIONS.update({'native_rate_'+mode:AUTO_OPTIONS[key] for mode,key in SHIELD_POOL_KEYS.items()})
-ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck' and k not in SHIELD_POOL_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in SHIELD_POOL_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; enable a feature.'
@@ -555,7 +556,7 @@ def draw():
     if _category == 0 and not compact:
         ui.text_wrapped('Damage slider uses the equipped ordinary gun fire behavior. Separate isolated native gun test uses the same selection (actor entry first, removable weapon attribute fallback). Elemental and incoming modifiers are separate; hit effects unverified.')
     if _category == 1 and not compact:
-        ui.text_wrapped('Pickup cash and Eridium: isolated experimental 30-second trials. XP experiment failed; XP controls are preview only. Use a backup character; earned rewards are not reversed.')
+        ui.text_wrapped('Pickup cash: continuous formula-witnessed toggle or isolated 30-second trial. Eridium: isolated trial only. XP experiment failed; XP controls are preview only. Use a backup character; earned rewards are not reversed.')
         ui.text_wrapped(_reward_summary)
         if ui.button('Run read-only reward compatibility check'):
             inspect_attribute_compatibility()
@@ -740,6 +741,11 @@ def draw():
         selected = o
         key = o.identifier
         if key in REWARD_KEYS:
+            if key=='progress_money':
+                flag=NATIVE_AUTO_OPTIONS['native_rate_cash']
+                draw_feature_toggle(ui,flag)
+                ui.text(_automation_status.get('native_rate_cash','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_cash' in _automation_leases else 'Off')
+                ui.text_wrapped('Continuous earned pickup cash requires native formula agreement. Editing the multiplier restores first; toggle off/on to rearm. Actual awards unverified.')
             if key == FAILED_XP_KEY:
                 ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
                 continue
@@ -2586,7 +2592,7 @@ def native_rate_allowed(kind,selection):
                 and AUTOMATION_OPTIONS['shield'].value is not True and 'shield' not in _automation_leases
                 and NATIVE_AUTO_OPTIONS['native_rate_shieldpassive'].value is not True and 'native_rate_shieldpassive' not in _automation_leases)
     if mode!='health' and selection<=1.:return False
-    if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
+    if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck','cash'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
         return not (AUTOMATION_OPTIONS['shield'].value is True or 'shield' in _automation_leases or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS) or (SHIELD_KEYS|{'healing_received'}).intersection(set(raw_auto_desired())|active))
@@ -2598,7 +2604,35 @@ def native_rate_allowed(kind,selection):
     return True
 
 
+def make_session_cash(session,selection):
+    from .blackboard_rewards import (CashPrimaryBinding,CashFormulaBinding,
+        SessionCashPrimary,SessionCashGeneric,SPECS,DEF)
+    sdk=sys.modules['unrealsdk'];u=sdk.unreal
+    defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
+    if len(defs)!=1:raise ValueError('native cash definition struct unavailable')
+    fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
+    def permitted():
+        try:
+            return (_monitor_thread==threading.get_ident() and
+                    feature_enabled(NATIVE_AUTO_OPTIONS['native_rate_cash']) and
+                    native_rate_allowed('native_rate_cash',selection) and automation_permitted())
+        except Exception:return False
+    args=(lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+    # Select the primary path before admission; use generic only after a
+    # read-only preflight failure. No fallback after the lane has armed.
+    primary=SessionCashPrimary('progress_money',selection,CashPrimaryBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct),*args)
+    try:
+        sample=primary.stable()
+        if not primary.formula_matches(sample[7],sample[3]):raise ValueError('primary formula unavailable')
+    except Exception:
+        return SessionCashGeneric('progress_money',selection,CashFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct),*args)
+    return primary
+
+
 def make_automation_lane(kind, session):
+    if kind=='native_rate_cash':
+        option=NATIVE_RATE_OPTIONS['cash']
+        return make_session_cash(session,normalize(option,option.value))
     if kind in NATIVE_AUTO_OPTIONS:
         mode=kind.removeprefix('native_rate_');option=NATIVE_RATE_OPTIONS[mode]
         return make_native_resource_rate(mode,normalize(option,option.value),persistent=True)
@@ -2837,7 +2871,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Saved gameplay settings (use F8)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k!='gear_luck' and k not in SHIELD_POOL_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
+options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in SHIELD_POOL_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']

@@ -368,9 +368,9 @@ class CashFormulaTrial(Trial):
                 self.outcome='cash entry readback checked; formula and actual pickup award unverified'
                 self.armed_note='existing primary cash entry witnessed; native formula unavailable; earned rewards are not reversed'
             self.base=(key,missing,v,fp,p,peers)
-            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),self.clock()+30.)
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),float('inf') if getattr(self,'continuous',False) else self.clock()+30.)
             self.phase='armed'
-            self.report('EXPERIMENT: '+self.name+' armed for 30 seconds; '+self.armed_note+'.');return True
+            self.report('EXPERIMENT: '+self.name+(' armed for this session; ' if getattr(self,'continuous',False) else ' armed for 30 seconds; ')+self.armed_note+'.');return True
         except Exception as e:self.report('HOLD: generic cash '+str(e)[:140]);return False
 
     def matches(self,s,v,fp):
@@ -414,6 +414,30 @@ def choose_cash_trial(primary,alternative):
     lane=alternative()
     lane.begin()
     return lane
+
+
+class SessionCashMixin:
+    """Opt-in session lease; only a witnessed native cash expression is admitted."""
+    requires_formula=True
+    continuous=True
+
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
+        self.selection=self.scale
+        self.next_selection=None
+
+    def rearm_verified(self,original,selection):
+        # A changed selection restores first. Explicit off/on is required to
+        # re-capture the scope; never silently follow a new character/board.
+        return False
+
+
+class SessionCashPrimary(SessionCashMixin,CashPrimaryTrial):
+    pass
+
+
+class SessionCashGeneric(SessionCashMixin,CashFormulaTrial):
+    pass
 
 
 MELEE_MODE='native_melee_damage'
