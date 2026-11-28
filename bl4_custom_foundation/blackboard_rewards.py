@@ -298,6 +298,10 @@ CASH_FORMULA='calc_cash_pickup'
 CASH_LEVEL='Att_ActorExperienceLevel'
 
 
+class CashFormulaConflict(ValueError):
+    pass
+
+
 class CashFormulaBinding(Binding):
     """Alternative existing cash entry, independently witnessed by cash formula.
 
@@ -305,6 +309,7 @@ class CashFormulaBinding(Binding):
     observed numeric result, not a guessed interpretation of native memory.
     """
     targets={'progress_money':CASH_GENERIC}
+    formula_peer=TARGETS['progress_money']
 
     def formula(self,pawn):
         d=self.def_type(CASH_FORMULA,self.def_struct,True)
@@ -317,12 +322,16 @@ class CashFormulaBinding(Binding):
         e=struct(v,'Expression',ENGINE+'GbxAttributeExpression')
         key=(identity(d),identity(c._type),identity(v._type),identity(e._type))
         read=self.calls['GetValueOfAttribute']
-        primary=number(read(TARGETS['progress_money'],pawn,-123456.))
+        primary=read(self.formula_peer,pawn,-123456.)
         level=read(CASH_LEVEL,pawn,-123456.)
         actual=read(CASH_FORMULA,pawn,-123456.)
+        if any(type(x) in (int,float) and x==-123456. for x in (primary,level,actual)):
+            raise ValueError('cash formula input unavailable')
+        try:primary=number(primary)
+        except ValueError as exc:raise CashFormulaConflict('invalid cash formula peer multiplier') from exc
         if (type(level) not in (int,float) or not math.isfinite(level) or not 1<=level<=1000 or int(level)!=level
                 or type(actual) not in (int,float) or not math.isfinite(actual) or not 0<actual<=4e7):
-            raise ValueError('cash formula or actor level unavailable')
+            raise CashFormulaConflict('cash formula or actor level invalid')
         return key,primary,float(level),float(actual)
 
 
@@ -330,18 +339,20 @@ class CashFormulaTrial(Trial):
     targets=CashFormulaBinding.targets
     outcome='cash formula readback checked; actual pickup award unverified'
     armed_note='existing generic cash entry and formula baseline witnessed; earned rewards are not reversed'
+    requires_formula=True
 
     def observe(self):
         s=super().observe()
         # An unavailable consumer must not prevent restoration of our still
         # positively identified existing entry after dispatch.
         try:witness=self.binding.formula(s[0][1])
+        except CashFormulaConflict:witness=('invalid',)
         except Exception:witness=None
         return (*s[:7],witness)
 
     @staticmethod
     def formula_matches(witness,value,baseline=None):
-        return (witness is not None and (baseline is None or witness[:3]==baseline)
+        return (witness is not None and len(witness)==4 and (baseline is None or witness[:3]==baseline)
                 and near(witness[3],4*witness[1]*witness[2]*value))
 
     def begin(self):
@@ -349,9 +360,13 @@ class CashFormulaTrial(Trial):
         try:
             objs,key,missing,v,fp,p,peers,witness=self.stable()
             self.target=number(v*self.scale)
-            if not self.formula_matches(witness,v):raise ValueError('existing cash formula does not agree with generic entry')
+            if (witness is None and self.requires_formula) or (witness is not None and not self.formula_matches(witness,v)):raise ValueError('existing cash formula does not agree with selected entry')
             if self.permission() is not True or near(v,self.target):raise ValueError('activation not permitted or ineffective target')
-            self.formula_base=witness[:3]
+            self.formula_base=witness[:3] if witness is not None else None
+            self.formula_level=witness[2] if witness is not None else None
+            if witness is None:
+                self.outcome='cash entry readback checked; formula and actual pickup award unverified'
+                self.armed_note='existing primary cash entry witnessed; native formula unavailable; earned rewards are not reversed'
             self.base=(key,missing,v,fp,p,peers)
             self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),self.clock()+30.)
             self.phase='armed'
@@ -359,7 +374,37 @@ class CashFormulaTrial(Trial):
         except Exception as e:self.report('HOLD: generic cash '+str(e)[:140]);return False
 
     def matches(self,s,v,fp):
-        return self.primary_matches(s,v,fp) and self.formula_matches(s[7],v,self.formula_base)
+        if not self.primary_matches(s,v,fp):return False
+        if self.formula_base is None:return not self.requires_formula
+        witness=s[7]
+        # The same player can legitimately level up from normal gameplay. Do
+        # not confuse that with foreign modifier drift. No level write, new
+        # reward call or multiplier recapture is performed. During admission
+        # require the original level; thereafter only a coherent nondecreasing
+        # level with the same expression and peer multiplier is accepted.
+        if self.phase=='armed':return self.formula_matches(witness,v,self.formula_base)
+        if (witness is None or len(witness)!=4 or witness[:2]!=self.formula_base[:2]
+                or witness[2]<self.formula_level or not self.formula_matches(witness,v)):
+            return False
+        self.formula_level=witness[2]
+        return True
+
+
+class CashPrimaryBinding(CashFormulaBinding):
+    targets={'progress_money':TARGETS['progress_money']}
+    formula_peer=CASH_GENERIC
+
+
+class CashPrimaryTrial(CashFormulaTrial):
+    """Preserve the original primary entry path if formula read is unavailable.
+
+    When available, require actual expression agreement, including after
+    restoration. A contradictory formula is not silently ignored.
+    """
+    targets=CashPrimaryBinding.targets
+    requires_formula=False
+    armed_note='existing primary cash entry and formula baseline witnessed; earned rewards are not reversed'
+    def peer_names(self):return (*super().peer_names(),CASH_GENERIC)
 
 
 def choose_cash_trial(primary,alternative):

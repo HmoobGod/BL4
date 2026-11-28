@@ -1336,14 +1336,14 @@ def begin_blackboard_reward(key, selection):
     global _health_pulse
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, CashFormulaBinding, CashFormulaTrial, choose_cash_trial, SPECS, DEF
+    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, choose_cash_trial, SPECS, DEF
     if key not in REWARD_KEYS | {GUN_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
     if len(defs)!=1:raise ValueError('native attribute definition struct unavailable')
     fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
-    binding=(GunBinding if key==GUN_TRIAL_KEY else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    binding=(GunBinding if key==GUN_TRIAL_KEY else CashPrimaryBinding if key=='progress_money' else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
     session=bound_session(sdk)
     def permitted():
         hooks=sdk.hooks
@@ -1352,7 +1352,7 @@ def begin_blackboard_reward(key, selection):
                 and _monitor_thread==threading.get_ident()
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     args=(lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
-    _health_pulse=(GunTrial if key==GUN_TRIAL_KEY else Trial)(key,selection,binding,*args)
+    _health_pulse=(GunTrial if key==GUN_TRIAL_KEY else CashPrimaryTrial if key=='progress_money' else Trial)(key,selection,binding,*args)
     if key=='progress_money':
         def alternative():
             native=CashFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)

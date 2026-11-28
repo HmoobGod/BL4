@@ -56,3 +56,42 @@ class CashFormulaTests(RewardTests):
         l=self.alternative();self.assertTrue(l.begin());self.tick(l);self.ok=False;self.permission=False;self.tick(l,permit=False);self.tick(l,permit=False);self.assertEqual(l.phase,'done',self.messages);self.assertEqual(self.values[self.generic][1],1.5)
     def test_no_fallback_after_armed_primary(self):
         l=self.primary_lane();self.assertTrue(l.begin());self.tick(l);self.assertIs(self.R.choose_cash_trial(l,lambda:self.fail('alternative called')),l);self.assertEqual(len(self.calls),1)
+    def witnessed_primary(self):
+        b=self.R.CashPrimaryBinding(self.fs,self.bound,lambda typ,Name:self.key(Name),FGbxDefPtr,self.defs,WrappedStruct)
+        b.calls['GetValueOfAttribute']=self.binding.calls['GetValueOfAttribute']
+        return self.R.CashPrimaryTrial('progress_money',2.,b,lambda:(self.pc,self.pawn,self.state,self.ok),lambda o:lambda:o,lambda:self.time,lambda:self.tid,self.messages.append,lambda:self.permission)
+    def test_primary_formula_cycle(self):
+        l=self.witnessed_primary();self.assertTrue(l.begin(),self.messages);self.assertIsNotNone(l.formula_base)
+        self.tick(l);self.assertEqual(l.phase,'active',self.messages);self.assertEqual(self.values[self.primary][1],4.)
+        l.stop('test');self.tick(l);self.tick(l);self.assertEqual(l.phase,'done',self.messages);self.assertEqual(self.values[self.primary][1],2.)
+    def test_primary_legacy_without_formula(self):
+        del self.defs.definitions[self.R.CASH_FORMULA];l=self.witnessed_primary();self.assertTrue(l.begin(),self.messages);self.assertIsNone(l.formula_base)
+        self.tick(l);self.assertEqual(l.phase,'active',self.messages);l.stop('test');self.tick(l);self.tick(l);self.assertEqual(l.phase,'done',self.messages)
+    def test_primary_formula_contradiction_no_dispatch(self):
+        self.override=123.;l=self.witnessed_primary();self.assertFalse(l.begin());self.assertFalse(self.calls)
+    def test_primary_formula_nonresponsive_restores(self):
+        l=self.witnessed_primary();self.assertTrue(l.begin());self.override=4*25*2*1.5
+        self.tick(l);self.assertTrue(l.fault);self.assertEqual(self.values[self.primary][1],2.);self.assertEqual(len(self.calls),2)
+    def test_generic_natural_level_gain(self):
+        l=self.alternative();self.assertTrue(l.begin());self.tick(l);self.level=26.;self.tick(l)
+        self.assertEqual(l.phase,'active',self.messages);self.assertEqual(l.formula_level,26.);self.assertEqual(len(self.calls),1)
+        l.stop('test');self.tick(l);self.level=27.;self.tick(l);self.assertEqual(l.phase,'done',self.messages);self.assertEqual(len(self.calls),2)
+    def test_primary_natural_level_gain(self):
+        l=self.witnessed_primary();self.assertTrue(l.begin());self.tick(l);self.level=26.;self.tick(l)
+        self.assertEqual(l.phase,'active',self.messages);l.stop('test');self.tick(l);self.tick(l);self.assertEqual(l.phase,'done',self.messages);self.assertEqual(len(self.calls),2)
+    def test_level_decrease_not_admitted(self):
+        l=self.alternative();self.assertTrue(l.begin());self.tick(l);self.level=24.;self.tick(l)
+        self.assertTrue(l.fault);self.assertEqual(self.values[self.generic][1],1.5);self.assertEqual(len(self.calls),2)
+    def test_primary_generic_peer_drift_restores(self):
+        l=self.witnessed_primary();self.assertTrue(l.begin());self.tick(l);self.values[self.generic]=('Float',1.7);self.tick(l)
+        self.assertTrue(l.fault);self.assertEqual(self.values[self.primary][1],2.);self.assertEqual(self.values[self.generic][1],1.7);self.assertEqual(len(self.calls),2)
+    def test_primary_no_fallback_after_formula_attempt(self):
+        l=self.witnessed_primary();self.assertTrue(l.begin());self.tick(l)
+        self.assertIs(self.R.choose_cash_trial(l,lambda:self.fail('alternative called')),l);self.assertEqual(len(self.calls),1)
+    def test_primary_zero_formula_not_unavailable(self):
+        self.override=0.;l=self.witnessed_primary();self.assertFalse(l.begin());self.assertFalse(self.calls)
+    def test_primary_invalid_level_not_unavailable(self):
+        self.level=25.5;l=self.witnessed_primary();self.assertFalse(l.begin());self.assertFalse(self.calls)
+    def test_primary_sentinel_formula_preserves_legacy(self):
+        self.override=-123456.;l=self.witnessed_primary();self.assertTrue(l.begin(),self.messages);self.assertIsNone(l.formula_base)
+        self.tick(l);self.assertEqual(l.phase,'active',self.messages);l.stop('test');self.tick(l);self.tick(l);self.assertEqual(l.phase,'done',self.messages)
