@@ -52,11 +52,13 @@ class GunFormulaTests(GunTests):
     def test_backend_switch_blocked(self):
         m=self.base.m;m.AUTO_OPTIONS['damage'].value=True;m.set_auto_setting(m.GUN_ACTOR_BACKEND,True);self.assertFalse(m.GUN_ACTOR_BACKEND.value)
     def test_cash_conflict(self):
+        # Pending cash admission still excludes the dependent gun, but cash
+        # itself can arm first. An already captured gun must drain first.
         m=self.base.m;m.GUN_ACTOR_BACKEND.value=True;m.AUTO_OPTIONS['damage'].value=True;m._PREVIEW_BY_KEY['damage'].value=2.
         cash=m.NATIVE_AUTO_OPTIONS['native_rate_cash'];cash.value=True;m._PREVIEW_BY_KEY['progress_money'].value=2.
-        self.assertFalse(m.native_rate_allowed('native_rate_gun_actor',2.));self.assertFalse(m.native_rate_allowed('native_rate_cash',2.))
+        self.assertFalse(m.native_rate_allowed('native_rate_gun_actor',2.));self.assertTrue(m.native_rate_allowed('native_rate_cash',2.))
         cash.value=False;self.assertTrue(m.native_rate_allowed('native_rate_gun_actor',2.));cash.value=True;m.AUTO_OPTIONS['damage'].value=False;self.assertTrue(m.native_rate_allowed('native_rate_cash',2.))
-        m._automation_leases['native_rate_gun_actor']=object();self.assertFalse(m.native_rate_allowed('native_rate_cash',2.))
+        m._automation_leases['native_rate_gun_actor']=Node(record=object());self.assertFalse(m.native_rate_allowed('native_rate_cash',2.))
     def test_backend_factory(self):
         m=self.base.m;m._PREVIEW_BY_KEY['damage'].value=.5;seen=[];m.make_session_gun=lambda session,scale:seen.append((session,scale)) or 'gun';self.assertEqual(m.make_automation_lane('native_rate_gun_actor','scope'),'gun');self.assertEqual(seen,[('scope',.5)])
 

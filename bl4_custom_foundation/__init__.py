@@ -749,7 +749,7 @@ def draw():
                 flag=NATIVE_AUTO_OPTIONS['native_rate_cash']
                 draw_feature_toggle(ui,flag)
                 ui.text(_automation_status.get('native_rate_cash','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_cash' in _automation_leases else 'Off')
-                ui.text_wrapped('Continuous earned pickup cash requires native formula agreement; native actor gun backend must be OFF. Editing the multiplier restores first; toggle off/on to rearm. Actual awards unverified.')
+                ui.text_wrapped('Continuous earned pickup cash requires native formula agreement. Cash can coexist with actor gun damage after cash is active. Changing cash restores actor gun first; toggle it off/on to rearm after cash settles. Actual awards unverified.')
             if key == FAILED_XP_KEY:
                 ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
                 continue
@@ -774,7 +774,7 @@ def draw():
         if key == 'damage':
             changed_backend,chosen_backend=ui.checkbox(GUN_ACTOR_BACKEND.display_name+'##'+GUN_ACTOR_BACKEND.identifier,GUN_ACTOR_BACKEND.value is True)
             if changed_backend:set_auto_setting(GUN_ACTOR_BACKEND,chosen_backend)
-            ui.text_wrapped('Actor backend uses the existing Damage slider and toggle; turn damage OFF and restore before switching. All five gun-family formulas and the additive expression must agree. Native cash must be OFF. Linked companion effects possible. Actual hits unverified.')
+            ui.text_wrapped('Actor backend uses the existing Damage slider and toggle; turn damage OFF and restore before switching. All five gun-family formulas and the additive expression must agree. If using native cash, enable cash first. Cash changes restore actor gun before cash; toggle Damage off/on after cash settles. Linked companion effects possible. Actual hits unverified.')
             ui.text_wrapped('Experimental gun damage; equipped field backend by default. Apply while idle; 1x restores. Actual hit effects unverified.')
             if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gun damage (30 sec)'):
                 activate_feature(GUN_TRIAL_KEY,displayed_selection(o))
@@ -2592,6 +2592,32 @@ def ensure_crossfire_events():
     return owner
 
 
+CASH_LANE = 'native_rate_cash'
+ACTOR_GUN_LANE = 'native_rate_gun_actor'
+
+
+def cash_session_requested():
+    return (NATIVE_AUTO_OPTIONS[CASH_LANE].value is True
+            and normalize(NATIVE_RATE_OPTIONS['cash'],NATIVE_RATE_OPTIONS['cash'].value)>1.)
+
+
+def actor_gun_receipt_live():
+    lane=_automation_leases.get(ACTOR_GUN_LANE)
+    return lane is not None and getattr(lane,'record',None) is not None
+
+
+def cash_settled_for_actor_gun():
+    # Gun's peer snapshot includes the original primary cash entry. Capture
+    # only after cash is stable, and never let cash intentionally change while
+    # a gun receipt still exists (including its delayed restore verification).
+    cash=_automation_leases.get(CASH_LANE)
+    if cash is None:
+        return not cash_session_requested() or CASH_LANE in _automation_attempted
+    return (cash_session_requested() and not cash.fault and not cash.stop_requested
+            and cash.record is not None and cash.phase=='active' and cash.owned
+            and normalize(NATIVE_RATE_OPTIONS['cash'],NATIVE_RATE_OPTIONS['cash'].value)==cash.selection)
+
+
 def native_rate_allowed(kind,selection):
     mode=kind.removeprefix('native_rate_')
     option=NATIVE_RATE_OPTIONS[mode]
@@ -2601,8 +2627,7 @@ def native_rate_allowed(kind,selection):
     if mode=='gun_actor':
         return (GUN_ACTOR_BACKEND.value is True and .5<=selection<=5. and selection!=1.
                 and (_controller is None or 'damage' not in _controller.records)
-                and NATIVE_AUTO_OPTIONS['native_rate_cash'].value is not True
-                and 'native_rate_cash' not in _automation_leases)
+                and cash_settled_for_actor_gun())
     if mode in SHIELD_POOL_KEYS:
         active=set(_controller.records) if _controller is not None else set()
         return (SHIELD_POOL_BACKEND.value is True and .5<=selection<=3. and selection!=1.
@@ -2611,8 +2636,10 @@ def native_rate_allowed(kind,selection):
                 and NATIVE_AUTO_OPTIONS['native_rate_shieldpassive'].value is not True and 'native_rate_shieldpassive' not in _automation_leases)
     if mode!='health' and selection<=1.:return False
     if mode=='cash':
-        return not ((GUN_ACTOR_BACKEND.value is True and AUTO_OPTIONS['damage'].value is True)
-                    or 'native_rate_gun_actor' in _automation_leases)
+        cash=_automation_leases.get(CASH_LANE)
+        return (not actor_gun_receipt_live() or
+                (cash is not None and cash.record is not None and cash.phase=='active'
+                 and cash.owned and not cash.fault and not cash.stop_requested))
     if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
@@ -2650,6 +2677,15 @@ def make_session_cash(session,selection):
     return primary
 
 
+def cooperating_cash_scope(gun,cash):
+    # Read-only original scope proof for the cooperating session. The gun
+    # still verifies every original peer value, including cash.
+    gun_scope=gun.scope();cash_scope=cash.scope()
+    return (not cash.stop_requested and gun.board_key==cash.board_key
+            and tuple(identity(x) for x in gun_scope)==tuple(identity(x) for x in cash_scope)
+            and cash.record[2]==threading.get_ident())
+
+
 def make_session_gun(session,selection):
     from .blackboard_rewards import GunFormulaBinding,SessionGunTrial,SPECS,DEF,GUN_MODE
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
@@ -2658,11 +2694,18 @@ def make_session_gun(session,selection):
     fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
     def permitted():
         try:
-            return (_monitor_thread==threading.get_ident() and feature_enabled(AUTO_OPTIONS['damage'])
-                    and native_rate_allowed('native_rate_gun_actor',selection) and automation_permitted())
+            if not (_monitor_thread==threading.get_ident() and feature_enabled(AUTO_OPTIONS['damage'])
+                    and native_rate_allowed(ACTOR_GUN_LANE,selection) and automation_permitted()):return False
+            cash=_automation_leases.get(CASH_LANE)
+            # Both lanes independently revalidate their original scope on
+            # their existing cadence. Only admission/dispatch needs the
+            # cross-scope proof; do not add per-frame native scans.
+            if cash is None or lane.phase not in ('idle','armed'):return True
+            return cooperating_cash_scope(lane,cash)
         except Exception:return False
     binding=GunFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
-    return SessionGunTrial(GUN_MODE,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+    lane=SessionGunTrial(GUN_MODE,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+    return lane
 
 
 def make_automation_lane(kind, session):
@@ -2758,11 +2801,37 @@ def automation_tick():
             # A failed permission observation denies new actions, but must not
             # prevent the original handle from reaching its cleanup path.
             permitted=False
+        # A paired cash tick must not independently restore first merely
+        # because its own permission or original scope became invalid. Run
+        # the same fast permission check, and only probe scope when its
+        # existing half-second observation is due. On a normal fast-path
+        # frame this replaces, rather than duplicates, cash's no-op tick.
+        paired_cash_wait=False
+        cash=_automation_leases.get(CASH_LANE)
+        if (permitted and actor_gun_receipt_live() and cash is not None
+                and not cash.fault and not cash.stop_requested and cash.phase=='active'
+                and native_rate_allowed(CASH_LANE,cash.selection)):
+            try:
+                if cash.permission() is not True:cash.stop('paired cash permission ended')
+                elif cash.clock()<cash.due:paired_cash_wait=True
+                else:cash.scope()
+            except Exception:
+                cash.stop('paired cash original scope unavailable')
         rearmed=set()
-        for kind in NATIVE_AUTO_OPTIONS:
+        # Drain the gun first, because its peer witness includes cash. Keep
+        # both original restore checks unchanged; a dependent gun must finish
+        # its delayed verification before a planned cash restore may dispatch.
+        for kind in (ACTOR_GUN_LANE,*(k for k in NATIVE_AUTO_OPTIONS if k!=ACTOR_GUN_LANE)):
             lease=_automation_leases.get(kind)
             if lease is None or lease.fault:continue
             if not permitted or lease.stop_requested or not native_rate_allowed(kind,lease.selection):
+                if kind==CASH_LANE and actor_gun_receipt_live():
+                    stop_automation_lane(ACTOR_GUN_LANE,'cash transition; restore gun first')
+                    if not lease.stop_requested:lease.stop('waiting for original gun restoration')
+                    lease.next_selection=None
+                    _automation_attempted.add(kind)
+                    _automation_status[kind]='Restoring actor gun first; then restore cash'
+                    continue
                 pending=lease.next_selection
                 if (not permitted or pending is None or not native_rate_allowed(kind,pending)
                         or not feature_enabled(NATIVE_AUTO_OPTIONS[kind])):
@@ -2791,7 +2860,7 @@ def automation_tick():
             return
         # Each lane has its own fresh session and weak identity validation. Never share a native object across lanes.
         for kind in (*AUTOMATION_OPTIONS,*NATIVE_AUTO_OPTIONS):
-            if kind in rearmed:continue
+            if kind in rearmed or (kind==CASH_LANE and paired_cash_wait):continue
             # The legacy equipped-field backend must not incur pool admission work.
             if kind=='native_rate_gun_actor' and GUN_ACTOR_BACKEND.value is not True:
                 continue
