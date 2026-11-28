@@ -6,12 +6,30 @@ from .weapon_rates import active_weapon, mode, matching_behavior, nested, prop, 
 
 PATH = '/Script/GbxWeapon.WeaponStatics:'
 REQUEST = '/Script/GbxWeapon.Weapon:ServerStartReloading'
+RELOAD_ENDED_PATH = '/Script/OakGame.OakUIDataCollector_WeaponStatus:OnReloadEnded'
+TRANSITION_STATES = frozenset(('Inactive', 'Equipping', 'PuttingDown'))
 SPECS = {
     'GetLoadedAmmo': (('Weapon','ZObjectProperty'),('UseMode','ZByteProperty'),('ReturnValue','ZIntProperty')),
     'GetMaxLoadedAmmo': (('Weapon','ZObjectProperty'),('UseMode','ZByteProperty'),('ReturnValue','ZIntProperty')),
     'IsLocalWeaponAuthority': (('WeaponUser','ZObjectProperty'),('ReturnValue','ZBoolProperty')),
 }
 REQUEST_SIG = (('UseModeIndex','ZByteProperty'),('Flags_0','ZByteProperty'))
+
+
+def behavior_use_mode_index(behavior):
+    """Parse native BL4 multi-mode behavior names such as UM0_... / UM1_... to an int index."""
+    try:
+        name = str(behavior.Name)
+    except Exception:
+        return None
+    if not name.startswith('UM'):
+        return None
+    digits = []
+    for ch in name[2:]:
+        if not ch.isdigit():
+            break
+        digits.append(ch)
+    return int(''.join(digits)) if digits else None
 
 
 def bind(functions, existing):
@@ -40,15 +58,49 @@ def count(v):
     return v
 
 
+class ReloadCompletionObserver:
+    """Read-only native OnReloadEnded event witness for an active ReloadAssist."""
+
+    def __init__(self, assist, thread):
+        self.assist = assist
+        self.thread = thread
+        self.events = 0
+
+    def on_reload_ended(self, obj, args):
+        try:
+            weapon = getattr(args, 'EventWeapon', None)
+            if weapon is None:
+                return
+            if self.assist.note_reload_ended(weapon, self.thread()):
+                self.events += 1
+        except Exception:
+            return
+
+
 class ReloadAssist:
-    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False,session_mode=False):
+    def __init__(self,context,weak,api,fn,clock,thread,report,continuous=False,session_mode=False,recover_mid_reload_swap=False):
         self.context,self.weak,self.api,self.fn=context,weak,api,fn
         self.continuous=continuous
         self.session_mode=session_mode and continuous
+        self.recover_mid_reload_swap=bool(recover_mid_reload_swap) and self.session_mode
         self.clock,self.thread,self.report=clock,thread,report
         self.record=None;self.fault=False;self.busy=False
         self.recent=deque();self.swap_paused=False;self.reserve_paused=False
         self.previous=None;self.empty_seen=False;self.waiting=False;self.saw_reload=False;self.completed=0;self.completion_samples=0;self.completion_deadline=0
+
+    def note_reload_ended(self, weapon, tid=None):
+        """Record a witnessed native OnReloadEnded event for the pinned active weapon."""
+        if self.record is None or not self.waiting:
+            return False
+        refs, key, expected_tid, _, _ = self.record
+        if tid is not None and tid != expected_tid:
+            return False
+        if len(key[0]) <= 3 or refs[3]() is None:
+            return False
+        if identity(weapon) != key[0][3] or identity(refs[3]()) != key[0][3]:
+            return False
+        self.saw_reload = True
+        return True
 
     def resolve(self, check_weapon=True):
         pc,pawn,state,ok=self.context()
@@ -91,7 +143,7 @@ class ReloadAssist:
             return True
         states=tuple(str(w.CurrentState) for w in weapons_from_entries(entries).values())
         if any(state in STATES for state in states):return False
-        if any(state!='Inactive' for state in states):raise ValueError('unknown weapon state during wait')
+        if any(state not in TRANSITION_STATES for state in states):raise ValueError('unknown weapon state during wait')
         return True
 
     def begin(self):
@@ -123,6 +175,9 @@ class ReloadAssist:
             self.record=None;self.previous=None;self.empty_seen=False
             self.report('STOP: auto reload '+reason+'; an already started normal reload is not cancelled')
 
+    def _clear_waiting_on_swap(self):
+        self.waiting=False;self.saw_reload=False;self.completion_samples=0;self.completion_deadline=0
+
     def session_sample(self, snapshot):
         """Only retarget between requests, in the same weakly pinned player/session.
         A pending transition suppresses all requests; a replacement must be idle
@@ -136,7 +191,9 @@ class ReloadAssist:
                 or self.api[2](pawn) is not True):
             raise ValueError('original reload session changed')
         if self.waiting_for_weapon(pawn):
-            if self.waiting:raise ValueError('swap during unconfirmed reload')
+            if self.waiting:
+                if not self.recover_mid_reload_swap:raise ValueError('swap during unconfirmed reload')
+                self._clear_waiting_on_swap()
             if self.record is snapshot:
                 self.swap_paused=True;self.previous=None;self.empty_seen=False
                 self.record=(refs,key,tid,end,self.clock()+.1)
@@ -155,7 +212,9 @@ class ReloadAssist:
         if not changed and any(r() is None or identity(r())!=i for r,i in zip(refs[3:],key[0][3:],strict=True)):
             raise ValueError('original weapon identity lost')
         if changed or self.swap_paused:
-            if self.waiting:raise ValueError('swap during unconfirmed reload')
+            if self.waiting:
+                if not self.recover_mid_reload_swap:raise ValueError('swap during unconfirmed reload')
+                self._clear_waiting_on_swap()
             if native_state not in STATES:raise ValueError('unsupported replacement state')
             new_refs=tuple(self.weak(o) for o in objs)
             if self.record is not snapshot:return None

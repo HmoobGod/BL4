@@ -78,7 +78,7 @@ CATEGORIES = [
 ]
 PREVIEW = [o for _, _, items in CATEGORIES for o in items if o is not probe]
 _PREVIEW_BY_KEY = {o.identifier: o for o in PREVIEW}
-_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier in ('overall_loot_luck','progress_money') or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
+_COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier in ('overall_loot_luck','progress_money','progress_eridium') or (o.identifier in FEATURES and o.identifier not in DAMAGE_HOLD)) for _, _, items in CATEGORIES)
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Internal activation gate (legacy settings)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
@@ -128,11 +128,12 @@ NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'),('vaultregen','Vault Power recharge speed'),('vaultdelay','Vault Power idle delay speed'),('vaultdepleted','Vault Power depleted delay speed'),('shieldpassive','Native passive shield increment (x 0.001)'))}
 NATIVE_RATE_OPTIONS['gear_luck'] = _PREVIEW_BY_KEY['overall_loot_luck']
 NATIVE_RATE_OPTIONS['cash'] = _PREVIEW_BY_KEY['progress_money']
+NATIVE_RATE_OPTIONS['eridium'] = _PREVIEW_BY_KEY['progress_eridium']
 NATIVE_RATE_OPTIONS['melee'] = SliderOption('native_rate_selection_melee',1.,.5,5.,step=.1,is_integer=False,display_name='Melee attack damage (experimental)')
-NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable earned pickup cash (experimental)' if k=='cash' else 'Enable melee attack damage (experimental)' if k=='melee' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
+NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable earned pickup cash (experimental)' if k=='cash' else 'Enable earned pickup Eridium (experimental)' if k=='eridium' else 'Enable melee attack damage (experimental)' if k=='melee' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
 NATIVE_RATE_OPTIONS.update({mode:_PREVIEW_BY_KEY[key] for mode,key in NATIVE_BACKEND_KEYS.items()})
 NATIVE_AUTO_OPTIONS.update({'native_rate_'+mode:AUTO_OPTIONS[key] for mode,key in NATIVE_BACKEND_KEYS.items()})
-ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in NATIVE_BACKEND_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash','eridium') and k not in NATIVE_BACKEND_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; enable a feature.'
@@ -754,6 +755,11 @@ def draw():
                 draw_feature_toggle(ui,flag)
                 ui.text(_automation_status.get('native_rate_cash','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_cash' in _automation_leases else 'Off')
                 ui.text_wrapped('Continuous earned pickup cash requires native formula agreement. Cash can coexist with actor gun damage after cash is active. Changing cash restores actor gun first; toggle it off/on to rearm after cash settles. Actual awards unverified.')
+            if key=='progress_eridium':
+                flag=NATIVE_AUTO_OPTIONS['native_rate_eridium']
+                draw_feature_toggle(ui,flag)
+                ui.text(_automation_status.get('native_rate_eridium','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_eridium' in _automation_leases else 'Off')
+                ui.text_wrapped('Continuous earned pickup Eridium requires native calc_eridium_pickup formula agreement. Isolated from cash, purchases and XP. Disable cash/actor gun/melee before enabling. Actual awards unverified.')
             if key == FAILED_XP_KEY:
                 ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
                 continue
@@ -1401,7 +1407,7 @@ def begin_blackboard_reward(key, selection):
     global _health_pulse
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    from .blackboard_rewards import Binding, Trial, GunFormulaBinding, GunFormulaTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, choose_cash_trial, MeleeBinding, MeleeTrial, SPECS, DEF
+    from .blackboard_rewards import Binding, Trial, GunFormulaBinding, GunFormulaTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, EridiumFormulaBinding, EridiumFormulaTrial, choose_cash_trial, MeleeBinding, MeleeTrial, SPECS, DEF
     if key not in REWARD_KEYS | {MELEE_TRIAL_KEY,GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
@@ -1440,8 +1446,8 @@ def begin_blackboard_reward(key, selection):
             return make_trial(native,*args,selection)
         _health_pulse=choose_gun_trial(primary,fallback,report_live)
         return
-    binding=(CashPrimaryBinding if key=='progress_money' else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
-    _health_pulse=(CashPrimaryTrial if key=='progress_money' else Trial)(key,selection,binding,*args)
+    binding=(CashPrimaryBinding if key=='progress_money' else EridiumFormulaBinding if key=='progress_eridium' else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    _health_pulse=(CashPrimaryTrial if key=='progress_money' else EridiumFormulaTrial if key=='progress_eridium' else Trial)(key,selection,binding,*args)
     if key=='progress_money':
         def alternative():
             native=CashFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
@@ -2598,6 +2604,7 @@ def ensure_crossfire_events():
 
 
 CASH_LANE = 'native_rate_cash'
+ERIDIUM_LANE = 'native_rate_eridium'
 ACTOR_GUN_LANE = 'native_rate_gun_actor'
 MELEE_LANE = 'native_rate_melee'
 
@@ -2611,6 +2618,11 @@ def actor_gun_requested():
 def cash_session_requested():
     return (NATIVE_AUTO_OPTIONS[CASH_LANE].value is True
             and normalize(NATIVE_RATE_OPTIONS['cash'],NATIVE_RATE_OPTIONS['cash'].value)>1.)
+
+
+def eridium_session_requested():
+    return (NATIVE_AUTO_OPTIONS[ERIDIUM_LANE].value is True
+            and normalize(NATIVE_RATE_OPTIONS['eridium'],NATIVE_RATE_OPTIONS['eridium'].value)>1.)
 
 
 def actor_gun_receipt_live():
@@ -2638,10 +2650,10 @@ def native_rate_allowed(kind,selection):
         return False
     if mode=='melee':
         return (.5<=selection<=5. and selection!=1.
-                and not cash_session_requested() and not actor_gun_requested()
-                and CASH_LANE not in _automation_leases and ACTOR_GUN_LANE not in _automation_leases)
+                and not cash_session_requested() and not actor_gun_requested() and not eridium_session_requested()
+                and CASH_LANE not in _automation_leases and ACTOR_GUN_LANE not in _automation_leases and ERIDIUM_LANE not in _automation_leases)
     if mode=='gun_actor':
-        return (MELEE_LANE not in _automation_leases and GUN_ACTOR_BACKEND.value is True and .5<=selection<=5. and selection!=1.
+        return (MELEE_LANE not in _automation_leases and ERIDIUM_LANE not in _automation_leases and GUN_ACTOR_BACKEND.value is True and .5<=selection<=5. and selection!=1.
                 and (_controller is None or 'damage' not in _controller.records)
                 and cash_settled_for_actor_gun())
     if mode in SHIELD_POOL_KEYS:
@@ -2653,9 +2665,13 @@ def native_rate_allowed(kind,selection):
     if mode!='health' and selection<=1.:return False
     if mode=='cash':
         cash=_automation_leases.get(CASH_LANE)
-        return (MELEE_LANE not in _automation_leases and (not actor_gun_receipt_live() or
+        return (MELEE_LANE not in _automation_leases and ERIDIUM_LANE not in _automation_leases and (not actor_gun_receipt_live() or
                 (cash is not None and cash.record is not None and cash.phase=='active'
                  and cash.owned and not cash.fault and not cash.stop_requested)))
+    if mode=='eridium':
+        return (1.<selection<=10.
+                and not cash_session_requested() and not actor_gun_requested()
+                and CASH_LANE not in _automation_leases and ACTOR_GUN_LANE not in _automation_leases and MELEE_LANE not in _automation_leases)
     if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
@@ -2691,6 +2707,22 @@ def make_session_cash(session,selection):
     except Exception:
         return SessionCashGeneric('progress_money',selection,CashFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct),*args)
     return primary
+
+
+def make_session_eridium(session,selection):
+    from .blackboard_rewards import EridiumFormulaBinding,SessionEridiumTrial,SPECS,DEF
+    sdk=sys.modules['unrealsdk'];u=sdk.unreal
+    defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
+    if len(defs)!=1:raise ValueError('native eridium definition struct unavailable')
+    fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
+    def permitted():
+        try:
+            return (_monitor_thread==threading.get_ident() and
+                    feature_enabled(NATIVE_AUTO_OPTIONS[ERIDIUM_LANE]) and
+                    native_rate_allowed(ERIDIUM_LANE,selection) and automation_permitted())
+        except Exception:return False
+    binding=EridiumFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    return SessionEridiumTrial('progress_eridium',selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
 
 
 def cooperating_cash_scope(gun,cash):
@@ -2749,6 +2781,9 @@ def make_automation_lane(kind, session):
     if kind=='native_rate_cash':
         option=NATIVE_RATE_OPTIONS['cash']
         return make_session_cash(session,normalize(option,option.value))
+    if kind==ERIDIUM_LANE:
+        option=NATIVE_RATE_OPTIONS['eridium']
+        return make_session_eridium(session,normalize(option,option.value))
     if kind in NATIVE_AUTO_OPTIONS:
         mode=kind.removeprefix('native_rate_');option=NATIVE_RATE_OPTIONS[mode]
         return make_native_resource_rate(mode,normalize(option,option.value),persistent=True)
@@ -3027,7 +3062,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Saved gameplay settings (use F8)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in NATIVE_BACKEND_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
+options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash','eridium') and k not in NATIVE_BACKEND_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']

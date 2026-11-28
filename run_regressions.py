@@ -335,6 +335,23 @@ from test_cash_gun_integration import CashGunIntegration
 for name in CashGunIntegration.__dict__:
     if name.startswith('test_'):
         t=CashGunIntegration(name);unique[t.id()]=t
+from test_session_eridium import EridiumFormulaTests, SessionEridiumUI
+for cls in (EridiumFormulaTests, SessionEridiumUI):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
+from test_gear_pickup import GearPickupTests
+for name in GearPickupTests.__dict__:
+    if name.startswith('test_'):
+        t=GearPickupTests(name);unique[t.id()]=t
+from test_reload_compatibility import ReloadCompatibilityTests
+for name in ReloadCompatibilityTests.__dict__:
+    if name.startswith('test_'):
+        t=ReloadCompatibilityTests(name);unique[t.id()]=t
+from test_xp_observer import XPObserverTests
+for name in XPObserverTests.__dict__:
+    if name.startswith('test_'):
+        t=XPObserverTests(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

@@ -457,6 +457,95 @@ class SessionCashGeneric(SessionCashMixin,CashFormulaTrial):
     pass
 
 
+ERIDIUM_FORMULA='calc_eridium_pickup'
+
+
+class EridiumFormulaConflict(ValueError):
+    pass
+
+
+class EridiumFormulaBinding(Binding):
+    """Existing Eridium pickup entry witnessed by native calc_eridium_pickup expression.
+
+    Decoded NCS evidence (bl4db.json, lagarrueal/borderlands4-save-editor):
+    calc_eridium_pickup = 1 * attr(Att_PickupEridium_Multiplier) via
+    ActorContextResolver + GbxExpressionValueResolver. Never writes definitions
+    or touches cash/purchase/shared party currency.
+    """
+    targets={'progress_eridium':TARGETS['progress_eridium']}
+
+    def formula(self,pawn):
+        d=self.def_type(ERIDIUM_FORMULA,self.def_struct,True)
+        if type(d) is not self.def_type or d._name!=ERIDIUM_FORMULA or identity(d._type)!=identity(self.def_struct):
+            raise ValueError('exact eridium formula definition unavailable')
+        for k in ('Context','Value'):prop(d._type,k,'ZGbxInlineStructProperty')
+        c,v=d.Context,d.Value
+        if c._type._path_name()!=ENGINE+'ActorContextResolver' or v._type._path_name()!=ENGINE+'GbxExpressionValueResolver':
+            raise ValueError('eridium formula resolver mismatch')
+        e=struct(v,'Expression',ENGINE+'GbxAttributeExpression')
+        key=(identity(d),identity(c._type),identity(v._type),identity(e._type))
+        actual=self.calls['GetValueOfAttribute'](ERIDIUM_FORMULA,pawn,-123456.)
+        if type(actual) in (int,float) and actual==-123456.:
+            raise ValueError('eridium formula output unavailable')
+        try:actual=number(actual)
+        except ValueError as exc:raise EridiumFormulaConflict('eridium formula output invalid') from exc
+        return key,float(actual)
+
+
+class EridiumFormulaTrial(Trial):
+    """Formula-witnessed Eridium pickup multiplier; isolated from cash and XP peers."""
+    targets=EridiumFormulaBinding.targets
+    requires_formula=False
+    outcome='eridium formula readback checked; actual pickup award unverified'
+    armed_note='existing eridium entry and calc_eridium_pickup baseline witnessed; earned rewards are not reversed'
+
+    def peer_names(self):return (*super().peer_names(),CASH_GENERIC)
+
+    def observe(self):
+        s=super().observe()
+        # An unavailable consumer must not prevent cleanup of an identified owned entry.
+        try:witness=self.binding.formula(s[0][1])
+        except EridiumFormulaConflict:witness=('invalid',)
+        except Exception:witness=None
+        return (*s[:7],witness)
+
+    @staticmethod
+    def formula_matches(witness,value,baseline=None):
+        return (witness is not None and len(witness)==2
+                and (baseline is None or witness[0]==baseline)
+                and near(witness[1],float(value)))
+
+    def begin(self):
+        if self.record or self.fault or self.phase!='idle':return False
+        try:
+            objs,key,missing,v,fp,p,peers,witness=self.stable()
+            self.target=number(v*self.scale)
+            if (witness is None and self.requires_formula) or (witness is not None and not self.formula_matches(witness,v)):
+                raise ValueError('existing eridium formula does not agree with selected entry')
+            if self.permission() is not True or near(v,self.target):
+                raise ValueError('activation not permitted or ineffective target')
+            self.formula_base=witness[0] if witness is not None else None
+            if witness is None:
+                self.outcome='eridium entry readback checked; formula and actual pickup award unverified'
+                self.armed_note='existing eridium entry witnessed; native formula unavailable; earned rewards are not reversed'
+            self.base=(key,missing,v,fp,p,peers)
+            continuous=getattr(self,'continuous',False)
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),float('inf') if continuous else self.clock()+30.)
+            self.phase='armed'
+            self.report('EXPERIMENT: '+self.name+(' armed for this session; ' if continuous else ' armed for 30 seconds; ')+self.armed_note+'.');return True
+        except Exception as e:self.report('HOLD: native eridium '+str(e)[:140]);return False
+
+    def matches(self,s,v,fp):
+        if not self.primary_matches(s,v,fp):return False
+        if self.formula_base is None:return not self.requires_formula
+        return self.formula_matches(s[7],v,self.formula_base)
+
+
+class SessionEridiumTrial(SessionCashMixin,EridiumFormulaTrial):
+    """Opt-in continuous Eridium pickup lease requiring calc_eridium_pickup agreement."""
+    pass
+
+
 MELEE_MODE='native_melee_damage'
 MELEE_KEY='caused_damage_melee_attack_multiplier'
 MELEE_PEER='caused_damage_melee_multiplier'
