@@ -307,6 +307,10 @@ from test_critical_chance import CriticalChance
 for name in CriticalChance.__dict__:
     if name.startswith('test_'):
         t=CriticalChance(name);unique[t.id()]=t
+from test_melee_damage import MeleeDamageTests
+for name in MeleeDamageTests.__dict__:
+    if name.startswith('test_'):
+        t=MeleeDamageTests(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

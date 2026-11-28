@@ -15,6 +15,7 @@ from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shi
 from .gadget_rates import KEY as GADGET_KEY
 REWARD_KEYS = frozenset(('progress_enemy_xp', 'progress_money', 'progress_eridium'))
 GUN_TRIAL_KEY = 'native_gun_damage'
+MELEE_TRIAL_KEY = 'native_melee_damage'
 RELOAD_TRIAL_KEY = 'native_weapon_reload'
 FIRE_RATE_TRIAL_KEY = 'native_weapon_fire_rate'
 FAILED_XP_KEY = 'progress_enemy_xp'
@@ -764,6 +765,9 @@ def draw():
             ui.text_wrapped('Experimental equipped gun damage, not skill/melee/global damage. Apply while idle; 1x restores. Actual hit effects unverified.')
             if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gun damage (30 sec)'):
                 activate_feature(GUN_TRIAL_KEY,displayed_selection(o))
+            if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native melee attack damage (30 sec)'):
+                activate_feature(MELEE_TRIAL_KEY,displayed_selection(o))
+            ui.text_wrapped('Melee test uses the same damage selection, but requires a separate local attack attribute and matching native expression. Actual melee damage unverified.')
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
         if key == 'gravity':
@@ -1379,8 +1383,8 @@ def begin_blackboard_reward(key, selection):
     global _health_pulse
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, choose_cash_trial, SPECS, DEF
-    if key not in REWARD_KEYS | {GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
+    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, choose_cash_trial, MeleeBinding, MeleeTrial, SPECS, DEF
+    if key not in REWARD_KEYS | {MELEE_TRIAL_KEY,GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
@@ -1399,6 +1403,11 @@ def begin_blackboard_reward(key, selection):
         from .native_weapon_damage import make_reload_trial, make_fire_rate_trial
         native=NativeBinding([f for f in sdk.find_all('Function',exact=False) if str(f.Name) in RATE_SPECS],loot_bound,u.FGbxDefPtr,u.WrappedStruct)
         _health_pulse=(make_reload_trial if key==RELOAD_TRIAL_KEY else make_fire_rate_trial)(native,*args,selection)
+        _health_pulse.begin()
+        return
+    if key==MELEE_TRIAL_KEY:
+        binding=MeleeBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+        _health_pulse=MeleeTrial(key,selection,binding,*args)
         _health_pulse.begin()
         return
     if key==GUN_TRIAL_KEY:
@@ -1787,7 +1796,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in REWARD_KEYS | {GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY,'native_rate_gear_luck','native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','repair_assist','repair_assist_continuous','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {MELEE_TRIAL_KEY,GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY,'native_rate_gear_luck','native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','repair_assist','repair_assist_continuous','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1822,7 +1831,7 @@ def execute_activation(key, selection):
     # Called exclusively by monitor_tick after the explicit queued F8 action.
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    if key in REWARD_KEYS | {GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY}:
+    if key in REWARD_KEYS | {MELEE_TRIAL_KEY,GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY}:
         begin_blackboard_reward(key, selection)
         return
     if key in ('loot_vacuum','loot_vacuum_continuous'):

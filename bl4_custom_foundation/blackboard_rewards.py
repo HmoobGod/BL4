@@ -414,3 +414,68 @@ def choose_cash_trial(primary,alternative):
     lane=alternative()
     lane.begin()
     return lane
+
+
+MELEE_MODE='native_melee_damage'
+MELEE_KEY='caused_damage_melee_attack_multiplier'
+MELEE_PEER='caused_damage_melee_multiplier'
+MELEE_FORMULA='calc_caused_damage_melee_attack_multiplier'
+
+
+class MeleeBinding(GunBinding):
+    """Existing actor melee-attack entry, with independent expression witness."""
+    targets={MELEE_MODE:MELEE_KEY}
+    def context_path(self,name):
+        if name!=MELEE_KEY:raise ValueError('unsupported melee attribute')
+        return ENGINE+'ActorContextResolver'
+
+    def formula(self,pawn):
+        d=self.def_type(MELEE_FORMULA,self.def_struct,True)
+        if type(d) is not self.def_type or d._name!=MELEE_FORMULA or identity(d._type)!=identity(self.def_struct):
+            raise ValueError('exact melee formula unavailable')
+        for k in ('Context','Value'):prop(d._type,k,'ZGbxInlineStructProperty')
+        c,v=d.Context,d.Value
+        if c._type._path_name()!=ENGINE+'ActorContextResolver' or v._type._path_name()!=ENGINE+'GbxExpressionValueResolver':
+            raise ValueError('melee formula resolver mismatch')
+        e=struct(v,'Expression',ENGINE+'GbxAttributeExpression')
+        key=(identity(d),identity(c._type),identity(v._type),identity(e._type))
+        read=self.calls['GetValueOfAttribute']
+        return key,number(read(MELEE_PEER,pawn,-123456.)),number(read(MELEE_FORMULA,pawn,-123456.))
+
+
+class MeleeTrial(GunTrial):
+    targets=MeleeBinding.targets
+    outcome='melee expression readback checked; actual melee hit damage unverified'
+    armed_note='existing local melee attack entry and independent expression witnessed'
+
+    def peer_names(self):return (*super().peer_names(),GUN_KEY)
+
+    def observe(self):
+        s=super().observe()
+        # Missing formula must not prevent cleanup of an identified owned entry.
+        try:w=self.binding.formula(s[0][1])
+        except Exception:w=None
+        return (*s[:7],w)
+
+    @staticmethod
+    def formula_matches(w,value,baseline=None):
+        return (w is not None and (baseline is None or w[:2]==baseline)
+                and near(w[2],w[1]+value-1.))
+
+    def begin(self):
+        if self.record or self.fault or self.phase!='idle':return False
+        try:
+            objs,key,missing,v,fp,p,peers,w=self.stable()
+            self.target=number(v*self.scale)
+            if not self.formula_matches(w,v) or not 0<w[1]+self.target-1.<=100:
+                raise ValueError('melee formula baseline or target invalid')
+            if self.permission() is not True or near(v,self.target):raise ValueError('activation not permitted or ineffective target')
+            self.formula_base=w[:2]
+            self.base=(key,missing,v,fp,p,peers)
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),self.clock()+30.)
+            self.phase='armed'
+            self.report('EXPERIMENT: '+self.name+' armed for 30 seconds; '+self.armed_note+'.');return True
+        except Exception as e:self.report('HOLD: melee '+str(e)[:140]);return False
+
+    def matches(self,s,v,fp):
+        return self.primary_matches(s,v,fp) and self.formula_matches(s[7],v,self.formula_base)
