@@ -531,3 +531,34 @@ class NativeRateTests(unittest.TestCase):
         for mode in ('shield_idle_rate','shield_idle_delay'):
             m.execute_activation('native_rate_'+mode,2.);self.assertNotIn('native_rate_'+mode,m.NATIVE_AUTO_OPTIONS);self.assertRaises(ValueError,m.execute_activation,'native_rate_'+mode,1.)
         self.assertEqual(calls,[('shield_idle_rate',2.),('shield_idle_delay',2.)])
+
+    def set_shield_charge(self,current,ratio=None):
+        self.pawn.HealthState.HealthTypeStates[0].SimpleCurrentHealth.Value=current
+        self.native_cur=current;self.native_pct=current/100 if ratio is None else ratio
+
+    def test_native_shield_depletion_during_active_trial_restores(self):
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin());self.tick(lane)
+        self.set_shield_charge(0.);self.tick(lane,.3)
+        self.assertEqual(lane.phase,'active',self.msg);self.assertEqual(len(self.native),1)
+        lane.stop('restore while depleted');self.tick(lane);self.tick(lane)
+        self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,10.)
+
+    def test_native_shield_depletion_before_dispatch_after_positive_witness(self):
+        lane=self.shield_pool_trial('shield_idle_delay',4.,2.);self.assertTrue(lane.begin())
+        self.set_shield_charge(0.);self.tick(lane);self.assertEqual(lane.phase,'active',self.msg)
+        self.set_shield_charge(25.);lane.stop('restore');self.tick(lane);self.tick(lane)
+        self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,4.)
+
+    def test_native_shield_initial_zero_still_refused(self):
+        lane=self.shield_pool_trial();self.set_shield_charge(0.)
+        self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_depleted_disagreeing_ratio_refused(self):
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin());self.set_shield_charge(0.,.001)
+        self.tick(lane);self.assertFalse(self.native)
+
+    def test_native_shield_depleted_replacement_refused(self):
+        from test_shield_rates_r37 import ShieldRates
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin());self.tick(lane)
+        self.set_shield_charge(0.);self.shield=ShieldRates.make_shield(self)
+        lane.stop('swap');self.tick(lane);self.assertTrue(lane.fault);self.assertEqual(len(self.native),1)

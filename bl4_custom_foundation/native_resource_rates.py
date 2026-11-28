@@ -376,7 +376,7 @@ def local_health_target(pawn,d,ht,readers):
 
 
 
-def local_shield_target(pawn,d,ht,readers,getter):
+def local_shield_target(pawn,d,ht,readers,getter,allow_empty=False):
     from .health_pulse import select_health
     from .weapon_rates import nested
     from .skill_pulse import handle
@@ -391,7 +391,10 @@ def local_shield_target(pawn,d,ht,readers,getter):
     res=d.Context.ResourceDef
     if type(res) is not ht or handle(res,ht)[1]!=readers[2]:raise ValueError('native Shield resource type mismatch')
     direct_current=numeric(readers[0](pawn,res));direct_ratio=numeric(readers[1](pawn,res))
-    if not (0<current<=maximum<=1e9 and 0<direct_ratio<=1 and close(current,direct_current) and abs(ratio-direct_ratio)<=.005):
+    # Zero native reads could also mean an unresolved pool. Admit depletion
+    # only after the resolver has independently witnessed the same positive pool.
+    if not (0<=current<=maximum<=1e9 and maximum>0 and 0<=direct_ratio<=1 and close(current,direct_current) and abs(ratio-direct_ratio)<=.005
+            and (current>0 and direct_ratio>0 or allow_empty is True and current==direct_current==direct_ratio==0)):
         raise ValueError('native Shield resource does not agree with original energy layer')
     if identity(getter(pawn))!=identity(shield):raise ValueError('equipped shield changed during observation')
     return shield,(key,handle(res,ht),maximum)
@@ -407,7 +410,9 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
     Skill pool maxima are pinned to catch the known erroneous duration MaxValue
     parsed-path mapping; this does not assert actual timing or rate units.
     """
+    shield_scope=None
     def resolve(include_peer=True,cleanup_only=False):
+        nonlocal shield_scope
         pc,pawn,state,ok=context()
         if ok is False and not cleanup_only:
             raise EligibilityLost('local native rate eligibility ended')
@@ -439,8 +444,11 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                     raise ValueError('missing-health and ordinary rate must be distinct on the same Health resource')
                 pool_key=(*pool_key,peer_key,binding.read('health',pawn))
         elif mode in SHIELD_MODES:
-            shield,pool_key=local_shield_target(pawn,d,ht,health_readers,shield_getter)
+            shield,pool_key=local_shield_target(pawn,d,ht,health_readers,shield_getter,allow_empty=shield_scope is not None)
             objs=(pc,pawn,state,shield)
+            candidate=(tuple(identity(o) for o in objs),def_key,pool_key[:2])
+            if shield_scope is not None and candidate!=shield_scope:
+                raise ValueError('original shield witness changed')
         else:
             # The read-only reader can inspect the same authoritative local
             # actor during cleanup even if the player-count gate is now false.
@@ -456,6 +464,8 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
             raise EligibilityLost('local native rate eligibility ended during observation')
         if (fresh[3] is not True and not (cleanup_only and fresh[3] is False)) or tuple(identity(o) for o in fresh[:3])!=tuple(identity(o) for o in objs[:3]):
             raise ValueError('local session changed during rate resolution')
+        if mode in SHIELD_MODES and shield_scope is None and not cleanup_only:
+            shield_scope=candidate
         return objs,(def_key,pool_key),d
     # The caller must match the original weak owner, pool, and thread before
     # removing its saved handle. Production context still requires local

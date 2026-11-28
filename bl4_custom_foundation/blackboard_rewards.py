@@ -156,8 +156,18 @@ class Trial:
         self.record=None;self.fault=False;self.busy=False;self.phase='idle';self.stop_requested=False;self.due=0.;self.owned=False
     def scope(self):
         pc,pawn,state,ok=self.context()
-        if ok is not True or pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name() or identity(pc.Pawn)!=identity(pawn):raise ValueError('original local character required')
-        struct(pawn,'blackboard',ENGINE+'GbxBlackboard')
+        # Currency trials can clean up their own original board after a false
+        # eligibility observation, but must never activate in that state.
+        if not self.controller_context and ok is False and self.record and self.phase in ('active','verify'):
+            self.stop_requested=True
+        elif ok is not True:raise ValueError('original local character required')
+        if pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name() or identity(pc.Pawn)!=identity(pawn):raise ValueError('original local character required')
+        board=struct(pawn,'blackboard',ENGINE+'GbxBlackboard')
+        if not self.controller_context:
+            if pc.Class._path_name()!='/Script/OakGame.OakPlayerController' or 'Default__' in pc._path_name():raise ValueError('exact local currency controller required')
+            board_key=(identity(board),identity(board._type))
+            if getattr(self,'board_key',board_key)!=board_key:raise ValueError('original currency blackboard scope lost')
+            self.board_key=board_key
         if self.controller_context and (pc.Class._path_name()!='/Script/OakGame.OakPlayerController' or 'Default__' in pc._path_name()):raise ValueError('exact local XP controller required')
         objs=(pc,pawn,state);ids=tuple(identity(o) for o in objs)
         if len(set(ids))!=3:raise ValueError('ambiguous owner identity')

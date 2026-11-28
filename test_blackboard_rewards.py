@@ -170,3 +170,26 @@ class RewardTests(unittest.TestCase):
         l=self.lane();self.assertTrue(l.begin());self.tick(l);self.assertTrue(l.fault);self.assertEqual(other,orig);self.assertEqual(self.values,orig);self.assertEqual(len(self.calls),2)
     def test_controller_changed_before_dispatch(self):
         l=self.lane();self.assertTrue(l.begin());self.pc=Node(Pawn=self.pawn,Class=self.pc.Class);self.tick(l);self.assertFalse(self.calls)
+
+    def test_currency_original_board_cleanup_after_eligibility_loss(self):
+        for key in ('progress_money','progress_eridium'):
+            with self.subTest(key=key):
+                self.ok=True;self.calls.clear();original=dict(self.values)
+                l=self.lane(key);self.assertTrue(l.begin());self.tick(l);self.ok=False
+                self.tick(l,permit=False);self.tick(l,permit=False)
+                self.assertEqual(l.phase,'done',self.messages);self.assertEqual(self.values,original);self.assertEqual(len(self.calls),2)
+
+    def test_currency_ineligible_before_dispatch_refused(self):
+        l=self.lane('progress_money');self.assertTrue(l.begin());self.ok=False;self.tick(l)
+        self.assertFalse(self.calls);self.assertEqual(l.phase,'done')
+
+    def test_currency_replacement_board_before_dispatch_refused(self):
+        l=self.lane('progress_eridium');self.assertTrue(l.begin());self.pawn.blackboard=Node(_type=self.pawn.blackboard._type);self.tick(l)
+        self.assertFalse(self.calls);self.assertEqual(l.phase,'done')
+
+    def test_currency_replacement_board_after_dispatch_not_overwritten(self):
+        l=self.lane('progress_money');self.assertTrue(l.begin());self.tick(l);self.pawn.blackboard=Node(_type=self.pawn.blackboard._type)
+        self.ok=False;self.tick(l,permit=False);self.assertTrue(l.fault);self.assertEqual(len(self.calls),1)
+
+    def test_currency_reject_controller_wrong_class(self):
+        self.pc.Class=Node(Name='wrong');self.assertFalse(self.lane('progress_eridium').begin());self.assertFalse(self.calls)
