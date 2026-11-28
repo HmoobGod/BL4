@@ -343,6 +343,11 @@ from test_reload_outstanding_swap import ReloadOutstandingSwapTests
 for name in ReloadOutstandingSwapTests.__dict__:
     if name.startswith('test_'):
         t=ReloadOutstandingSwapTests(name);unique[t.id()]=t
+from test_gear_pickup import GearPickupTests, GearPickupF8UI
+for cls in (GearPickupTests, GearPickupF8UI):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
