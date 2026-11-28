@@ -357,7 +357,7 @@ class Vacuum:
         self.categories=frozenset(categories);self.radius=radius;self.continuous=continuous
         if type(high_gear_only) is not bool:raise ValueError('invalid rarity filter')
         self.high_gear_only=high_gear_only;self.ammo_reader=ammo_reader;self.health_reader=health_reader
-        self.recent=deque();self.total_attempts=0;self.gear_targets={}
+        self.recent=deque();self.total_attempts=0;self.gear_targets={};self.gear_receipts={};self.recycled_cells=set()
         self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.gear_ids=set();self.moved=0;self.next_due=0
 
     def resolve(self):
@@ -380,7 +380,7 @@ class Vacuum:
             if not self.categories or not self.categories<=CATEGORIES or type(self.radius) not in (float,int) or not math.isfinite(self.radius) or not 5<=self.radius<=100:raise ValueError('select categories and 5–100m radius')
             _,_,key,objs,_=self.resolve();now=self.clock()
             self.record=(tuple(self.weak(o) for o in objs),key,self.thread(),math.inf if self.continuous else now+30)
-            self.attempted.clear();self.gear_ids.clear();self.recent.clear();self.gear_targets.clear();self.total_attempts=0;self.moved=0;self.next_due=now+.5
+            self.attempted.clear();self.gear_ids.clear();self.recent.clear();self.gear_targets.clear();self.gear_receipts.clear();self.recycled_cells.clear();self.total_attempts=0;self.moved=0;self.next_due=now+.5
         except Exception as exc:self.report('HOLD: vacuum '+str(exc)[:120]);return False
         self.report('EXPERIMENT: vacuum armed '+('until stopped in original session; ' if self.continuous else '30s; ')+', '.join(sorted(self.categories))+'; native pickup unverified');return True
 
@@ -412,6 +412,56 @@ class Vacuum:
                    and distance(pos,old)<100**2 for offset in _NEIGHBORS):continue
             return pos
         return None
+
+    def placement_snapshot(self, actors, lev):
+        """A bounded exact pickup scan, not a general terrain/collision test.
+
+        Unreadable actors make recycling unavailable, without stopping other
+        vacuum categories. Retain IDs even for destroyed/hidden actors.
+        """
+        if len(actors)>1024:return None
+        ids=set();positions=[]
+        try:
+            for a in actors:
+                if a is None:return None
+                token=identity(a)
+                if token in ids:return None
+                ids.add(token)
+                if a.Class._path_name()!=PICKUP:return None
+                if level(a)!=lev:continue
+                destroyed=a.IsActorBeingDestroyed()
+                if destroyed is True:continue
+                if destroyed is not False:return None
+                positions.append(location(a))
+        except Exception:return None
+        return ids,positions
+
+    def recycle_gear_cells(self, actors, lev):
+        # Only a dead original weak reference AND absence from the complete
+        # bounded pickup scan can retire a reservation. A live, moved, hidden,
+        # missing-from-enumeration, or ambiguous actor keeps its reservation.
+        gone=[]
+        for cell,(ref,token) in self.gear_receipts.items():
+            try:
+                if ref() is None:gone.append((cell,token))
+            except Exception:continue
+        if not gone:return
+        snapshot=self.placement_snapshot(actors,lev)
+        if snapshot is None:return
+        ids,positions=snapshot
+        for cell,token in gone:
+            pos=self.gear_targets[cell]
+            if token not in ids and all(distance(pos,p)>=100**2 for p in positions):
+                del self.gear_targets[cell];del self.gear_receipts[cell]
+                self.recycled_cells.add(cell)
+
+    def recycled_destination_clear(self, xyz, lev):
+        cell=gear_cell(xyz)
+        if not any(tuple(c+d for c,d in zip(cell,offset)) in self.recycled_cells for offset in _NEIGHBORS):return True
+        try:
+            snapshot=self.placement_snapshot(self.find('InventoryPickup',exact=True),lev)
+            return snapshot is not None and all(distance(xyz,p)>=100**2 for p in snapshot[1])
+        except Exception:return False
 
     def vendors(self,pc,lev):
         out=[];display=set();machines=self.find('OakVendingMachine',exact=False)
@@ -472,6 +522,7 @@ class Vacuum:
             actors=self.find('InventoryPickup',exact=True)
             if len(actors)>1024:raise ValueError('pickup scan exceeds limit')
             candidates=[];ammo_ratios={};health_sample=None;health_checked=False;health_dispatched=False
+            if 'gear' in self.categories:self.recycle_gear_cells(actors,lev)
             gear_space='gear' in self.categories and self.gear_position(origin,vendors[0]) is not None
             for a in actors:
                 try:
@@ -542,6 +593,7 @@ class Vacuum:
                 if kind=='health' and self.health_reader is not None:
                     latest_health=self.health_need(pawn)
                     if latest_health is None or latest_health[0]!=health_sample[0]:continue
+                if kind=='gear' and not self.recycled_destination_clear(xyz,key[-1]):continue
                 _,_,_,_,final_origin=self.resolve()
                 if self.record is not snapshot:return
                 if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
@@ -581,7 +633,10 @@ class Vacuum:
                     # from teleport success; the next scan observes current health anew.
                     health_dispatched=True
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1
-                if kind=='gear':self.gear_targets[gear_cell(xyz)]=xyz
+                if kind=='gear':
+                    cell=gear_cell(xyz)
+                    self.gear_targets[cell]=xyz
+                    self.gear_receipts[cell]=(ref,item_key[0])
                 try: moved=teleport(target,rot)
                 except Exception as exc:
                     self.fault=True;self.stop('uncertain native relocation: '+str(exc)[:80]);return

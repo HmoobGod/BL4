@@ -590,7 +590,7 @@ def draw():
             draw_feature_toggle(ui,option)
             ui.text(kind+': '+(_automation_status.get(kind, 'Waiting') if feature_enabled(option) else 'Off'))
         if 'Loot Vacuum' in panels:
-            ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only. Health pickups require missing living flesh health. Completed moves are not reversed.')
+            ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only; collected gear can free reserved positions. Health pickups require missing living flesh health. Completed moves are not reversed.')
             if not health_active():
                 for kind in _vacuum_filters:
                     edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
