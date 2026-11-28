@@ -24,8 +24,9 @@ LUCK_VALUE='/Script/OakGame.LuckCategoryValueResolver'
 LUCK_MODE='gear_luck'
 WEAPON_MODE='weapon_damage'
 RELOAD_MODE='weapon_reload'
+FIRE_RATE_MODE='weapon_fire_rate'
 WEAPON_RELOAD='/Script/GbxWeapon.WeaponBehavior_Reload'
-WEAPON_MODES=frozenset((WEAPON_MODE,RELOAD_MODE))
+WEAPON_MODES=frozenset((WEAPON_MODE,RELOAD_MODE,FIRE_RATE_MODE))
 FORGE_MODE='forge_cooldown'
 FORGE_RESOURCE='Resource_Paladin_ActionSkill_Forgeskill_Cooldown'
 CONTAGION_MODE='contagion_cooldown'
@@ -45,6 +46,7 @@ TARGETS={
     FORGE_MODE: ('Att_PLD_ForgeSkill_Pool_Cooldown_Rate','ActiveRegenerationRate',HEALTH_CONTEXT,FORGE_RESOURCE,'ScaleMultiply',2.),
     CONTAGION_MODE: ('Att_Corpohacker_ActionSkill_Contagion_Contagion_CooldownRate','ActiveRegenerationRate',HEALTH_CONTEXT,CONTAGION_RESOURCE,'ScaleMultiply',2.),
     RELOAD_MODE: ('weapon_reload_time','ReloadTime',WEAPON_CONTEXT,WEAPON_RELOAD,'ScaleMultiply',.5),
+    FIRE_RATE_MODE: ('weapon_fire_rate','FireRate',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     WEAPON_MODE: ('weapon_damage','Damage',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
     'shieldpassive': ('shield_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Shield','PostAdd',.001),
@@ -79,6 +81,10 @@ def trial_amount(mode,selection=None):
         if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=3 or selection==1:
             raise ValueError('choose .5–3x reload speed other than 1x')
         return 1./selection
+    if mode==FIRE_RATE_MODE:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=3 or selection==1:
+            raise ValueError('choose .5–3x fire rate other than 1x')
+        return selection
     if mode==WEAPON_MODE:
         if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=5 or selection==1:
             raise ValueError('choose .5–5x damage other than 1x')

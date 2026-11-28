@@ -1,5 +1,5 @@
 """Opt-in native removable weapon Damage modifier; never invokes an attack."""
-from .native_resource_rates import NativeRateTrial, WEAPON_MODE, WEAPON_FIRE, RELOAD_MODE, WEAPON_RELOAD, EligibilityLost, close
+from .native_resource_rates import NativeRateTrial, WEAPON_MODE, WEAPON_FIRE, FIRE_RATE_MODE, RELOAD_MODE, WEAPON_RELOAD, EligibilityLost, close
 from .gameplay_fields import identity
 from .weapon_rates import capture, resolve, mode, is_fire, nested
 
@@ -29,14 +29,14 @@ class WeaponDamageTrial(NativeRateTrial):
         if not close(base,key[1][1]):raise ValueError('weapon base changed during readback')
         if eligible and mode(objs[3])==self.resolve.weapon_scope['mode']:
             native=self.binding.read(self.mode,objs[3])
-            if not close(native,value):raise ValueError('native weapon damage disagrees with original fire field')
+            if not close(native,value):raise ValueError('native weapon attribute disagrees with original field')
         elif not restore_verify:
             raise EligibilityLost('original weapon mode ended')
         # On mode change the retained original field is the removal witness;
         # the active-mode native getter no longer identifies that field.
         again,_=resolve(objs[1],self.resolve.weapon_scope)
         if (identity(again[0][0])!=key[1][0][1] or not close(again[0][3],value) or not close(again[1][3],base)):
-            raise ValueError('original weapon damage changed during readback')
+            raise ValueError('original weapon attribute changed during readback')
         return objs,key,d,value
 
 
@@ -55,7 +55,7 @@ def local_resolver(binding,context,weak,trial_mode=WEAPON_MODE):
         d,dk=binding.definition(trial_mode)
         if scope is None:
             if cleanup:raise ValueError('no original weapon scope')
-            scope=capture(pawn,'reload' if reload else 'damage',weak)
+            scope=capture(pawn,'reload' if reload else 'fire_rate' if trial_mode==FIRE_RATE_MODE else 'damage',weak)
         w,b=scope['weapon'](),scope['behavior']()
         fields,eligible=resolve(pawn,scope)
         if (w.Class._path_name()!='/Script/OakGame.OakWeapon' or not any(c._path_name()==required and identity(c)==dk[-1][0] for c in (b.Class,*b.Class._superfields()))):
@@ -170,4 +170,27 @@ def make_reload_trial(binding,context,weak,clock,thread,report,permission,select
         return True
     trial=WeaponReloadTrial(RELOAD_MODE,binding,resolver,weak,clock,thread,report,allowed,
                             lambda k:(k[0],k[1][0]),selection=selection)
+    return trial
+
+
+class WeaponFireRateTrial(WeaponDamageTrial):
+    """Removable native FireRate modifier; does not invoke fire or change ammo."""
+    def snapshot(self,restore_verify=False):
+        objs,key,d,value=super().snapshot(restore_verify)
+        if self.record is None and not close(value,key[1][1]):
+            raise ValueError('fire rate baseline must equal base')
+        return objs,key,d,value
+
+
+def make_fire_rate_trial(binding,context,weak,clock,thread,report,permission,selection):
+    resolver=local_resolver(binding,context,weak,FIRE_RATE_MODE)
+    def allowed():
+        if permission() is not True:return False
+        if trial.phase=='armed':
+            try:trial.dispatch_target()
+            except Exception:return False
+            return permission() is True
+        return True
+    trial=WeaponFireRateTrial(FIRE_RATE_MODE,binding,resolver,weak,clock,thread,report,allowed,
+                              lambda k:(k[0],k[1][0]),selection=selection)
     return trial
