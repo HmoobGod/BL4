@@ -132,3 +132,39 @@ class RepairContinuousTests(unittest.TestCase):
         for _ in range(2):t.h.now+=.25;t.m.monitor_tick()
         self.assertEqual(len(self.calls),1);self.assertTrue(t.m.health_active());self.assertTrue(t.m._health_pulse.continuous)
         t.m.request_stop('test',immediate=True);self.assertFalse(t.m.health_active())
+
+class RepairPersistentTests(unittest.TestCase):
+    def setUp(self):
+        self.t=RepairTests();self.t.setUp();self.addCleanup(self.t.doCleanups)
+        t=self.t;self.m=t.m
+        p=[objdesc('User','/Script/Engine.Actor'),objdesc('ReturnValue',t.KIT)]
+        cdo=Node();f=Node(Name='GetRepairKit',_path_name=lambda:t.GET,_properties=lambda:p,NumParams=2,Outer=Node(ClassDefaultObject=cdo))
+        def getter(p):return t.current
+        getter.func=f;cdo.GetRepairKit=getter
+        sdk=t.h.b.f.sdk;old=sdk.find_all;sdk.find_all=lambda *a,**k:list(old(*a,**k))+[f,t.fn] if a[0]=='Function' else old(*a,**k)
+        self.m.close_menu()
+    def advance(self,n=1):
+        for _ in range(n):self.t.h.now+=.3;self.m.monitor_tick()
+    def arm(self,**extra):
+        self.m.apply({'persistent_master':True,'persistent_offline':True,'persistent_automation_repair':True,**extra});self.advance(4)
+    def test_default_off(self):
+        self.assertFalse(self.m.AUTOMATION_OPTIONS['repair'].value)
+        self.m.apply({'persistent_master':True,'persistent_offline':True});self.advance(4);self.assertEqual(self.t.calls,[])
+    def test_actual_adapter_with_rarity(self):
+        self.arm(persistent_legendary_weight=True,legendary_weight=2.)
+        self.assertIn('legendary_weight',self.m._controller.records)
+        self.assertEqual(self.t.calls,['use']);self.assertTrue(self.m._automation_leases['repair'].continuous)
+        self.assertIsNone(self.m._health_pulse)
+    def test_disable_keeps_rarity(self):
+        self.arm(persistent_legendary_weight=True,legendary_weight=2.)
+        self.m.set_auto_setting(self.m.AUTOMATION_OPTIONS['repair'],False);self.advance(4)
+        self.assertNotIn('repair',self.m._automation_leases);self.assertIn('legendary_weight',self.m._controller.records);self.assertEqual(self.t.calls,['use'])
+    def test_join_no_request(self):
+        self.t.hp(.8);self.arm();self.t.hp(.3);self.advance();self.t.h.b.f.players=2;self.advance(3)
+        self.assertEqual(self.t.calls,[]);self.assertNotIn('repair',self.m._automation_leases)
+    def test_no_implicit_restart(self):
+        self.arm();lease=self.m._automation_leases['repair'];lease.stop('test');self.advance(4)
+        self.assertNotIn('repair',self.m._automation_leases);self.assertEqual(self.t.calls,['use'])
+    def test_restore_all(self):
+        self.t.hp(.8);self.arm();self.m.request_stop('owner');self.t.hp(.3);self.advance(4)
+        self.assertNotIn('repair',self.m._automation_leases);self.assertEqual(self.t.calls,[])

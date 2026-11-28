@@ -298,8 +298,8 @@ from test_splash_radius import SplashRadius
 for name in SplashRadius.__dict__:
     if name.startswith('test_'):
         t=SplashRadius(name);unique[t.id()]=t
-from test_repair_assist import RepairTests, RepairContinuousTests
-for cls in (RepairTests, RepairContinuousTests):
+from test_repair_assist import RepairTests, RepairContinuousTests, RepairPersistentTests
+for cls in (RepairTests, RepairContinuousTests, RepairPersistentTests):
     for name in cls.__dict__:
         if name.startswith('test_'):
             t=cls(name);unique[t.id()]=t

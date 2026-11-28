@@ -89,7 +89,7 @@ AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Enable '+label)
-                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'))}
+                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'),('repair','automatic repair kit (experimental)'))}
 DOUBLE_JUMP_RATE = SliderOption('double_jump_velocity_scale', 1., .5, 2., step=.1, is_integer=False, display_name='Double-jump upward velocity multiplier (experimental)')
 RELOAD_EVENT = BoolOption('persistent_reload_event_window',False,display_name='Experimental reload request timing (instead of persistent weapon values)')
 _reload_event = None
@@ -663,11 +663,14 @@ def draw():
         if 'Action skills' in panels:
             ui.text_wrapped('Skill assists: unique ordinary skills, plus supported named primary cooldowns in dedicated adaptive mode. Charge and auxiliary pools are not modified. Not exact cooldown/duration multipliers.')
         if 'Recovery' in panels:
+            option = AUTOMATION_OPTIONS['repair']
+            draw_feature_toggle(ui,option)
+            ui.text('repair: '+(_automation_status.get('repair','Waiting') if feature_enabled(option) else 'Off'))
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm automatic repair kit (35% health; one request)'):
                 activate_feature('repair_assist', 1.0)
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm session automatic repair kit (experimental)'):
                 activate_feature('repair_assist_continuous', 1.0)
-            ui.text_wrapped('Automatic repair kit: existing charges only; one-shot or session-only (maximum 3 requests). Session mode requires observed use, charge spent, idle, charge restored and health recovered before a new low-health episode. No retry; native acceptance unverified.')
+            ui.text_wrapped('Automatic repair kit: existing charges only; saved enable works alongside compatible gameplay; one-shot and session-only fallbacks remain (maximum 3 requests per arm). Session mode requires observed use, charge spent, idle, charge restored and health recovered before a new low-health episode. No retry; native acceptance unverified.')
             ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
                 activate_feature('health_pulse', 1.0)
@@ -2777,6 +2780,11 @@ def make_automation_lane(kind, session):
         if conflict:
             raise ValueError(conflict)
         return current_session(session)
+    if kind == 'repair':
+        from .repair_assist import RepairAssist, bind
+        functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in ('GetRepairKit','StartUsingRepairKit')]
+        getter,fn=bind(functions,loot_bound)
+        return RepairAssist(context,sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,getter,fn,time.monotonic,threading.get_ident,report_live,lambda:_backend is None,continuous=True)
     if kind == 'double_jump':
         from .double_jump import DoubleJump
         return DoubleJump(context,sdk.unreal.WeakPointer,time.monotonic,threading.get_ident,report_live,jump_rate)
