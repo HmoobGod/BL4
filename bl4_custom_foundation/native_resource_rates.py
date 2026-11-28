@@ -23,6 +23,9 @@ LUCK_CONTEXT='/Script/GbxGame.GbxPlayerControllerContextResolver'
 LUCK_VALUE='/Script/OakGame.LuckCategoryValueResolver'
 LUCK_MODE='gear_luck'
 WEAPON_MODE='weapon_damage'
+RELOAD_MODE='weapon_reload'
+WEAPON_RELOAD='/Script/GbxWeapon.WeaponBehavior_Reload'
+WEAPON_MODES=frozenset((WEAPON_MODE,RELOAD_MODE))
 FORGE_MODE='forge_cooldown'
 FORGE_RESOURCE='Resource_Paladin_ActionSkill_Forgeskill_Cooldown'
 CONTAGION_MODE='contagion_cooldown'
@@ -41,6 +44,7 @@ TARGETS={
     'vaultdepleted': ('vault_power_resource_on_depleted_idle_regen_delay','OnDepletedIdleRegenerationDelay',HEALTH_CONTEXT,VAULT_RESOURCE,'ScaleMultiply',.5),
     FORGE_MODE: ('Att_PLD_ForgeSkill_Pool_Cooldown_Rate','ActiveRegenerationRate',HEALTH_CONTEXT,FORGE_RESOURCE,'ScaleMultiply',2.),
     CONTAGION_MODE: ('Att_Corpohacker_ActionSkill_Contagion_Contagion_CooldownRate','ActiveRegenerationRate',HEALTH_CONTEXT,CONTAGION_RESOURCE,'ScaleMultiply',2.),
+    RELOAD_MODE: ('weapon_reload_time','ReloadTime',WEAPON_CONTEXT,WEAPON_RELOAD,'ScaleMultiply',.5),
     WEAPON_MODE: ('weapon_damage','Damage',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
     'shieldpassive': ('shield_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Shield','PostAdd',.001),
@@ -71,6 +75,10 @@ def trial_amount(mode,selection=None):
     """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
     if mode not in TARGETS:raise ValueError('unknown native rate trial')
     if selection is None:return TARGETS[mode][-1]
+    if mode==RELOAD_MODE:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=3 or selection==1:
+            raise ValueError('choose .5–3x reload speed other than 1x')
+        return 1./selection
     if mode==WEAPON_MODE:
         if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=5 or selection==1:
             raise ValueError('choose .5–5x damage other than 1x')
@@ -128,8 +136,11 @@ class NativeBinding:
         self.mods={n:enum_member(a[2],MOD_ENUM,n) for n in ('PostAdd','ScaleMultiply')}
         self.success=enum_member(a[5],RESULT_ENUM,'Success');self.failure=enum_member(a[5],RESULT_ENUM,'Failure')
 
-    def definition(self,mode):
+    def definition(self,mode,*,minimum=False):
         name,field,ctx,selector,_,_=TARGETS[mode]
+        if minimum:
+            if mode!=RELOAD_MODE:raise ValueError('minimum witness only for reload')
+            name,field='weapon_min_reload_time','MinReloadTime'
         d=self.def_type(name,self.attr_type,True)
         if type(d) is not self.def_type or d._name!=name or d._type._path_name()!=DEF or identity(d._type)!=identity(self.attr_type):
             raise ValueError('native attribute definition unavailable')
@@ -150,13 +161,13 @@ class NativeBinding:
             if enum_name(cat.CategoryType)!='ModifiableAttribute' or enum_name(cat.ModifierType)!='ScaleMultiply':
                 raise ValueError('gear luck must advertise a multiplicative modifiable category')
             return d,(identity(d),identity(d._type),identity(c._type),identity(v._type),selector,identity(cat))
-        if mode==WEAPON_MODE:
+        if mode in WEAPON_MODES:
             desc=prop(c._type,'BehaviorTypeToFurtherResolveTo','ZSoftClassProperty')
             cls=c.BehaviorTypeToFurtherResolveTo
             # The SDK may return None for unloaded soft classes. Never load or guess.
             if (desc.MetaClass._path_name() not in ('/Script/GbxWeapon.WeaponBehavior','/Script/CoreUObject.Object','/Script/CoreUObject.Class') or cls is None
-                    or cls._path_name()!=WEAPON_FIRE):
-                raise ValueError('exact loaded fire behavior class unavailable')
+                    or cls._path_name()!=selector):
+                raise ValueError('exact loaded weapon behavior class unavailable')
             prop(c._type,'usemodebitmask','ZUInt32Property')
             mask=c.usemodebitmask
             if type(mask) is not int or not 0<=mask<=0xffffffff:raise ValueError('invalid weapon use-mode mask')
@@ -256,7 +267,7 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
-        if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health',LUCK_MODE,WEAPON_MODE} and continuous:
+        if mode in (SHIELD_MODES - {SHIELD_PASSIVE_MODE}) | {'missing_health',LUCK_MODE} | WEAPON_MODES and continuous:
             raise ValueError('native rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)
@@ -305,7 +316,7 @@ class NativeRateTrial:
             objs,key,_,base=self.stable_snapshot()
             if not self.permission():raise ValueError('local activation permission unavailable')
             self.target_value(base)
-            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+(30. if self.mode in (LUCK_MODE,WEAPON_MODE) else 10.) if not self.continuous else float('inf'))
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+(30. if self.mode in WEAPON_MODES | {LUCK_MODE} else 10.) if not self.continuous else float('inf'))
             self.baseline=base;self.phase='armed'
         except Exception as e:self.report('HOLD: native rate '+str(e)[:120]);return False
         self.report('EXPERIMENT: native '+self.mode+' rate armed; no refill pulses.');return True
