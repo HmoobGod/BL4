@@ -2751,7 +2751,7 @@ def reload_observers_live():
 
 def reload_observation(collector,args,started):
     lease=_automation_leases.get('reload')
-    if lease is None or lease.record is None or not lease.waiting:return
+    if lease is None or lease.record is None or (not lease.waiting and not getattr(lease,'_outstanding',{})):return
     try:
         if not reload_observers_live() or not automation_permitted():return
         lease.observe_reload(collector,args.EventWeapon,args.bAutoReload if started else args.bCompleted,started)
@@ -2862,7 +2862,9 @@ def make_automation_lane(kind, session):
     functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS or str(f.Name)=='ServerStartReloading']
     api,fn = bind(functions,loot_bound)
     lease=ReloadAssist(context,sdk.unreal.WeakPointer,api,fn,time.monotonic,threading.get_ident,report_live,True,session_mode=True)
-    if ensure_reload_observers(sdk):lease.event_live=reload_observers_live
+    if ensure_reload_observers(sdk):
+        lease.event_live=reload_observers_live
+        lease.track_outstanding_on_swap=True
     return lease
 
 
