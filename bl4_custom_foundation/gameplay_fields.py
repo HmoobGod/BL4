@@ -36,6 +36,7 @@ FEATURES = {
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
     'damage': ('Damage multiplier', .5, 5.),
     'critical_damage': ('Default critical-hit damage multiplier (experimental)', .5, 3.),
+    'melee_cooldown': ('Melee cooldown speed (experimental)', .5, 2.),
     'splash_damage': ('Local splash damage multiplier (experimental)', .5, 3.),
     'weapon_spread': ('Weapon spread scale (experimental)', .1, 3.),
     'weapon_recoil': ('Weapon recoil scale (experimental)', .1, 3.),
@@ -324,6 +325,23 @@ def critical_damage(pawn, state):
     return fields
 
 
+def melee_cooldown(pawn, state):
+    # Local inline melee cadence only; never invoke an attack or change PlayRate.
+    from .weapon_rates import nested
+    if pawn.Class._path_name() != '/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+        raise ValueError('exact live local character required')
+    melee = nested(pawn, 'MeleeState', 'OakMeleeState')
+    if melee._type._path_name() != '/Script/OakGame.OakMeleeState':
+        raise ValueError('unexpected melee state type')
+    cooldown = nested(melee, 'CooldownScale', 'GbxAttributeFloat')
+    if cooldown._type._path_name() != '/Script/GbxCore.GbxAttributeFloat':
+        raise ValueError('unexpected melee cooldown type')
+    fields = pair(cooldown)
+    if any(f[2] != 'ZFloatProperty' for f in fields):
+        raise ValueError('unexpected melee cooldown scalar type')
+    return fields
+
+
 def splash_damage(pawn, state):
     # The inline pawn-owned causer data is distinct from the weapon damage
     # and radius-size fields. No new attacks or damage receiver writes.
@@ -442,7 +460,7 @@ def pearlescent(pawn, state):
     return (next(iter(candidates.values())),)
 
 
-RESOLVE = {'splash_damage': splash_damage, 'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
+RESOLVE = {'melee_cooldown': melee_cooldown, 'splash_damage': splash_damage, 'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
@@ -510,12 +528,14 @@ def target_values(key, baseline, tokens, selection):
         raise ValueError('rarity weight uses 0.1 increments')
     result = []
     for base, (_, _, kind) in zip(baseline, tokens, strict=True):
-        v = base / selection if key in ('reload', 'ammo_regen_delay', 'shield_regen_delay', 'grenade_cooldown') else base * selection
+        v = base / selection if key in ('reload', 'ammo_regen_delay', 'shield_regen_delay', 'grenade_cooldown', 'melee_cooldown') else base * selection
         if kind == 'ZFloatProperty':
             v = struct.unpack('<f', struct.pack('<f', v))[0]
         if not math.isfinite(v) or not (0 <= v <= 1e6 if key in ZERO_RARITY_KEYS and selection == 0 else 0 < v <= 1e6):
             raise ValueError('target outside verified scalar bounds')
         if key in ('critical_damage', 'splash_damage') and (base > 10 or v > 10):
             raise ValueError('damage multiplier outside conservative bounds')
+        if key == 'melee_cooldown' and not all(.125 <= x <= 4 for x in (base, v)):
+            raise ValueError('melee cooldown outside conservative bounds')
         result.append(v)
     return tuple(result)

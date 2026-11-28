@@ -55,6 +55,7 @@ def toggle(identifier, label):
 
 CATEGORIES = [
     ('combat', 'Combat', [SliderOption('damage', 1., .5, 5., step=.1, is_integer=False, display_name='Damage multiplier', description='Experimental equipped ordinary gun damage; 1x restores. Not a global damage multiplier.'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Experimental native weapon rate; enabled feature follows supported idle weapons.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Experimental stock reload duration; enabled feature follows supported idle weapons. 1x restores.'), SliderOption('swap_time', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['swap_time'][0], description='Local native time scale candidate; individual toggle; direction of gameplay effect unverified. 1x restores.'), *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental weapon field; enabled feature follows supported idle weapons. Lower scales the field down. Native effect unverified. 1x restores.') for k in ('weapon_spread', 'weapon_recoil')], slider('fire_damage', 'Fire damage multiplier'), SliderOption('critical_damage', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['critical_damage'][0], description='Existing pawn default critical-hit multiplier only; does not force critical hits. Manual experimental activation; 1x restores.'), SliderOption('splash_damage', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['splash_damage'][0], description='Existing local causer splash damage only, not radius size or general damage. Isolated manual experiment; 1x restores.'),
+        SliderOption('melee_cooldown', 1., .5, 2., step=.1, is_integer=False, display_name=FEATURES['melee_cooldown'][0], description='Experimental local melee cooldown scale; higher speed shortens the scale. Manual activation only; 1x restores.'),
         slider('damage_taken', 'Damage taken multiplier', minimum=0.1), slider('shock_damage', 'Shock damage multiplier'),
         slider('corrosive_damage', 'Corrosive damage multiplier'), slider('cryo_damage', 'Cryo damage multiplier'),
         slider('radiation_damage', 'Radiation damage multiplier')]),
@@ -78,7 +79,7 @@ _COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier ==
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Internal activation gate (legacy settings)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
-MANUAL_ONLY = frozenset(('sprint', 'overshield_duration', 'critical_damage', 'splash_damage'))
+MANUAL_ONLY = frozenset(('sprint', 'overshield_duration', 'critical_damage', 'splash_damage', 'melee_cooldown'))
 LIFE_KEYS = frozenset(('lifesteal_rate', 'lifesteal_fraction'))
 PLAYER_AMMO_KEY = 'player_ammo_regen'
 AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
@@ -768,6 +769,8 @@ def draw():
             ui.text_wrapped('Existing positive duration and base required. Does not grant overshield or passively heal. Native timing unverified.')
         if key == 'lifesteal_fraction':
             ui.text_wrapped('Requires existing positive life-steal and unchanged rate/cap. Not passive healing. Restore the life-steal rate control first.')
+        if key == 'melee_cooldown':
+            ui.text_wrapped('Melee cooldown only; no attack, animation speed or damage change. Activate and restore between attacks. Restore other modifiers first.')
         if key == 'splash_damage':
             ui.text_wrapped('Splash damage only; not radius size, direct-hit damage or a guaranteed multiplier. Restore other modifiers first.')
         if key in MANUAL_ONLY - {'sprint'}:
