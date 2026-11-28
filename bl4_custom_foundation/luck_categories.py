@@ -17,7 +17,7 @@ CATEGORY_ENUM = '/Script/OakGame.ELuckCategoryType'
 MODIFIER_ENUM = '/Script/GbxCore.EGbxAttributeModifierType'
 
 
-def snapshot(pc):
+def snapshot(pc, *, identities=False):
     if pc.Class._path_name() != PC or 'Default__' in pc._path_name():
         raise ValueError('exact local OakPlayerController required')
     state = struct(pc, 'LuckCategoryAttributesState', STATE)
@@ -58,7 +58,7 @@ def snapshot(pc):
             if type(v) not in (float, int) or not math.isfinite(v):
                 raise ValueError('nonfinite luck attribute')
             vals.append(float(v))
-        rows[name.casefold()] = (name, kind, modifier, *vals)
+        rows[name.casefold()] = (name, kind, modifier, *vals) + ((identity(entry),identity(cat),identity(value)) if identities else ())
     if len(arr) != count or len(rows) != count:
         raise ValueError('luck array changed')
     return tuple(rows[k] for k in sorted(rows))
@@ -85,5 +85,5 @@ def report_lines(rows):
     lines = ['Player luck categories (read-only; not world rarity weights):']
     for name, kind, modifier, value, base in rows:
         lines.append(f'Category={name}; CategoryType={kind}; ModifierType={modifier}; Value={value!r}; BaseValue={base!r}')
-    lines.append('No target selected. Category role, native units, consumer and restoration semantics remain unverified; overall luck remains preview only.')
+    lines.append('No target selected by this report. Gear luck has a separate isolated experimental trial; other categories remain preview only. Native drop outcomes and restoration remain unverified.')
     return lines

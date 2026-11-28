@@ -12,6 +12,9 @@ DEF=ENGINE+'GbxAttributeDef'
 ENTRY=ENGINE+'GbxBlackboardEntryRef'
 PARAM=ENGINE+'GbxParam'
 TARGETS={'progress_enemy_xp':'Att_CombatXP_Multiplier','progress_money':'Att_PickupCash_Multiplier','progress_eridium':'Att_PickupEridium_Multiplier'}
+GUN_KEY='caused_damage_gun_multiplier'
+GUN_MODE='native_gun_damage'
+GUN_PEERS=('caused_damage_normal_multiplier','caused_damage_melee_multiplier','caused_damage_gadget_multiplier','caused_damage_action_skill_multiplier','caused_damage_companion_gun_multiplier')
 MISSING='BL4Custom_Unused_Reward_Probe_6F79B1'
 S='ZStructProperty'; O='ZObjectProperty'; F='ZFloatProperty'; N='ZNameProperty'; T='ZStrProperty'
 SPECS={
@@ -35,6 +38,7 @@ def number(v):
     return float(v)
 
 class Binding:
+    targets=TARGETS
     def __init__(self,functions,bound,make,def_type,def_struct,wrapper):
         self.make,self.def_type,self.def_struct,self.wrapper=make,def_type,def_struct,wrapper
         self.calls={};self.types={}
@@ -57,7 +61,7 @@ class Binding:
         if type(obj) is not self.wrapper or obj._type._path_name()!=path or identity(obj._type)!=identity(self.types[path]):raise ValueError('unexpected returned native struct')
         return obj
     def key(self,name):
-        if name in TARGETS.values():return self.resolve_definition(name)[1]
+        if name in self.targets.values():return self.resolve_definition(name)[1]
         if name not in (MISSING,MISSING+'_B'):raise ValueError('unsupported reward key')
         prop(self.types[ENTRY],'Name',N)
         result=self.check(self.make(self.types[ENTRY],Name=name),ENTRY)
@@ -68,10 +72,11 @@ class Binding:
         if type(d) is not self.def_type or d._name!=name or identity(d._type)!=identity(self.def_struct):raise ValueError('unresolved reward definition')
         for k in ('Context','Value'):prop(d._type,k,'ZGbxInlineStructProperty')
         c,v=d.Context,d.Value
-        if c._type._path_name()!=ENGINE+'GbxBlackboardOwnerContextResolver' or v._type._path_name()!=ENGINE+'GbxBlackboardValueResolver':raise ValueError('not an exact blackboard resolver')
+        if c._type._path_name()!=self.context_path(name) or v._type._path_name()!=ENGINE+'GbxBlackboardValueResolver':raise ValueError('not an exact blackboard resolver')
         k=struct(v,'Variable',ENTRY)
         if k.Name!=name:raise ValueError('reward variable mismatch')
         return (identity(d),identity(c._type),identity(v._type),name),self.check(k,ENTRY)
+    def context_path(self,name):return ENGINE+'GbxBlackboardOwnerContextResolver'
     def definition(self,name):return self.resolve_definition(name)[0]
     def keys_equal(self,a,b):
         a,b=self.check(a,ENTRY),self.check(b,ENTRY)
@@ -138,9 +143,14 @@ class Binding:
         if type(r) is not tuple or len(r)!=2 or r[0] is not Ellipsis or not self.echo(key,r[1]):raise ValueError('native float setter response uncertain')
 
 class Trial:
+    outcome="actual earned reward unverified"
+    armed_note="earned rewards are not reversed"
+    targets=TARGETS
+    def valid_scale(self,scale):return 1<scale<=10
+    def peer_names(self):return tuple(n for n in TARGETS.values() if n!=self.name)
     def __init__(self,mode,scale,binding,context,weak,clock,thread,report,permission):
-        if mode not in TARGETS or type(scale) not in (int,float) or not math.isfinite(scale) or not 1<scale<=10:raise ValueError('choose a reward multiplier above 1x')
-        self.mode,self.name,self.scale=mode,TARGETS[mode],scale
+        if mode not in self.targets or type(scale) not in (int,float) or not math.isfinite(scale) or not self.valid_scale(scale):raise ValueError('choose a reward multiplier above 1x')
+        self.mode,self.name,self.scale=mode,self.targets[mode],scale
         self.controller_context=mode=='progress_enemy_xp'
         self.binding,self.context,self.weak,self.clock,self.thread,self.report,self.permission=binding,context,weak,clock,thread,report,permission
         self.record=None;self.fault=False;self.busy=False;self.phase='idle';self.stop_requested=False;self.due=0.;self.owned=False
@@ -163,7 +173,7 @@ class Trial:
         # Independent peers only read through the attribute resolver; unresolved peers
         # are allowed, but their actual raw values must not change during our write.
         contexts=(owner,pawn) if self.controller_context else (owner,)
-        peers=tuple(b.calls['GetValueOfAttribute'](n,c,-123456.) for c in contexts for n in TARGETS.values() if n!=self.name)
+        peers=tuple(b.calls['GetValueOfAttribute'](n,c,-123456.) for c in contexts for n in self.peer_names())
         if any(type(x) not in (int,float) or not math.isfinite(x) for x in peers):raise ValueError('peer value unavailable')
         # The controller is a context, not proof of a separate embedded board.
         # Require the existing local pawn's typed entry as an independent witness.
@@ -183,7 +193,7 @@ class Trial:
             if self.controller_context and not self.witness_matches(witness,missing,v,fp):raise ValueError('controller/pawn XP baseline mismatch')
             if self.permission() is not True or near(v,self.target):raise ValueError('activation not permitted or ineffective target')
             self.base=(key,missing,v,fp,p,peers);self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),self.clock()+30.);self.phase='armed'
-            self.report('EXPERIMENT: '+self.name+' armed for 30 seconds; earned rewards are not reversed.');return True
+            self.report('EXPERIMENT: '+self.name+' armed for 30 seconds; '+self.armed_note+'.');return True
         except Exception as e:self.report('HOLD: native reward '+str(e)[:140]);return False
     def stop(self,reason):
         if self.record:self.stop_requested=True;self.report('STOP PENDING: native reward '+reason)
@@ -218,7 +228,7 @@ class Trial:
                 self.phase='active';self.owned=True
                 self.binding.write(self.name,self.owner(s[0]),self.target,self.base[0]);s=self.stable()
                 if not self.matches(s,self.target,self.target_fp) or s[6]!=self.base[5]:raise ValueError('native reward change or peer isolation unverified')
-                self.due=self.clock()+.5;self.report('EXPERIMENT: '+self.name+' value changed; actual earned reward unverified.')
+                self.due=self.clock()+.5;self.report('EXPERIMENT: '+self.name+' value changed; '+self.outcome+'.')
                 if self.stop_requested or self.permission() is not True:self.cleanup(s)
             elif self.phase=='active':
                 if not self.matches(s,self.target,self.target_fp) or s[6]!=self.base[5]:raise ValueError('reward or peer drift')
@@ -226,7 +236,7 @@ class Trial:
                 else:self.due=self.clock()+.5
             elif self.phase=='verify':
                 if not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5]:raise ValueError('delayed reward restoration unverified')
-                self.record=None;self.phase='done';self.report('EXPERIMENT: native reward baseline restored; actual earned reward unverified.')
+                self.record=None;self.phase='done';self.report('EXPERIMENT: native attribute baseline restored; '+self.outcome+'.')
         except Exception as e:
             if self.phase=='armed':self.record=None;self.phase='done';self.report('HOLD: '+str(e)[:120]);return
             if self.owned:
@@ -234,3 +244,40 @@ class Trial:
                 except Exception:pass
             self.fault=True;self.record=None;self.phase='fault';self.report('FAULT: native reward '+str(e)[:120]+'; exit game, do not travel.')
         finally:self.busy=False
+
+
+class GunBinding(Binding):
+    """Separate existing actor blackboard entry; never synthesize a missing key."""
+    targets={GUN_MODE:GUN_KEY}
+    def context_path(self,name):
+        if name!=GUN_KEY:raise ValueError('unsupported gun attribute')
+        return ENGINE+'ActorContextResolver'
+
+
+class GunTrial(Trial):
+    outcome="actual ordinary gun damage unverified"
+    armed_note="only existing local actor gun damage entry targeted"
+    targets=GunBinding.targets
+    def valid_scale(self,scale):return .5<=scale<=5 and scale!=1
+    def peer_names(self):return (*TARGETS.values(),*GUN_PEERS)
+    def scope(self):
+        # Preserve original owner and embedded board, even if another player
+        # joins: no new activation in that case; permit original cleanup only.
+        pc,pawn,state,ok=self.context()
+        if ok is False and self.phase in ('active','verify') and self.record:
+            self.stop_requested=True
+        elif ok is not True:raise ValueError('eligible solo gun context required')
+        if (pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name()
+                or identity(pc.Pawn)!=identity(pawn) or pc.Class._path_name()!='/Script/OakGame.OakPlayerController' or 'Default__' in pc._path_name()):
+            raise ValueError('exact local gun owner required')
+        board=struct(pawn,'blackboard',ENGINE+'GbxBlackboard')
+        board_key=(identity(board),identity(board._type))
+        objs=(pc,pawn,state);ids=tuple(identity(o) for o in objs)
+        if len(set(ids))!=3:raise ValueError('ambiguous gun owner')
+        if self.record:
+            refs,oldids,tid,_=self.record
+            if ids!=oldids or self.thread()!=tid or board_key!=self.board_key or any(r() is None or identity(r())!=i for r,i in zip(refs,ids,strict=True)):
+                raise ValueError('original gun blackboard scope lost')
+        elif getattr(self,'board_key',board_key)!=board_key:raise ValueError('gun blackboard changed during preflight')
+        self.board_key=board_key
+        return objs

@@ -14,6 +14,7 @@ from .weapon_rates import WEAPON_KEYS, AMMO_KEYS, validate_targets
 from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shield_readback
 from .gadget_rates import KEY as GADGET_KEY
 REWARD_KEYS = frozenset(('progress_enemy_xp', 'progress_money', 'progress_eridium'))
+GUN_TRIAL_KEY = 'native_gun_damage'
 FAILED_XP_KEY = 'progress_enemy_xp'
 FAILED_XP_REASON = 'XP experiment failed; disabled pending a different mechanism.'
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
@@ -61,7 +62,7 @@ CATEGORIES = [
         progression_slider('progress_eridium', 'Eridium'),
         progression_slider('progress_enemy_xp', 'Enemy kill XP'),
         progression_slider('progress_mission_xp', 'Mission XP')]),
-    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), progression_slider('overall_loot_luck', 'Overall loot luck'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
+    ('loot', 'Loot and Drop Rates', [slider('drops', 'Drop rate multiplier'), SliderOption('overall_loot_luck',1.,1.,10.,step=.1,is_integer=False,display_name='Overall loot luck (gear category trial)',description='Experimental gear category only; not an exact drop probability.'), rarity_slider('common_weight', 'Common rarity weight'), rarity_slider('uncommon_weight', 'Uncommon rarity weight'), rarity_slider('rare_weight', 'Rare rarity weight'), rarity_slider('epic_weight', 'Epic rarity weight'), rarity_slider('legendary_weight', 'Legendary rarity weight (selected)'), rarity_slider('pearlescent_weight', 'Pearlescent rarity weight')]),
     ('inventory', 'Inventory', [SliderOption(k, 1., 1., 1000., step=1, is_integer=True, display_name=FEATURES[k][0], description='Experimental absolute slots; 1 restores captured original. Never fill above original capacity during testing.') for k in ('backpack_capacity','bank_capacity')]),
     ('movement', 'Movement', [SliderOption('sprint', 1., 1., 3., step=.1, is_integer=False, display_name='Sprint-only speed floor (reference multiplier)', description='Experimental manual mode; walking stays at original floor. Restore combined ground speed first. 1x restores.'), slider('jump', 'Jump velocity multiplier'), *[SliderOption(k, 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Local movement attribute; individual toggle; 1x restores. Actual speed/distance unverified.') for k in ('dash_speed', 'glide_speed', 'glide_air_control', 'glide_boost', 'glide_acceleration', 'glide_deceleration')], *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Existing positive vault-power cost; lower may reduce consumption. 1x restores. No free energy or new jump actions.') for k in ('double_jump_cost','dash_cost','glide_cost','grapple_cost','slam_cost')], *[SliderOption(k, 1., FEATURES[k][1], FEATURES[k][2], step=.1, is_integer=False, display_name=FEATURES[k][0], description=('Only while exact native slide is active; toggle ON to follow active slides. 1x restores.' if k=='slide_speed' else 'Local movement field only; native effect unverified. 1x restores.')) for k in ('ladder_ascend','ladder_descend','slam_height','ground_friction','braking_friction','slide_speed')], SliderOption('gravity', 1., .5, 1.5, step=.1, is_integer=False, display_name='Local gravity multiplier', description='Experimental local movement only; lower gravity can increase airborne time. 1x restores.'), SliderOption('walk_speed', 1., 1., 3., step=.1, is_integer=False, display_name='Ground speed floor (reference multiplier)', description='1x restores; higher raises walk/sprint floor. Actual speed varies.')]),
     ('automation', 'Automation', [toggle('auto_reload', 'Automatic reload'), toggle('auto_loot', 'Automatic loot pickup')]),
@@ -538,7 +539,7 @@ def draw():
         if not options:
             ui.text('No supported gameplay controls here; turn off Compact menu to view previews.')
     if _category == 0 and not compact:
-        ui.text_wrapped('Damage applies to the equipped ordinary gun fire behavior only. Elemental and incoming modifiers are separate; actual hit effects unverified.')
+        ui.text_wrapped('Damage slider uses the equipped ordinary gun fire behavior. Separate isolated actor gun test uses the same selection. Elemental and incoming modifiers are separate; hit effects unverified.')
     if _category == 1 and not compact:
         ui.text_wrapped('Pickup cash and Eridium: isolated experimental 30-second trials. XP experiment failed; XP controls are preview only. Use a backup character; earned rewards are not reversed.')
         ui.text_wrapped(_reward_summary)
@@ -679,7 +680,7 @@ def draw():
     for o in options:
         value = displayed_selection(o)
         label = o.display_name + '##' + o.identifier
-        if (o.identifier not in FEATURES or o.identifier in DAMAGE_HOLD) and o is not probe and o.identifier not in REWARD_KEYS:
+        if (o.identifier not in FEATURES or o.identifier in DAMAGE_HOLD) and o is not probe and o.identifier not in REWARD_KEYS and o.identifier!='overall_loot_luck':
             ui.text_wrapped(o.display_name + ' — HOLD / preview only')
         if isinstance(o, BoolOption):
             edited, value = ui.checkbox(label, value)
@@ -714,11 +715,18 @@ def draw():
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test earned '+selected.display_name+' (30 sec)##reward_'+key):
                 activate_feature(key, displayed_selection(selected))
             continue
+        if key=='overall_loot_luck':
+            ui.text_wrapped('Experimental gear luck category only; not guaranteed drop rate or every luck category.')
+            if displayed_selection(o)>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gear luck (30 sec)'):
+                activate_feature('native_rate_gear_luck',displayed_selection(o))
+            continue
         if key not in FEATURES or key in DAMAGE_HOLD:
             continue
         name = FEATURES[key][0]
         if key == 'damage':
             ui.text_wrapped('Experimental equipped gun damage, not skill/melee/global damage. Apply while idle; 1x restores. Actual hit effects unverified.')
+            if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native actor gun damage (30 sec)'):
+                activate_feature(GUN_TRIAL_KEY,displayed_selection(o))
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
         if key == 'gravity':
@@ -1328,14 +1336,14 @@ def begin_blackboard_reward(key, selection):
     global _health_pulse
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    from .blackboard_rewards import Binding, Trial, SPECS, DEF
-    if key not in REWARD_KEYS or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
+    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, SPECS, DEF
+    if key not in REWARD_KEYS | {GUN_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
     if len(defs)!=1:raise ValueError('native attribute definition struct unavailable')
     fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
-    binding=Binding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    binding=(GunBinding if key==GUN_TRIAL_KEY else Binding)(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
     session=bound_session(sdk)
     def permitted():
         hooks=sdk.hooks
@@ -1343,13 +1351,13 @@ def begin_blackboard_reward(key, selection):
                 and not _automation_leases and not conflicting_mods() and _monitor_registered
                 and _monitor_thread==threading.get_ident()
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
-    _health_pulse=Trial(key,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+    _health_pulse=(GunTrial if key==GUN_TRIAL_KEY else Trial)(key,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
     _health_pulse.begin()
 
 
 def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
-                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, bind_health_readers, make_local_resolver, original_pool_identity)
+                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, LUCK_MODE, bind_health_readers, make_local_resolver, original_pool_identity)
     from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
     if mode not in TARGETS or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
@@ -1370,13 +1378,13 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
     readers=None;skill=None
     shield_getter=None
-    if mode in SHIELD_MODES | {'missing_health'} and persistent:raise ValueError('native rate trial is manual only')
+    if mode in SHIELD_MODES | {'missing_health',LUCK_MODE} and persistent:raise ValueError('native rate trial is manual only')
     if mode in RESOURCE_MODES:
         readers=bind_health_readers(functions,loot_bound)
         if mode in SHIELD_MODES:
             from .shield_rates import bind as bind_shield
             shield_getter=bind_shield(functions,loot_bound)
-    else:
+    elif mode!=LUCK_MODE:
         ref,api=bind(functions,loot_bound,read_only=True)
         adaptive=bind_action_percent(functions,loot_bound,mode,ref)
         skill=SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,
@@ -1687,7 +1695,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in REWARD_KEYS | {'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {GUN_TRIAL_KEY,'native_rate_gear_luck','native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1722,7 +1730,7 @@ def execute_activation(key, selection):
     # Called exclusively by monitor_tick after the explicit queued F8 action.
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    if key in REWARD_KEYS:
+    if key in REWARD_KEYS | {GUN_TRIAL_KEY}:
         begin_blackboard_reward(key, selection)
         return
     if key in ('loot_vacuum','loot_vacuum_continuous'):
@@ -1734,7 +1742,7 @@ def execute_activation(key, selection):
     if key in ('skill_cooldown','skill_duration'):
         begin_skill_pulse(key.split('_',1)[1])
         return
-    if key in ('native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay'):
+    if key in ('native_rate_gear_luck','native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay'):
         from .native_resource_rates import trial_amount
         mode=key.removeprefix('native_rate_')
         trial_amount(mode,selection)

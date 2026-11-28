@@ -19,8 +19,12 @@ VALUE='/Script/GbxEngine.PropertyValueResolver'
 PARSED='/Script/GbxCore.ParsedProperty'
 HEALTH_CONTEXT='/Script/GbxGame.GameResourcePoolContextResolver'
 SKILL_CONTEXT='/Script/OakGame.OakActionSkillResourcePoolResolver'
+LUCK_CONTEXT='/Script/GbxGame.GbxPlayerControllerContextResolver'
+LUCK_VALUE='/Script/OakGame.LuckCategoryValueResolver'
+LUCK_MODE='gear_luck'
 # Name, native property, exact context, selector, modifier, bounded experiment.
 TARGETS={
+    LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
     'health': ('health_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'missing_health': ('health_resource_passive_missing_pct_regen','PassiveMissingPercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
     'shield_idle_rate': ('shield_resource_idle_regen_rate','OnIdleRegenerationRate',HEALTH_CONTEXT,'Shield','ScaleMultiply',2.),
@@ -46,6 +50,10 @@ def trial_amount(mode,selection=None):
     """Health selection scales the .001 additive increment, skill selection is a speed/duration factor."""
     if mode not in TARGETS:raise ValueError('unknown native rate trial')
     if selection is None:return TARGETS[mode][-1]
+    if mode==LUCK_MODE:
+        if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<selection<=10:
+            raise ValueError('choose gear luck above 1x through 10x')
+        return selection
     if mode in SHIELD_MODES:
         if type(selection) not in (int,float) or not math.isfinite(selection) or not .5<=selection<=3 or selection==1:
             raise ValueError('choose .5–3x shield speed other than 1x')
@@ -95,8 +103,20 @@ class NativeBinding:
         # Access only known reflected fields of a resolved FGbxDefPtr. No definition writes.
         for key in ('Context','Value'):prop(d._type,key,'ZGbxInlineStructProperty')
         c,v=d.Context,d.Value
-        if c._type._path_name()!=ctx or v._type._path_name()!=VALUE:
+        if c._type._path_name()!=ctx or v._type._path_name()!=(LUCK_VALUE if mode==LUCK_MODE else VALUE):
             raise ValueError('unexpected native resolver kind')
+        if mode==LUCK_MODE:
+            from .luck_categories import DEFINITION,CATEGORY_ENUM,MODIFIER_ENUM
+            cp=prop(v._type,'Category','ZGbxDefPtrProperty');cat=v.Category
+            if (cp.Struct._path_name()!=DEFINITION or type(cat) is not self.def_type or cat._name!=selector
+                    or cat._type._path_name()!=DEFINITION or identity(cat._type)!=identity(cp.Struct)):
+                raise ValueError('exact gear luck category definition required')
+            for member,path in (('CategoryType',CATEGORY_ENUM),('ModifierType',MODIFIER_ENUM)):
+                if prop(cat._type,member,'ZEnumProperty').Enum._path_name()!=path:
+                    raise ValueError('unexpected gear luck enum')
+            if enum_name(cat.CategoryType)!='ModifiableAttribute' or enum_name(cat.ModifierType)!='ScaleMultiply':
+                raise ValueError('gear luck must advertise a multiplicative modifiable category')
+            return d,(identity(d),identity(d._type),identity(c._type),identity(v._type),selector,identity(cat))
         if mode in RESOURCE_MODES:
             resource_prop=prop(c._type,'ResourceDef','ZGameDataHandleProperty')
             resource=c.ResourceDef
@@ -170,7 +190,7 @@ class NativeRateTrial:
         self.clock,self.thread,self.report,self.can_add=clock,thread,report,can_add
         self.cleanup_key=cleanup_key;self.selection=selection
         if type(continuous) is not bool:raise ValueError('invalid native rate lifetime')
-        if mode in SHIELD_MODES | {'missing_health'} and continuous:
+        if mode in SHIELD_MODES | {'missing_health',LUCK_MODE} and continuous:
             raise ValueError('native rate is isolated manual only')
         self.continuous=continuous
         trial_amount(mode,selection)
@@ -195,7 +215,7 @@ class NativeRateTrial:
 
     def snapshot(self,restore_verify=False):
         objs,key,d=self.dispatch_target(restore_verify=restore_verify)
-        value=self.binding.read(self.mode,objs[1])
+        value=self.binding.read(self.mode,objs[0] if self.mode==LUCK_MODE else objs[1])
         return objs,key,d,value
 
     def stable_snapshot(self,restore_verify=False):
@@ -216,7 +236,7 @@ class NativeRateTrial:
             objs,key,_,base=self.stable_snapshot()
             if not self.permission():raise ValueError('local activation permission unavailable')
             self.target_value(base)
-            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+10. if not self.continuous else float('inf'))
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),key,self.thread(),self.clock()+(30. if self.mode==LUCK_MODE else 10.) if not self.continuous else float('inf'))
             self.baseline=base;self.phase='armed'
         except Exception as e:self.report('HOLD: native rate '+str(e)[:120]);return False
         self.report('EXPERIMENT: native '+self.mode+' rate armed; no refill pulses.');return True
@@ -298,7 +318,7 @@ class NativeRateTrial:
                 self.record=None;self.phase='idle';self.report('HOLD: native rate '+str(e)[:120]);return
             self.expected=self.target_value(value)
             self.used=True;self.phase='active';self.due=self.clock()+.25
-            self.handle,echo_ok=self.binding.add(self.mode,d,objs[1],self.selection)
+            self.handle,echo_ok=self.binding.add(self.mode,d,objs[0] if self.mode==LUCK_MODE else objs[1],self.selection)
             if not echo_ok:self.anomaly=True
             _,_,_,observed=self.stable_snapshot()
             if not echo_ok or not close(observed,self.expected):
@@ -394,7 +414,23 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
         if (ok is not True and not (cleanup_only and ok is False)) or pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
             raise ValueError('eligible local OakCharacter required')
         d,def_key=binding.definition(mode)
-        if mode in HEALTH_MODES:
+        if mode==LUCK_MODE:
+            from .luck_categories import snapshot
+            if identity(pc.Pawn)!=identity(pawn):raise ValueError('local luck controller mismatch')
+            rows=snapshot(pc,identities=True)
+            targets=[row for row in rows if row[0]=='LuckCategory_Gear']
+            if len(targets)!=1:raise ValueError('exact gear luck category unavailable')
+            row=targets[0]
+            if row[1:3]!=('ModifiableAttribute','ScaleMultiply') or row[6]!=def_key[-1]:
+                raise ValueError('gear luck definition or modifier mismatch')
+            objs=(pc,pawn,state)
+            # Array entry and scalar wrapper identity are pinned. No array writes.
+            pool_key=(row[5:],)
+            if include_peer:
+                if not 0<row[3]<=1e4 or not 0<row[4]<=1e4 or not close(binding.read(mode,pc),row[3]):
+                    raise ValueError('gear luck native getter disagrees with local category')
+                pool_key=(*pool_key,row[4],tuple(r for r in rows if r[0]!=row[0]))
+        elif mode in HEALTH_MODES:
             objs=(pc,pawn,state);pool_key=local_health_target(pawn,d,ht,health_readers)
             if mode=='missing_health' and include_peer:
                 # Independent ordinary-rate witness; never edit this peer.

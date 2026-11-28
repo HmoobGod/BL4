@@ -247,6 +247,11 @@ for cls in (DamageCompatibility, PersistentDamageCompatibility):
     for name in cls.__dict__:
         if name.startswith('test_'):
             t=cls(name);unique[t.id()]=t
+from test_gun_luck_r63 import GunTests, GearLuckTests
+for cls in (GunTests,GearLuckTests):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
