@@ -307,10 +307,11 @@ from test_critical_chance import CriticalChance
 for name in CriticalChance.__dict__:
     if name.startswith('test_'):
         t=CriticalChance(name);unique[t.id()]=t
-from test_melee_damage import MeleeDamageTests
-for name in MeleeDamageTests.__dict__:
-    if name.startswith('test_'):
-        t=MeleeDamageTests(name);unique[t.id()]=t
+from test_melee_damage import MeleeDamageTests, SessionMeleeTests, SessionMeleeUI
+for cls in (MeleeDamageTests,SessionMeleeTests,SessionMeleeUI):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 from test_health_need_vacuum import HealthNeedVacuumTests, HealthNeedReaderTests
 for cls in (HealthNeedVacuumTests, HealthNeedReaderTests):
     for name in cls.__dict__:

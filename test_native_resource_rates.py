@@ -212,7 +212,7 @@ class NativeRateTests(unittest.TestCase):
             with self.assertRaises(ValueError):self.R.trial_amount(mode,selection)
     def test_native_rate_options_default_inert(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive','gear_luck','cash','gun_actor','shield_idle_rate','shield_idle_delay'})
+        self.assertEqual(set(m.NATIVE_RATE_OPTIONS),{'health','cooldown','duration','vaultregen','vaultdelay','vaultdepleted','shieldpassive','gear_luck','cash','melee','gun_actor','shield_idle_rate','shield_idle_delay'})
         self.assertTrue(all(o.value==1. for o in m.NATIVE_RATE_OPTIONS.values()))
         self.assertFalse(self.native)
 
@@ -228,7 +228,7 @@ class NativeRateTests(unittest.TestCase):
 
     def test_persistent_native_rates_default_off(self):
         m=self.base.m
-        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_vaultregen','native_rate_vaultdelay','native_rate_vaultdepleted','native_rate_shieldpassive','native_rate_gear_luck','native_rate_cash','native_rate_gun_actor','native_rate_shield_idle_rate','native_rate_shield_idle_delay'})
+        self.assertEqual(set(m.NATIVE_AUTO_OPTIONS),{'native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_vaultregen','native_rate_vaultdelay','native_rate_vaultdepleted','native_rate_shieldpassive','native_rate_gear_luck','native_rate_cash','native_rate_melee','native_rate_gun_actor','native_rate_shield_idle_rate','native_rate_shield_idle_delay'})
         self.assertTrue(all(o.value is False for o in m.NATIVE_AUTO_OPTIONS.values()))
 
     def test_persistent_native_skill_and_refill_mutually_exclusive(self):

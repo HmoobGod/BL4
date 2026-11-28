@@ -128,7 +128,8 @@ NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=
                        for k,label in (('health','Native passive regeneration increment (x 0.001)'),('cooldown','Native cooldown speed multiplier'),('duration','Native skill duration multiplier'),('vaultregen','Vault Power recharge speed'),('vaultdelay','Vault Power idle delay speed'),('vaultdepleted','Vault Power depleted delay speed'),('shieldpassive','Native passive shield increment (x 0.001)'))}
 NATIVE_RATE_OPTIONS['gear_luck'] = _PREVIEW_BY_KEY['overall_loot_luck']
 NATIVE_RATE_OPTIONS['cash'] = _PREVIEW_BY_KEY['progress_money']
-NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable earned pickup cash (experimental)' if k=='cash' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
+NATIVE_RATE_OPTIONS['melee'] = SliderOption('native_rate_selection_melee',1.,.5,5.,step=.1,is_integer=False,display_name='Melee attack damage (experimental)')
+NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable earned pickup cash (experimental)' if k=='cash' else 'Enable melee attack damage (experimental)' if k=='melee' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
 NATIVE_RATE_OPTIONS.update({mode:_PREVIEW_BY_KEY[key] for mode,key in NATIVE_BACKEND_KEYS.items()})
 NATIVE_AUTO_OPTIONS.update({'native_rate_'+mode:AUTO_OPTIONS[key] for mode,key in NATIVE_BACKEND_KEYS.items()})
 ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in NATIVE_BACKEND_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
@@ -478,7 +479,7 @@ def draw_feature_toggle(ui, option):
 
 def native_rate_selection(ui, mode):
     option=NATIVE_RATE_OPTIONS[mode]
-    edited,value=ui.slider_float(option.display_name+'##'+option.identifier,float(displayed_selection(option)),1.,5.,'%.1fx')
+    edited,value=ui.slider_float(option.display_name+'##'+option.identifier,float(displayed_selection(option)),option.min_value,option.max_value,'%.1fx')
     if edited:
         queue_auto_edit(option,value)
     flag=NATIVE_AUTO_OPTIONS['native_rate_'+mode]
@@ -778,9 +779,10 @@ def draw():
             ui.text_wrapped('Experimental gun damage; equipped field backend by default. Apply while idle; 1x restores. Actual hit effects unverified.')
             if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gun damage (30 sec)'):
                 activate_feature(GUN_TRIAL_KEY,displayed_selection(o))
-            if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native melee attack damage (30 sec)'):
-                activate_feature(MELEE_TRIAL_KEY,displayed_selection(o))
-            ui.text_wrapped('Melee test uses the same damage selection, but requires a separate local attack attribute and matching native expression. Actual melee damage unverified.')
+            melee=native_rate_selection(ui,'melee')
+            if melee!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native melee attack damage (30 sec)'):
+                activate_feature(MELEE_TRIAL_KEY,melee)
+            ui.text_wrapped('Independent melee attack damage; native cash and actor gun take priority because the melee receipt witnesses their entries. Equipped-field gun damage can remain active. 1x restores; toggle to rearm after a transition. Actual melee hits unverified.')
         if key in ('fire_damage', 'shock_damage', 'corrosive_damage', 'cryo_damage', 'radiation_damage'):
             ui.text_wrapped('Experimental elemental modifier; actual hit damage unverified. 1x restores.')
         if key == 'gravity':
@@ -2594,6 +2596,13 @@ def ensure_crossfire_events():
 
 CASH_LANE = 'native_rate_cash'
 ACTOR_GUN_LANE = 'native_rate_gun_actor'
+MELEE_LANE = 'native_rate_melee'
+
+
+def actor_gun_requested():
+    option=NATIVE_RATE_OPTIONS['gun_actor']
+    return (GUN_ACTOR_BACKEND.value is True and NATIVE_AUTO_OPTIONS[ACTOR_GUN_LANE].value is True
+            and normalize(option,option.value)!=1.)
 
 
 def cash_session_requested():
@@ -2624,8 +2633,12 @@ def native_rate_allowed(kind,selection):
     # Preserve an active committed setting while its draft is waiting to save.
     if NATIVE_AUTO_OPTIONS[kind].value is not True or normalize(option,option.value)!=selection:
         return False
+    if mode=='melee':
+        return (.5<=selection<=5. and selection!=1.
+                and not cash_session_requested() and not actor_gun_requested()
+                and CASH_LANE not in _automation_leases and ACTOR_GUN_LANE not in _automation_leases)
     if mode=='gun_actor':
-        return (GUN_ACTOR_BACKEND.value is True and .5<=selection<=5. and selection!=1.
+        return (MELEE_LANE not in _automation_leases and GUN_ACTOR_BACKEND.value is True and .5<=selection<=5. and selection!=1.
                 and (_controller is None or 'damage' not in _controller.records)
                 and cash_settled_for_actor_gun())
     if mode in SHIELD_POOL_KEYS:
@@ -2637,9 +2650,9 @@ def native_rate_allowed(kind,selection):
     if mode!='health' and selection<=1.:return False
     if mode=='cash':
         cash=_automation_leases.get(CASH_LANE)
-        return (not actor_gun_receipt_live() or
+        return (MELEE_LANE not in _automation_leases and (not actor_gun_receipt_live() or
                 (cash is not None and cash.record is not None and cash.phase=='active'
-                 and cash.owned and not cash.fault and not cash.stop_requested))
+                 and cash.owned and not cash.fault and not cash.stop_requested)))
     if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
@@ -2708,7 +2721,25 @@ def make_session_gun(session,selection):
     return lane
 
 
+def make_session_melee(session,selection):
+    from .blackboard_rewards import MeleeBinding,SessionMeleeTrial,SPECS,DEF,MELEE_MODE
+    sdk=sys.modules['unrealsdk'];u=sdk.unreal
+    defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
+    if len(defs)!=1:raise ValueError('native melee definition struct unavailable')
+    fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
+    def permitted():
+        try:
+            return (_monitor_thread==threading.get_ident() and feature_enabled(NATIVE_AUTO_OPTIONS[MELEE_LANE])
+                    and native_rate_allowed(MELEE_LANE,selection) and automation_permitted())
+        except Exception:return False
+    binding=MeleeBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    return SessionMeleeTrial(MELEE_MODE,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+
+
 def make_automation_lane(kind, session):
+    if kind==MELEE_LANE:
+        option=NATIVE_RATE_OPTIONS['melee']
+        return make_session_melee(session,normalize(option,option.value))
     if kind=='native_rate_gun_actor':
         option=NATIVE_RATE_OPTIONS['gun_actor']
         return make_session_gun(session,normalize(option,option.value))

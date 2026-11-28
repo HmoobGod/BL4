@@ -513,13 +513,17 @@ class MeleeTrial(GunTrial):
             if self.permission() is not True or near(v,self.target):raise ValueError('activation not permitted or ineffective target')
             self.formula_base=w[:2]
             self.base=(key,missing,v,fp,p,peers)
-            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),self.clock()+30.)
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),float('inf') if getattr(self,'continuous',False) else self.clock()+30.)
             self.phase='armed'
-            self.report('EXPERIMENT: '+self.name+' armed for 30 seconds; '+self.armed_note+'.');return True
+            self.report('EXPERIMENT: '+self.name+(' armed for this session; ' if getattr(self,'continuous',False) else ' armed for 30 seconds; ')+self.armed_note+'.');return True
         except Exception as e:self.report('HOLD: melee '+str(e)[:140]);return False
 
     def matches(self,s,v,fp):
         return self.primary_matches(s,v,fp) and self.formula_matches(s[7],v,self.formula_base)
+
+
+class SessionMeleeTrial(SessionCashMixin,MeleeTrial):
+    """Independent local melee entry, no attack dispatch or new native setter."""
 
 
 GUN_ADDITIVE='calc_caused_gun_damage_additive'
