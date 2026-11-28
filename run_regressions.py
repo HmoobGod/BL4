@@ -242,6 +242,11 @@ from test_native_shield_regen import NativeShieldRegen
 for name in NativeShieldRegen.__dict__:
     if name.startswith('test_'):
         t=NativeShieldRegen(name);unique[t.id()]=t
+from test_damage_compatibility import DamageCompatibility, PersistentDamageCompatibility
+for cls in (DamageCompatibility, PersistentDamageCompatibility):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

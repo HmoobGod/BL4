@@ -156,21 +156,73 @@ def fields(b, key):
     return pair(nested(b, name, 'GbxAttributeFloat'))
 
 
+
+# Historical GbxWeapon declares Reload (ReloadTime/MinReloadTime) and Heat
+# (UseBehavior). Use a positive mode-specific witness, never mere absence of
+# StockReload. This only extends admission for the existing gun damage field.
+RELOAD_BASE = '/Script/GbxWeapon.WeaponBehavior_Reload'
+HEAT_CLASS = '/Script/GbxWeapon.WeaponBehavior_Heat'
+USE_BASE = '/Script/GbxWeapon.WeaponBehavior_Use'
+FIRE_BASE = '/Script/GbxWeapon.WeaponBehavior_Fire'
+
+def damage_witness(w, index, fire):
+    from .gameplay_fields import pair
+    # Keep the existing stock route (including its ambiguity/owner checks).
+    desc = prop(w.Class, 'behaviors', 'ZArrayProperty')
+    if type(desc.Inner).__name__ != 'ZObjectProperty' or str(desc.Inner.PropertyClass.Name) != 'WeaponBehavior':
+        raise ValueError('unexpected behavior array element type')
+    arr = w.behaviors
+    if not 0 < len(arr) <= 256:
+        raise ValueError('unexpected weapon behavior count')
+    members = []
+    for b in arr:
+        if b is None:
+            continue
+        m = re.fullmatch(r'UM([0-9]+)_[A-Za-z0-9_]+', str(b.Name))
+        if m is not None and int(m.group(1)) == index:
+            members.append(b)
+    if any(str(b.Class.Name) == 'WeaponBehavior_StockReload' for b in members):
+        stock = matching_behavior_entries(w, 'reload', index, arr)
+        return 'stock', live(stock)
+    if w.Class._path_name() != '/Script/OakGame.OakWeapon' or not any(c._path_name() == FIRE_BASE for c in (fire.Class, *fire.Class._superfields())):
+        raise ValueError('exact native ordinary weapon and fire class required')
+    candidates = []
+    for b in members:
+        cls = b.Class
+        path = cls._path_name()
+        if path == HEAT_CLASS:
+            if token(b.Outer) != token(w):
+                raise ValueError('foreign heat behavior')
+            d = prop(cls, 'UseBehavior', 'ZObjectProperty')
+            if d.PropertyClass._path_name() != USE_BASE or live(b.UseBehavior) != live(fire):
+                raise ValueError('heat behavior does not reference current fire mode')
+            candidates.append(('heat', live(b)))
+        elif path == RELOAD_BASE or any(c._path_name() == RELOAD_BASE for c in cls._superfields()):
+            if not path.startswith(('/Script/GbxWeapon.', '/Script/OakGame.')) or token(b.Outer) != token(w):
+                raise ValueError('foreign or nonnative reload behavior')
+            rate = pair(nested(b, 'ReloadTime', 'GbxAttributeFloat'))
+            floor = pair(nested(b, 'MinReloadTime', 'GbxAttributeFloat'), allow_zero=True)
+            if min(f[3] for f in rate) < max(f[3] for f in floor):
+                raise ValueError('reload witness below native minimum')
+            candidates.append(('reload', live(b)))
+    if len(candidates) != 1:
+        raise ValueError('unique ordinary gun reload or heat witness unavailable')
+    return candidates[0]
+
+
 def capture(pawn, key, weak):
     w = active_weapon(pawn)
     if str(w.CurrentState) != 'Active':
         raise ValueError('activate with weapon idle')
     index = mode(w)
     b = matching_behavior(w, key, index)
-    if key == 'damage':
-        # Restrict to ordinary stock-reloading guns, not gadget/unknown fire modes.
-        matching_behavior(w, 'reload', index)
+    witness = damage_witness(w, index, b) if key == 'damage' else None
     if key in AMMO_KEYS:
         # Require ordinary stock-reload behavior and existing positive native regen.
         matching_behavior(w, 'reload', index)
         from .gameplay_fields import pair
         pair(nested(b, 'RegenRate', 'GbxAttributeFloat'))
-    return dict(weapon=weak(w), behavior=weak(b), weapon_id=live(w), behavior_id=live(b), mode=index, key=key)
+    return dict(weapon=weak(w), behavior=weak(b), weapon_id=live(w), behavior_id=live(b), mode=index, key=key, damage_witness=witness)
 
 
 def resolve(pawn, scope):
@@ -181,15 +233,25 @@ def resolve(pawn, scope):
     current = matching_behavior(w, scope['key'], scope['mode'])
     if live(current) != live(b):
         raise ValueError('original behavior changed')
+    witness_ok = True
     if scope['key'] == 'damage':
-        matching_behavior(w, 'reload', scope['mode'])
+        if scope['damage_witness'][0] == 'stock':
+            # Preserve the original stock resolver, including its failure policy.
+            matching_behavior(w, 'reload', scope['mode'])
+        else:
+            # An alternate witness only admits activation. When it disappears,
+            # the independently resolved original fire field can still restore.
+            try:
+                witness_ok = damage_witness(w, scope['mode'], current) == scope['damage_witness']
+            except (AttributeError, TypeError, ValueError):
+                witness_ok = False
     # Restore only the old, still-owned instance when mode/active weapon changes.
     # If ownership or slots disappear, fail closed and never write replacement.
     try:
         eligible = live(active_weapon(pawn)) == live(w) and mode(w) == scope['mode']
     except (AttributeError, TypeError, ValueError):
         eligible = False
-    return fields(current, scope['key']), eligible
+    return fields(current, scope['key']), eligible and witness_ok
 
 
 def validate_targets(scope, targets):
