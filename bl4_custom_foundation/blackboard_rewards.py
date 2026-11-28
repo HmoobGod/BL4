@@ -503,3 +503,78 @@ class MeleeTrial(GunTrial):
 
     def matches(self,s,v,fp):
         return self.primary_matches(s,v,fp) and self.formula_matches(s[7],v,self.formula_base)
+
+
+GUN_ADDITIVE='calc_caused_gun_damage_additive'
+GUN_FAMILIES=('assault_rifle','pistol','shotgun','smg','sniper')
+
+
+class GunFormulaBinding(GunBinding):
+    """Witness exact existing gun-family expressions; never write their definitions."""
+    def expression_key(self,name):
+        d=self.def_type(name,self.def_struct,True)
+        if type(d) is not self.def_type or d._name!=name or identity(d._type)!=identity(self.def_struct):
+            raise ValueError('exact gun expression unavailable')
+        for k in ('Context','Value'):prop(d._type,k,'ZGbxInlineStructProperty')
+        c,v=d.Context,d.Value
+        if c._type._path_name()!=ENGINE+'ActorContextResolver' or v._type._path_name()!=ENGINE+'GbxExpressionValueResolver':
+            raise ValueError('gun expression resolver mismatch')
+        e=struct(v,'Expression',ENGINE+'GbxAttributeExpression')
+        return identity(d),identity(c._type),identity(v._type),identity(e._type)
+
+    def formula(self,pawn):
+        read=self.calls['GetValueOfAttribute']
+        additive=read(GUN_ADDITIVE,pawn,-123456.)
+        if type(additive) not in (float,int) or not math.isfinite(additive) or not -1.<additive<=99.:
+            raise ValueError('gun additive expression unavailable')
+        rows=[]
+        for family in GUN_FAMILIES:
+            name='calc_caused_damage_'+family+'_multiplier'
+            peer='caused_damage_'+family+'_multiplier'
+            rows.append((self.expression_key(name),number(read(peer,pawn,-123456.)),number(read(name,pawn,-123456.))))
+        return self.expression_key(GUN_ADDITIVE),float(additive),tuple(rows)
+
+
+class GunFormulaTrial(GunTrial):
+    outcome='gun additive and five gun-family expressions checked; actual hit damage unverified'
+    armed_note='existing local gun entry and six native expressions witnessed; linked companion effects possible'
+
+    def observe(self):
+        s=super().observe()
+        try:w=self.binding.formula(s[0][1])
+        except Exception:w=None
+        return (*s[:7],w)
+
+    @staticmethod
+    def formula_identity(w):
+        return w[0],tuple(row[:2] for row in w[2])
+
+    @classmethod
+    def formula_matches(cls,w,value,baseline=None):
+        return (w is not None and len(w[2])==len(GUN_FAMILIES)
+                and (baseline is None or cls.formula_identity(w)==baseline)
+                and near(w[1],value-1.)
+                and all(near(result,peer+value-1.) for _,peer,result in w[2]))
+
+    def begin(self):
+        if self.record or self.fault or self.phase!='idle':return False
+        try:
+            objs,key,missing,v,fp,p,peers,w=self.stable()
+            self.target=number(v*self.scale)
+            if not self.formula_matches(w,v) or not all(0<peer+self.target-1.<=100 for _,peer,_ in w[2]):
+                raise ValueError('gun expression baseline or target invalid')
+            if self.permission() is not True or near(v,self.target):raise ValueError('activation not permitted or ineffective target')
+            self.formula_base=self.formula_identity(w)
+            self.base=(key,missing,v,fp,p,peers)
+            continuous=getattr(self,'continuous',False)
+            self.record=(tuple(self.weak(o) for o in objs),tuple(identity(o) for o in objs),self.thread(),float('inf') if continuous else self.clock()+30.)
+            self.phase='armed'
+            self.report('EXPERIMENT: '+self.name+(' armed for this session; ' if continuous else ' armed for 30 seconds; ')+self.armed_note+'.');return True
+        except Exception as e:self.report('HOLD: gun '+str(e)[:140]);return False
+
+    def matches(self,s,v,fp):
+        return self.primary_matches(s,v,fp) and self.formula_matches(s[7],v,self.formula_base)
+
+
+class SessionGunTrial(SessionCashMixin,GunFormulaTrial):
+    """Same reversible actor entry; explicit opt-in backend, no extra damage slider."""

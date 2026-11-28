@@ -98,7 +98,9 @@ _reload_event_registered = False
 _reload_event_status = 'Not armed'
 SHIELD_POOL_BACKEND = BoolOption('native_shield_pool_backend',False,display_name='Use native shield pool recharge instead of equipped shield fields (experimental)')
 SHIELD_POOL_KEYS = {'shield_idle_rate':'shield_regen_rate','shield_idle_delay':'shield_regen_delay'}
-AUTO_SETTINGS = [auto_master, auto_consent, RELOAD_EVENT, SHIELD_POOL_BACKEND, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
+GUN_ACTOR_BACKEND = BoolOption('native_actor_gun_backend',False,display_name='Use native actor gun formulas instead of equipped gun fields (experimental)')
+NATIVE_BACKEND_KEYS = {**SHIELD_POOL_KEYS, 'gun_actor':'damage'}
+AUTO_SETTINGS = [auto_master, auto_consent, RELOAD_EVENT, SHIELD_POOL_BACKEND, GUN_ACTOR_BACKEND, *AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), DOUBLE_JUMP_RATE]
 # Independent persistent lanes. Isolated manual experiments remain unchanged.
 _automation_leases = {}
 _automation_attempted = set()
@@ -127,9 +129,9 @@ NATIVE_RATE_OPTIONS = {k: SliderOption('native_rate_selection_'+k,1.,1.,5.,step=
 NATIVE_RATE_OPTIONS['gear_luck'] = _PREVIEW_BY_KEY['overall_loot_luck']
 NATIVE_RATE_OPTIONS['cash'] = _PREVIEW_BY_KEY['progress_money']
 NATIVE_AUTO_OPTIONS = {'native_rate_'+k: BoolOption('persistent_native_rate_'+k,False,display_name=('Enable native gear luck (experimental)' if k=='gear_luck' else 'Enable earned pickup cash (experimental)' if k=='cash' else 'Enable native '+k+' rate (experimental)')) for k in NATIVE_RATE_OPTIONS}
-NATIVE_RATE_OPTIONS.update({mode:_PREVIEW_BY_KEY[key] for mode,key in SHIELD_POOL_KEYS.items()})
-NATIVE_AUTO_OPTIONS.update({'native_rate_'+mode:AUTO_OPTIONS[key] for mode,key in SHIELD_POOL_KEYS.items()})
-ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in SHIELD_POOL_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
+NATIVE_RATE_OPTIONS.update({mode:_PREVIEW_BY_KEY[key] for mode,key in NATIVE_BACKEND_KEYS.items()})
+NATIVE_AUTO_OPTIONS.update({'native_rate_'+mode:AUTO_OPTIONS[key] for mode,key in NATIVE_BACKEND_KEYS.items()})
+ALL = PREVIEW + [o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS] + [o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in NATIVE_BACKEND_KEYS] + [probe] + AUTO_SETTINGS + list(VACUUM_PREFS.values()) + [VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF] + list(RECOVERY_RATES.values()) + list(SKILL_ADAPTIVE.values()) + list(SKILL_RATES.values()) + list(SKILL_FOLLOW.values()) + list(SKILL_NATIVE.values()) + [CROSSFIRE_GATE]
 _auto_owned = False
 _auto_blocked = ''
 _auto_status = 'Not active; enable a feature.'
@@ -353,6 +355,8 @@ def persistent_feature_status(key):
         return 'Restoring' if record else 'Vanilla capacity' if key in CAPACITY_KEYS else '1x / vanilla'
     if record is not None and record.get('selection') == selected:
         return 'Active: ' + str(selected) + (' slots' if key in CAPACITY_KEYS else 'x') + ' (value verified)'
+    if key=='damage' and GUN_ACTOR_BACKEND.value is True:
+        return _automation_status.get('native_rate_gun_actor','Waiting for eligible native gun formulas')
     if key in SHIELD_KEYS and SHIELD_POOL_BACKEND.value is True:
         mode=next(m for m,k in SHIELD_POOL_KEYS.items() if k==key)
         return _automation_status.get('native_rate_'+mode,'Waiting for eligible shield pool')
@@ -382,7 +386,7 @@ def feature_enabled(option):
 
 
 def feature_flags():
-    return (*AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), *(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS))
+    return (*AUTO_OPTIONS.values(), *AUTOMATION_OPTIONS.values(), *(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS))
 
 
 def set_feature_enabled(option, value):
@@ -554,7 +558,7 @@ def draw():
         if not options:
             ui.text('No supported gameplay controls here; turn off Compact menu to view previews.')
     if _category == 0 and not compact:
-        ui.text_wrapped('Damage slider uses the equipped ordinary gun fire behavior. Separate isolated native gun test uses the same selection (actor entry first, removable weapon attribute fallback). Elemental and incoming modifiers are separate; hit effects unverified.')
+        ui.text_wrapped('Damage slider uses equipped ordinary gun fire behavior by default, or the explicitly selected actor formula backend. Separate isolated native gun test uses the same selection (formula-witnessed actor entry first, removable weapon attribute fallback). Elemental and incoming modifiers are separate; hit effects unverified.')
     if _category == 1 and not compact:
         ui.text_wrapped('Pickup cash: continuous formula-witnessed toggle or isolated 30-second trial. Eridium: isolated trial only. XP experiment failed; XP controls are preview only. Use a backup character; earned rewards are not reversed.')
         ui.text_wrapped(_reward_summary)
@@ -745,7 +749,7 @@ def draw():
                 flag=NATIVE_AUTO_OPTIONS['native_rate_cash']
                 draw_feature_toggle(ui,flag)
                 ui.text(_automation_status.get('native_rate_cash','Waiting for eligible session') if feature_enabled(flag) else 'Off / restoring' if 'native_rate_cash' in _automation_leases else 'Off')
-                ui.text_wrapped('Continuous earned pickup cash requires native formula agreement. Editing the multiplier restores first; toggle off/on to rearm. Actual awards unverified.')
+                ui.text_wrapped('Continuous earned pickup cash requires native formula agreement; native actor gun backend must be OFF. Editing the multiplier restores first; toggle off/on to rearm. Actual awards unverified.')
             if key == FAILED_XP_KEY:
                 ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
                 continue
@@ -768,7 +772,10 @@ def draw():
         if key == 'fire_rate' and displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test removable native fire rate (30 sec)'):
             activate_feature(FIRE_RATE_TRIAL_KEY,displayed_selection(o))
         if key == 'damage':
-            ui.text_wrapped('Experimental equipped gun damage, not skill/melee/global damage. Apply while idle; 1x restores. Actual hit effects unverified.')
+            changed_backend,chosen_backend=ui.checkbox(GUN_ACTOR_BACKEND.display_name+'##'+GUN_ACTOR_BACKEND.identifier,GUN_ACTOR_BACKEND.value is True)
+            if changed_backend:set_auto_setting(GUN_ACTOR_BACKEND,chosen_backend)
+            ui.text_wrapped('Actor backend uses the existing Damage slider and toggle; turn damage OFF and restore before switching. All five gun-family formulas and the additive expression must agree. Native cash must be OFF. Linked companion effects possible. Actual hits unverified.')
+            ui.text_wrapped('Experimental gun damage; equipped field backend by default. Apply while idle; 1x restores. Actual hit effects unverified.')
             if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native gun damage (30 sec)'):
                 activate_feature(GUN_TRIAL_KEY,displayed_selection(o))
             if displayed_selection(o)!=1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native melee attack damage (30 sec)'):
@@ -1389,7 +1396,7 @@ def begin_blackboard_reward(key, selection):
     global _health_pulse
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, choose_cash_trial, MeleeBinding, MeleeTrial, SPECS, DEF
+    from .blackboard_rewards import Binding, Trial, GunFormulaBinding, GunFormulaTrial, CashFormulaBinding, CashFormulaTrial, CashPrimaryBinding, CashPrimaryTrial, choose_cash_trial, MeleeBinding, MeleeTrial, SPECS, DEF
     if key not in REWARD_KEYS | {MELEE_TRIAL_KEY,GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
@@ -1421,8 +1428,8 @@ def begin_blackboard_reward(key, selection):
         from .native_weapon_damage import make_trial, choose_gun_trial
         def primary():
             if len(defs)!=1:raise ValueError('native actor attribute definition unavailable')
-            binding=GunBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
-            return GunTrial(key,selection,binding,*args)
+            binding=GunFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+            return GunFormulaTrial(key,selection,binding,*args)
         def fallback():
             native=NativeBinding([f for f in sdk.find_all('Function',exact=False) if str(f.Name) in RATE_SPECS],loot_bound,u.FGbxDefPtr,u.WrappedStruct)
             return make_trial(native,*args,selection)
@@ -1887,6 +1894,10 @@ def auto_allowed():
 
 def set_auto_setting(option, value):
     global _auto_blocked, _auto_ground, _auto_next, _ground_retry_at, _reload_handoff
+    if option is GUN_ACTOR_BACKEND:
+        if (AUTO_OPTIONS['damage'].value is True or 'native_rate_gun_actor' in _automation_leases
+                or (_controller is not None and 'damage' in _controller.records) or health_active() or health_fault() or automation_fault()):
+            report_live('HOLD: turn off Damage and verify restoration before switching backend');return
     if option is SHIELD_POOL_BACKEND:
         if (any(AUTO_OPTIONS[k].value is True for k in SHIELD_KEYS) or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS)
                 or (_controller is not None and SHIELD_KEYS.intersection(_controller.records)) or health_active() or health_fault() or automation_fault()):
@@ -2000,6 +2011,8 @@ def auto_desired():
     desired = raw_auto_desired()
     if RELOAD_EVENT.value is True:
         desired.pop('reload',None)
+    if GUN_ACTOR_BACKEND.value is True or 'native_rate_gun_actor' in _automation_leases:
+        desired.pop('damage',None)
     # Keep the legacy pair backend disjoint from native pool handle lifetime.
     if SHIELD_POOL_BACKEND.value is True or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS):
         desired={k:v for k,v in desired.items() if k not in SHIELD_KEYS}
@@ -2585,6 +2598,11 @@ def native_rate_allowed(kind,selection):
     # Preserve an active committed setting while its draft is waiting to save.
     if NATIVE_AUTO_OPTIONS[kind].value is not True or normalize(option,option.value)!=selection:
         return False
+    if mode=='gun_actor':
+        return (GUN_ACTOR_BACKEND.value is True and .5<=selection<=5. and selection!=1.
+                and (_controller is None or 'damage' not in _controller.records)
+                and NATIVE_AUTO_OPTIONS['native_rate_cash'].value is not True
+                and 'native_rate_cash' not in _automation_leases)
     if mode in SHIELD_POOL_KEYS:
         active=set(_controller.records) if _controller is not None else set()
         return (SHIELD_POOL_BACKEND.value is True and .5<=selection<=3. and selection!=1.
@@ -2592,7 +2610,10 @@ def native_rate_allowed(kind,selection):
                 and AUTOMATION_OPTIONS['shield'].value is not True and 'shield' not in _automation_leases
                 and NATIVE_AUTO_OPTIONS['native_rate_shieldpassive'].value is not True and 'native_rate_shieldpassive' not in _automation_leases)
     if mode!='health' and selection<=1.:return False
-    if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck','cash'):return True
+    if mode=='cash':
+        return not ((GUN_ACTOR_BACKEND.value is True and AUTO_OPTIONS['damage'].value is True)
+                    or 'native_rate_gun_actor' in _automation_leases)
+    if mode in ('vaultregen','vaultdelay','vaultdepleted','gear_luck'):return True
     if mode=='shieldpassive':
         active=set(_controller.records) if _controller is not None else set()
         return not (AUTOMATION_OPTIONS['shield'].value is True or 'shield' in _automation_leases or any('native_rate_'+m in _automation_leases for m in SHIELD_POOL_KEYS) or (SHIELD_KEYS|{'healing_received'}).intersection(set(raw_auto_desired())|active))
@@ -2629,7 +2650,25 @@ def make_session_cash(session,selection):
     return primary
 
 
+def make_session_gun(session,selection):
+    from .blackboard_rewards import GunFormulaBinding,SessionGunTrial,SPECS,DEF,GUN_MODE
+    sdk=sys.modules['unrealsdk'];u=sdk.unreal
+    defs=[d for d in sdk.find_all('ScriptStruct',exact=False) if d._path_name()==DEF]
+    if len(defs)!=1:raise ValueError('native gun definition struct unavailable')
+    fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
+    def permitted():
+        try:
+            return (_monitor_thread==threading.get_ident() and feature_enabled(AUTO_OPTIONS['damage'])
+                    and native_rate_allowed('native_rate_gun_actor',selection) and automation_permitted())
+        except Exception:return False
+    binding=GunFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+    return SessionGunTrial(GUN_MODE,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+
+
 def make_automation_lane(kind, session):
+    if kind=='native_rate_gun_actor':
+        option=NATIVE_RATE_OPTIONS['gun_actor']
+        return make_session_gun(session,normalize(option,option.value))
     if kind=='native_rate_cash':
         option=NATIVE_RATE_OPTIONS['cash']
         return make_session_cash(session,normalize(option,option.value))
@@ -2754,6 +2793,8 @@ def automation_tick():
         for kind in (*AUTOMATION_OPTIONS,*NATIVE_AUTO_OPTIONS):
             if kind in rearmed:continue
             # The legacy equipped-field backend must not incur pool admission work.
+            if kind=='native_rate_gun_actor' and GUN_ACTOR_BACKEND.value is not True:
+                continue
             if kind.removeprefix('native_rate_') in SHIELD_POOL_KEYS and SHIELD_POOL_BACKEND.value is not True:
                 continue  # original native cleanup was handled above
             if lane_options[kind].value is not True:
@@ -2871,7 +2912,7 @@ options = [ButtonOption('open_menu', display_name='Open Graphical Menu', on_pres
            ButtonOption('inspect_rewards', display_name='Inspect Reward Members (Read Only)', on_press=inspect_reward_members),
            ButtonOption('inspect_attribute_api', display_name='Attribute Compatibility Report (Read Only)', on_press=inspect_attribute_compatibility), probe]
 options += [NestedOption('persistent', AUTO_SETTINGS, display_name='Saved gameplay settings (use F8)'), NestedOption('vacuum_preferences', [*VACUUM_PREFS.values(), VACUUM_RADIUS_PREF, VACUUM_HIGH_PREF], display_name='Saved vacuum preferences (no startup activation)')]
-options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in SHIELD_POOL_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in SHIELD_POOL_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
+options += [NestedOption('native_rate_options', [*(o for k,o in NATIVE_RATE_OPTIONS.items() if k not in ('gear_luck','cash') and k not in NATIVE_BACKEND_KEYS),*(o for k,o in NATIVE_AUTO_OPTIONS.items() if k.removeprefix('native_rate_') not in NATIVE_BACKEND_KEYS)], display_name='Native rate selections and persistent opt-in (experimental)')]
 options += [NestedOption('recovery_rates', list(RECOVERY_RATES.values()), display_name='Recovery pulse rates (experimental)'), NestedOption('adaptive_skill', [*SKILL_ADAPTIVE.values(),*SKILL_RATES.values(),*SKILL_FOLLOW.values(),*SKILL_NATIVE.values(),CROSSFIRE_GATE], display_name='Adaptive skill assist (experimental)')]
 options += [NestedOption(key, items, display_name=name, description=DESCRIPTION)
             for key, name, items in CATEGORIES if key != 'menu']
