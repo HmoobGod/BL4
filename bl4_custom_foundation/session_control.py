@@ -105,10 +105,10 @@ class Controller:
                     state_id=identity(state), tokens=tokens, baseline=baseline,
                     weapon_scope=scope, inventory_scope=inv, shield_scope=shield, gadget_scope=gadget, slide_base=slide_base, expected=baseline, owned=[{v} for v in baseline], thread=self.thread())
 
-    def resolve(self, record, *, observed=None):
+    def observed_scope(self, record, observed):
         if self.thread() != record['thread']:
             raise ValueError('wrong game hook thread')
-        pc, pawn, state, eligible = self.context() if observed is None else observed
+        pc, pawn, state, eligible = observed
         for name, current in (('pc', pc), ('state', state)):
             old = record[name]()
             if old is None or current is None or identity(old) != record[name+'_id'] or identity(current) != record[name+'_id']:
@@ -120,6 +120,14 @@ class Controller:
         # never write a pawn-owned field to a replacement pawn or stale object.
         if record['key'] not in RARITY_KEYS and not same_pawn:
             raise ValueError('original pawn no longer identifiable')
+        return same_pawn
+
+    def resolve(self, record, *, observed=None):
+        if self.thread() != record['thread']:
+            raise ValueError('wrong game hook thread')
+        observed = self.context() if observed is None else observed
+        pc, pawn, state, eligible = observed
+        same_pawn = self.observed_scope(record, observed)
         scope = record.get('weapon_scope')
         inv = record.get('inventory_scope')
         shield = record.get('shield_scope')
@@ -427,6 +435,29 @@ class Controller:
                 pass  # Unsupported lightweight observation retains full audit.
         return values, eligible
 
+    def fire_group_checks(self, observed, group):
+        """Only steady, unchanged fire records qualify for a shared read pass."""
+        if len(group) < 2 or not observed[3]:
+            return set()
+        drift = False
+        try:
+            for record in group.values():
+                if not self.observed_scope(record, observed):
+                    return set()
+            results = weapon_rates.observe_fire_group(observed[1], [r['weapon_scope'] for r in group.values()])
+            for key, record in group.items():
+                if self.records.get(key) is not record or not self.observed_scope(record, observed):
+                    return set()
+                _, tokens, values = describe_fields(results[key])
+                if tokens != record['tokens']:
+                    return set()  # independent original resolution handles identity loss
+                drift |= values != record['expected']
+        except Exception:
+            return set()  # all transition/uncertain cases use original per-field resolution
+        if drift:
+            raise ValueError('engine or another writer changed active fire field; no reapply')
+        return set(group)
+
     def tick(self, permitted, *, observed=None, follow_weapon=False, follow_shield=False, follow_gadget=False):
         if self.busy or not self.records or self.fault:
             return
@@ -443,8 +474,25 @@ class Controller:
             except Exception as exc:
                 self.restore_all('context check failed: ' + str(exc)[:100])
                 return
-            for key, record in tuple(self.records.items()):
+            fire_checked = set()
+            group_end = -1
+            records = tuple(self.records.items())
+            for position, (key, record) in enumerate(records):
                 try:
+                    if key in weapon_rates.FIRE_KEYS and position > group_end:
+                        group = {}
+                        for group_end in range(position, len(records)):
+                            k, r = records[group_end]
+                            if k not in weapon_rates.FIRE_KEYS:
+                                group_end -= 1
+                                break
+                            group[k] = r
+                        fire_checked = self.fire_group_checks(observed, group)
+                        if self.stop_pending is not None:
+                            self.restore_all(self.stop_pending)
+                            return
+                    if key in fire_checked:
+                        continue
                     light_reload = key == 'reload' and follow_weapon
                     if light_reload:
                         values, eligible = self.reload_tick_values(record, observed)
@@ -456,6 +504,7 @@ class Controller:
                                 self.restore_all('slide restoration failed')
                                 return
                             transitioned.add(key)
+                            fire_checked.clear()
                             continue
                         # Only persistent weapon controls may follow ordinary weapon changes.
                         # resolve already proved the original session/pawn and exact old behavior.
@@ -464,18 +513,21 @@ class Controller:
                                 self.restore_all('weapon restoration failed')
                                 return
                             transitioned.add(key)
+                            fire_checked.clear()
                             continue
                         if follow_shield and observed[3] and key in shield_rates.KEYS:
                             if not self.restore(key, 'shield transition; original restored'):
                                 self.restore_all('shield restoration failed')
                                 return
                             transitioned.add(key)
+                            fire_checked.clear()
                             continue
                         if follow_gadget and observed[3] and key == gadget_rates.KEY:
                             if not self.restore(key, 'grenade gadget transition; original restored'):
                                 self.restore_all('grenade restoration failed')
                                 return
                             transitioned.add(key)
+                            fire_checked.clear()
                             continue
                         self.restore_all('session or pawn changed')
                         return
@@ -498,6 +550,7 @@ class Controller:
                             self.restore_all('reload reset cleanup failed')
                             return
                         self.reload_reset_recovered = True
+                        fire_checked.clear()
                         transitioned.add(key)
                         continue
                     if values != record['expected'] and not (key in GROUND_KEYS and values == record['baseline']):

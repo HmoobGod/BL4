@@ -116,14 +116,18 @@ def is_fire(b):
     return any(str(c.Name) == 'WeaponBehavior_Fire' for c in b.Class._superfields()) or str(b.Class.Name) == 'WeaponBehavior_Fire'
 
 
-def matching_behavior(w, key, index):
+def behavior_entries(w):
     desc = prop(w.Class, 'behaviors', 'ZArrayProperty')
     if type(desc.Inner).__name__ != 'ZObjectProperty' or str(desc.Inner.PropertyClass.Name) != 'WeaponBehavior':
         raise ValueError('unexpected behavior array element type')
     arr = w.behaviors
     if not 0 < len(arr) <= 256:
         raise ValueError('unexpected weapon behavior count')
-    return matching_behavior_entries(w, key, index, arr)
+    return arr
+
+
+def matching_behavior(w, key, index):
+    return matching_behavior_entries(w, key, index, behavior_entries(w))
 
 
 def matching_behavior_entries(w, key, index, arr):
@@ -252,6 +256,43 @@ def resolve(pawn, scope):
     except (AttributeError, TypeError, ValueError):
         eligible = False
     return fields(current, scope['key']), eligible and witness_ok
+
+
+def observe_fire_group(pawn, scopes):
+    """Read-only steady observation of multiple original fire attributes.
+
+    No cross-callback cache, and never used to authorize a write or restore.
+    Ambiguous or transitioning groups fall back to independent full resolution.
+    """
+    if len(scopes) < 2 or any(s['key'] not in FIRE_KEYS for s in scopes):
+        raise ValueError('not a multi-fire group')
+    w = active_weapon(pawn)
+    wid, index = live(w), mode(w)
+    arr = behavior_entries(w)
+    fire = matching_behavior_entries(w, 'fire_rate', index, arr)
+    fid = live(fire)
+    result = {}
+    for scope in scopes:
+        key = scope['key']
+        if (key in result or scope['weapon_id'] != wid or scope['mode'] != index
+                or scope['behavior_id'] != fid or live(scope['weapon']()) != wid
+                or live(scope['behavior']()) != fid):
+            raise ValueError('fire group original scope changed')
+        if key == 'damage':
+            if scope['damage_witness'][0] == 'stock':
+                matching_behavior_entries(w, 'reload', index, arr)
+            elif damage_witness(w, index, fire) != scope['damage_witness']:
+                raise ValueError('fire group damage witness changed')
+        result[key] = fields(fire, key)
+    # Bracket the complete group with independently validated active slots.
+    if live(active_weapon(pawn)) != wid or mode(w) != index:
+        raise ValueError('fire group changed during observation')
+    final_arr = behavior_entries(w)
+    if live(matching_behavior_entries(w, 'fire_rate', index, final_arr)) != fid:
+        raise ValueError('fire group behavior changed during observation')
+    if any(s['key'] == 'damage' and s['damage_witness'][0] == 'stock' for s in scopes):
+        matching_behavior_entries(w, 'reload', index, final_arr)
+    return result
 
 
 def validate_targets(scope, targets):
