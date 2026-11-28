@@ -15,7 +15,7 @@ from pathlib import Path
 
 BACKEND_SHA = "55f7b3766afba4b7954e044acce055f4e1ec203a"
 BACKEND_COMMIT = "4e25cc3b2e540c1265f77eac7ba8b71363e012fb"
-TARGETS = ("inv", "inv_stat", "inv_custom", "inventorypart", "attribute",
+TARGETS = ("inv", "inv_stat", "inv_custom", "inv_aspect", "inventorypart", "attribute",
            "loot_config", "itempool", "itempoollist", "gbx_ue_data_table", "luck_category", "luckcategory", "resource_pool",
            "resourcepool", "game_resource_pool", "ui_stat", "ui_stat_group")
 TARGET_RE = re.compile(r"Nexus-Data-(" + "|".join(TARGETS) + r")(?:_?\d+)?\.ncs", re.I)

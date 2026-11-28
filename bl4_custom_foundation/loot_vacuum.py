@@ -25,6 +25,10 @@ PALETTE = (
 # Indexes correspond to the observed two palettes above. This is a visual
 # filter, not a native item rarity identity. Keep both category signals.
 HIGH_GEAR_COLORS = (PALETTE[8][1], PALETTE[13][1])
+# Exact inventory-definition body references; see SOURCES.md. The Eridium
+# single stack uses a Lootables/Pile path, not a Pickups namespace.
+ERIDIUM_SINGLE_STACK_BODY = '/Game/World/Interactives/Lootables/Pile/Eridium/SM_Eridium_Bar_Single.SM_Eridium_Bar_Single'
+CASH_SINGLE_STACK_BODY = '/Game/World/Interactives/Pickups/Money/SM_Money_Stack_Single.SM_Money_Stack_Single'
 PICKUP = '/Script/GbxGame.InventoryPickup'
 TELEPORT = '/Script/Engine.Actor:K2_TeleportTo'
 LOCATION = '/Script/Engine.Actor:K2_GetActorLocation'
@@ -45,6 +49,8 @@ def body_kind(path):
     words=set(re.findall(r'[a-z]+',re.sub(r'([a-z])([A-Z])',r'\1 \2',path).lower()))
     if words.intersection({'mission','quest','objective','vendor','vending','display','shop','showcase','preview','rewardpreview','missionreward'}):
         return None
+    if path == ERIDIUM_SINGLE_STACK_BODY:
+        return 'eridium'
     if path.startswith('/Game/Gear/'):
         return 'gear'
     if words.intersection({'booster','shield','armor','shard'}):
@@ -138,6 +144,13 @@ def classify(actor, high_gear_only=False):
             if dlc_gear_witness(actor,body) is None:return None
         except Exception:return None
         k='gear'
+    elif path == ERIDIUM_SINGLE_STACK_BODY:
+        # Only this exact data-backed pile body is admitted. Require the full
+        # reflected body/package witness, not the legacy name-only fallback.
+        try:
+            if len(pickup_body_witness(actor)) != 4:return None
+        except Exception:return None
+        k='eridium'
     else:k=body_kind(path)
     if k is None:return None
     effect=actor.AttractEffectComponent

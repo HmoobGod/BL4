@@ -66,3 +66,31 @@ class ReloadTests(unittest.TestCase):
         a.api=(read,*a.api[1:]);self.advance();self.assertEqual(self.calls,[])
     def test_f8(self):self.m._category=5;self.b.gui.imgui.clicks={'Arm experimental automatic reload (30 sec)'};self.m.draw();self.assertFalse(self.m.health_active());self.m.monitor_tick();self.assertTrue(self.m.health_active())
     def test_other_modifier(self):self.c.activate('jump',1.5);self.start();self.assertFalse(self.m.health_active())
+    def late_reload_change(self,change):
+        self.start();self.advance(0,state='Firing');lane=self.m._health_pulse
+        old=lane.context;calls=0
+        def late():
+            nonlocal calls
+            calls+=1
+            result=old()
+            if calls==3:change()
+            return result
+        lane.context=late
+        self.advance(state='Active');self.assertGreaterEqual(calls,3)
+        self.assertFalse(self.calls);self.assertFalse(lane.fault);self.assertIsNone(lane.record)
+    def test_late_pending_weapon_refused(self):
+        self.late_reload_change(lambda:setattr(self.p.ActiveWeapons.Slots[0],'PendingWeapon',self.w))
+    def test_late_mode_refused(self):
+        self.late_reload_change(lambda:setattr(self.w,'CurrentUseModeIndex',1))
+    def test_late_reload_already_started_refused(self):
+        self.late_reload_change(lambda:setattr(self.w,'CurrentState','Reloading'))
+    def test_late_loaded_round_refused(self):
+        self.late_reload_change(lambda:setattr(self.pool,'LoadedAmmo',1))
+    def test_late_reserve_loss_refused(self):
+        self.late_reload_change(lambda:setattr(self.pool,'SpareAmmo',0))
+    def test_late_injury_refused(self):
+        self.late_reload_change(lambda:setattr(self.p,'HealthCondition',N(name='Injured')))
+    def test_late_replacement_weapon_refused(self):
+        def swap():
+            self.p.ActiveWeapons.Slots[0].Weapon=self.c.weapon(self.c.fire,self.c.reload,self.c.minimum)
+        self.late_reload_change(swap)

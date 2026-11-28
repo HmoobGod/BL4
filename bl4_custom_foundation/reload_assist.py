@@ -236,6 +236,24 @@ class ReloadAssist:
                 if self.record is None:return
                 if not last[3] or tuple(identity(o) for o in last[:3])!=key[0][:3] or self.clock()>=end or fresh[3]!=0 or fresh[4]!=maximum or min(fresh[5])<=0 or fresh[6]!='Active':
                     self.stop('reload preflight changed');return
+                # The final session getter can synchronously change the equipped
+                # weapon, mode, pool, ammo or health. Confirm the original live
+                # weapon and reflected counts AFTER that getter, not just before.
+                # This is only on the native dispatch path, not the idle poll.
+                pawn=last[1];w=active_weapon(pawn);index=mode(w)
+                reload=matching_behavior(w,'reload',index)
+                pool=matching_behavior(w,'ammo_regen_rate',index)
+                fire=matching_behavior(w,'fire_rate',index)
+                final_objects=(*last[:3],w,reload,pool,fire)
+                if ((tuple(identity(o) for o in final_objects),index)!=key
+                        or any(r() is None or identity(r())!=i for r,i in zip(refs,key[0],strict=True))
+                        or enum_name(pawn.HealthCondition)!='Healthy' or str(w.CurrentState)!='Active'
+                        or count(pool.LoadedAmmo)!=0 or count(pool.ServerSyncedLoadedAmmo)!=0
+                        or count(nested(pool,'MaxLoadedAmmo','GbxAttributeInteger').Value)!=maximum
+                        or min(count(pool.StoredAmmo),count(pool.SpareAmmo))<=0
+                        or identity(w.ServerStartReloading.func)!=identity(self.fn)
+                        or self.thread()!=tid or self.clock()>=end or self.record is None):
+                    self.stop('final original reload scope or magazine changed');return
             except Exception as e:self.stop(str(e)[:120]);return
             # Keep the lease active and busy during dispatch; reentrant ticks cannot repeat it.
             self.empty_seen=False;self.previous=0

@@ -178,5 +178,14 @@ class CollectionTests(unittest.TestCase):
         self.assertEqual(next(r['pak'] for r in result['files'] if r['name']==names[0]),newest.name)
 
 
+    def test_currency_aspect_family(self):
+        self.pak('pakchunk0-Windows.pak', {'Nexus-Data-inv_aspect0.ncs':self.entry(),
+                    'Nexus-Data-inv_aspect_2.ncs':self.entry(), 'Nexus-Data-inv_aspect_preview0.ncs':self.entry()})
+        result=self.collect()
+        self.assertEqual(result['coverage'], {'inv_aspect':2})
+        self.assertEqual({r['name'] for r in result['files']}, {'Nexus-Data-inv_aspect0.ncs','Nexus-Data-inv_aspect_2.ncs'})
+
+
+
 if __name__ == '__main__':
     unittest.main()

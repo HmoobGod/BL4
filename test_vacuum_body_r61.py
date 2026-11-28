@@ -62,3 +62,40 @@ class PickupBody(Continuous):
         def stop():
             self.lease.stop('during active');return False
         self.late(lambda:setattr(self.a,'IsActorBeingDestroyed',stop))
+
+    def exact_currency(self,kind='eridium',reflected=True):
+        a=self.drop(kind,kind,(400,0,0))
+        a.BodyData.path=(self.v.ERIDIUM_SINGLE_STACK_BODY if kind=='eridium' else self.v.CASH_SINGLE_STACK_BODY)
+        if reflected:self.reflected(a)
+        return a
+    def test_exact_eridium_single_stack_relocated(self):
+        a=self.exact_currency();self.actors=[a]
+        self.assertEqual(self.v.classify(a),'eridium')
+        self.start(('eridium',));self.tick()
+        self.assertEqual(self.calls,[('eridium',(0,0,-40),'rotation')])
+    def test_exact_currency_filters_independent(self):
+        self.actors=[self.exact_currency(),self.exact_currency('cash')]
+        self.start(('cash',));self.tick();self.assertEqual([c[0] for c in self.calls],['cash'])
+        self.lease.update_preferences(('eridium',),30,False);self.tick()
+        self.assertEqual([c[0] for c in self.calls],['cash','eridium'])
+    def test_exact_eridium_requires_reflected_body(self):
+        self.actors=[self.exact_currency(reflected=False)]
+        self.start(('eridium',));self.tick();self.assertFalse(self.calls)
+    def test_exact_eridium_requires_matching_package(self):
+        a=self.exact_currency();a.BodyData.Outer.path='/Game/World/Other';self.actors=[a]
+        self.start(('eridium',));self.tick();self.assertFalse(self.calls)
+    def test_exact_eridium_requires_matching_beam(self):
+        a=self.exact_currency();a.AttractEffectComponent.OverrideParameters.ParameterData=struct.pack('<4f',*self.v.PALETTE[1][1]);self.actors=[a]
+        self.start(('eridium','cash'));self.tick();self.assertFalse(self.calls)
+    def test_unknown_eridium_pile_not_admitted(self):
+        a=self.exact_currency();a.BodyData.path=a.BodyData.path.replace('Single','Other');a.BodyData.Outer.path=a.BodyData.path.rpartition('.')[0];self.actors=[a]
+        self.start(('eridium',));self.tick();self.assertFalse(self.calls)
+    def test_exact_eridium_late_body_replacement(self):
+        self.a=self.exact_currency();self.actors=[self.a]
+        self.late(lambda:setattr(self.a,'BodyData',self.exact_currency().BodyData))
+    def test_exact_eridium_late_vendor_lock(self):
+        self.a=self.exact_currency();self.actors=[self.a]
+        self.late(lambda:setattr(self.a.UsableActorState,'bInteractabilityLockedReplicated',True))
+    def test_existing_exact_cash_without_reflection_retained(self):
+        self.actors=[self.exact_currency('cash',reflected=False)]
+        self.start(('cash',));self.tick();self.assertEqual([c[0] for c in self.calls],['cash'])
