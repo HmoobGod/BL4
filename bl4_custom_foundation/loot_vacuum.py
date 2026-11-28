@@ -8,7 +8,7 @@ import struct
 from collections import Counter, deque
 from itertools import product
 from .gameplay_fields import identity
-from .health_pulse import enum_name
+from .health_pulse import enum_name, select_flesh
 from .weapon_rates import prop
 
 CATEGORIES = frozenset(('ammo', 'cash', 'eridium', 'health', 'gear'))
@@ -107,6 +107,16 @@ def lazy_ammo_reader(sdk,bound):
             fs=[f for f in sdk.find_all('Function',exact=False) if str(f.Name)=='GetValueOfAttribute']
             reader=AmmoNeedReader(fs,bound,sdk.unreal.FGbxDefPtr,defs[0])
         return reader(pawn,body) if reader is not None else None
+    return read
+
+
+def flesh_need_reader(sdk):
+    """Reuse the exact local living flesh layer, no native writes or calls."""
+    def read(pawn):
+        if pawn.Class._path_name()!='/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+            raise ValueError('local character required')
+        _,key,ratio=select_flesh(pawn,sdk.unreal.FGameDataHandle)
+        return key,ratio
     return read
 
 
@@ -341,12 +351,12 @@ class Airborne(ValueError):
 
 class Vacuum:
     """One lease, one attempt per object, no retry or automatic gear collection."""
-    def __init__(self,context,weak,find,make,clock,thread,report,categories,radius,continuous=False,high_gear_only=False,ammo_reader=None):
+    def __init__(self,context,weak,find,make,clock,thread,report,categories,radius,continuous=False,high_gear_only=False,ammo_reader=None,health_reader=None):
         self.context,self.weak,self.find,self.make=context,weak,find,make
         self.clock,self.thread,self.report=clock,thread,report
         self.categories=frozenset(categories);self.radius=radius;self.continuous=continuous
         if type(high_gear_only) is not bool:raise ValueError('invalid rarity filter')
-        self.high_gear_only=high_gear_only;self.ammo_reader=ammo_reader
+        self.high_gear_only=high_gear_only;self.ammo_reader=ammo_reader;self.health_reader=health_reader
         self.recent=deque();self.total_attempts=0;self.gear_targets={}
         self.record=None;self.fault=False;self.busy=False;self.attempted=set();self.gear_ids=set();self.moved=0;self.next_due=0
 
@@ -438,6 +448,14 @@ class Vacuum:
             return ratio if type(ratio) in (int,float) and math.isfinite(ratio) and 0<=ratio<=1 else None
         except Exception:return None
 
+    def health_need(self,pawn):
+        try:
+            key,ratio=self.health_reader(pawn)
+            if type(key) is tuple and len(key)==3 and type(ratio) in (int,float) and math.isfinite(ratio) and 0<ratio<1:
+                return key,ratio
+        except Exception:pass
+        return None
+
     def tick(self,permitted):
         if self.record is None or self.busy:return
         now=self.clock();snapshot=self.record
@@ -453,7 +471,7 @@ class Vacuum:
             vendors=self.vendors(pc,lev)
             actors=self.find('InventoryPickup',exact=True)
             if len(actors)>1024:raise ValueError('pickup scan exceeds limit')
-            candidates=[];ammo_ratios={}
+            candidates=[];ammo_ratios={};health_sample=None;health_checked=False;health_dispatched=False
             gear_space='gear' in self.categories and self.gear_position(origin,vendors[0]) is not None
             for a in actors:
                 try:
@@ -465,12 +483,20 @@ class Vacuum:
                             if body not in ammo_ratios:ammo_ratios[body]=self.ammo_need(pawn,body)
                             ratio=ammo_ratios[body]
                             if ratio==1:continue
+                        if result[2]=='health' and self.health_reader is not None:
+                            if not health_checked:
+                                health_sample=self.health_need(pawn);health_checked=True
+                            if health_sample is None:continue
                         candidates.append((result,self.weak(a),ratio))
                 except Exception:continue
             # Two actors presenting the same positive item ID in one candidate
             # scan are ambiguous; relocate neither, rather than pick one.
             counts = Counter(result[1][2][0] for result, _, _ in candidates if result[1][2] is not None)
             candidates = [c for c in candidates if c[0][1][2] is None or counts[c[0][1][2][0]] == 1]
+            if self.health_reader is not None:
+                health=[c for c in candidates if c[0][2]=='health']
+                if health:
+                    candidates=[c for c in candidates if c[0][2]!='health']+[min(health,key=lambda c:c[0][0])]
             # Keep nearest-first except a modest preference (at most 2x in
             # squared-distance score) for positively identified depleted ammo.
             for result,ref,ratio in nsmallest(4,candidates,key=lambda c:c[0][0]*(1 if c[2] is None else .5+.5*c[2])):
@@ -485,6 +511,7 @@ class Vacuum:
                 # Prepare destination first; native getters/struct construction may
                 # synchronously change actor ownership, classification or vendor state.
                 _,item_key,kind=result
+                if kind=='health' and self.health_reader is not None and health_dispatched:continue
                 if (identity(a)!=item_key[0] or a.Class._path_name()!=PICKUP or not active(a)
                         or level(a)!=key[-1] or a.HasAuthority() is not True or a.Owner is not None):continue
                 rot=bound(a,'K2_GetActorRotation',ROTATION,ROT_SIG)()
@@ -512,6 +539,9 @@ class Vacuum:
                     # Do not spend the attempt when a reserve is now full or
                     # a previously witnessed reserve becomes unreadable.
                     if latest_ratio==1 or (ratio is not None and latest_ratio is None):continue
+                if kind=='health' and self.health_reader is not None:
+                    latest_health=self.health_need(pawn)
+                    if latest_health is None or latest_health[0]!=health_sample[0]:continue
                 _,_,_,_,final_origin=self.resolve()
                 if self.record is not snapshot:return
                 if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
@@ -546,6 +576,10 @@ class Vacuum:
                 if self.clock()>=snapshot[3] or self.thread()!=snapshot[2]:
                     self.stop('scope ended during final pickup checks');return
                 if kind == 'gear' and native is not None:self.gear_ids.add(native[0])
+                if kind=='health' and self.health_reader is not None:
+                    # Consume at most one health relocation per scan. Do not infer healing
+                    # from teleport success; the next scan observes current health anew.
+                    health_dispatched=True
                 self.attempted.add(item_key[0]);self.recent.append(self.clock());self.total_attempts+=1
                 if kind=='gear':self.gear_targets[gear_cell(xyz)]=xyz
                 try: moved=teleport(target,rot)

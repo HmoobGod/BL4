@@ -590,7 +590,7 @@ def draw():
             draw_feature_toggle(ui,option)
             ui.text(kind+': '+(_automation_status.get(kind, 'Waiting') if feature_enabled(option) else 'Off'))
         if 'Loot Vacuum' in panels:
-            ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only. Completed moves are not reversed.')
+            ui.text_wrapped('Experimental Loot Vacuum: select categories, then arm a short test or continuous session. Gear moves into separate nearby positions for manual pickup; full placement area pauses gear only. Health pickups require missing living flesh health. Completed moves are not reversed.')
             if not health_active():
                 for kind in _vacuum_filters:
                     edited, selected = ui.checkbox('Vacuum '+kind+'##vacuum_'+kind, _vacuum_filters[kind])
@@ -1504,7 +1504,7 @@ def begin_skill_pulse(mode):
 
 def begin_loot_vacuum(selection,continuous=False):
     global _health_pulse
-    from .loot_vacuum import Vacuum, lazy_ammo_reader
+    from .loot_vacuum import Vacuum, lazy_ammo_reader, flesh_need_reader
     if health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
         raise ValueError('restore active modifiers before isolated vacuum')
     sdk = sys.modules['unrealsdk']
@@ -1513,7 +1513,7 @@ def begin_loot_vacuum(selection,continuous=False):
     categories, radius = selection[:2]
     high_gear_only = selection[2] if len(selection)==3 else False
     _health_pulse = Vacuum(lambda: current_session(session), sdk.unreal.WeakPointer, sdk.find_all,
-                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius, continuous=continuous,high_gear_only=high_gear_only,ammo_reader=lazy_ammo_reader(sdk,loot_bound))
+                          sdk.make_struct, time.monotonic, threading.get_ident, report_live, categories, radius, continuous=continuous,high_gear_only=high_gear_only,ammo_reader=lazy_ammo_reader(sdk,loot_bound),health_reader=flesh_need_reader(sdk))
     _health_pulse.begin()
 
 
@@ -2634,10 +2634,10 @@ def make_automation_lane(kind, session):
         from .double_jump import DoubleJump
         return DoubleJump(context,sdk.unreal.WeakPointer,time.monotonic,threading.get_ident,report_live,jump_rate)
     if kind == 'vacuum':
-        from .loot_vacuum import Vacuum, lazy_ammo_reader
+        from .loot_vacuum import Vacuum, lazy_ammo_reader, flesh_need_reader
         categories = tuple(k for k,o in VACUUM_PREFS.items() if o.value is True)
         radius = normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value)
-        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True,high_gear_only=VACUUM_HIGH_PREF.value is True,ammo_reader=lazy_ammo_reader(sdk,loot_bound))
+        return Vacuum(context,sdk.unreal.WeakPointer,sdk.find_all,sdk.make_struct,time.monotonic,threading.get_ident,report_live,categories,radius,continuous=True,high_gear_only=VACUUM_HIGH_PREF.value is True,ammo_reader=lazy_ammo_reader(sdk,loot_bound),health_reader=flesh_need_reader(sdk))
     if kind in ('health','shield'):
         from .health_pulse import Pulse, bind, SPECS
         functions = [f for f in sdk.find_all('Function',exact=False) if str(f.Name) in SPECS]
