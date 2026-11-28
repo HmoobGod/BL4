@@ -73,3 +73,62 @@ class RepairTests(unittest.TestCase):
         getter.func=f;cdo.GetRepairKit=getter
         sdk=self.h.b.f.sdk;old=sdk.find_all;sdk.find_all=lambda *a,**k:list(old(*a,**k))+[f,self.fn] if a[0]=='Function' else old(*a,**k)
         self.m.activate_feature('repair_assist',1.);self.m.monitor_tick();self.assertTrue(self.m.health_active());self.m.close_menu();self.h.now+=.25;self.m.monitor_tick();self.h.now+=.25;self.m.monitor_tick();self.assertEqual(self.calls,['use'])
+
+class RepairContinuousTests(unittest.TestCase):
+    def setUp(self):
+        self.t=RepairTests();self.t.setUp();self.addCleanup(self.t.doCleanups)
+        self.a=self.t.a;self.a.continuous=True;self.k=self.t.kit;self.calls=self.t.calls
+    def tick(self,n=1):
+        for _ in range(n):self.t.tick()
+    def arm(self):self.t.arm();self.tick(2);self.assertEqual(len(self.calls),1)
+    def complete(self):
+        self.k.bIsUsing=True;self.tick();self.k.bIsUsing=False;self.tick()
+        self.k.ActiveCharges+=1;self.t.hp(.6);self.tick(2)
+    def next_use(self):self.t.hp(.3);self.tick(2)
+    def test_three_distinct_cycles_and_cap(self):
+        self.arm();self.complete();self.next_use();self.assertEqual(len(self.calls),2)
+        self.complete();self.next_use();self.assertEqual(len(self.calls),3);self.assertIsNone(self.a.record);self.tick(5);self.assertEqual(len(self.calls),3)
+    def test_no_busy_witness(self):
+        self.arm();self.t.hp(.6);self.tick(2);self.k.ActiveCharges=2;self.tick(3);self.next_use();self.assertEqual(len(self.calls),1)
+    def test_no_charge_restoration(self):
+        self.arm();self.k.bIsUsing=True;self.tick();self.k.bIsUsing=False;self.t.hp(.6);self.tick(4);self.next_use();self.assertEqual(len(self.calls),1)
+    def test_health_hysteresis(self):
+        self.arm();self.k.bIsUsing=True;self.tick();self.k.bIsUsing=False;self.tick();self.k.ActiveCharges=2;self.t.hp(.49);self.tick(2);self.next_use();self.assertEqual(len(self.calls),1)
+    def test_one_high_sample_not_enough(self):
+        self.arm();self.k.bIsUsing=True;self.tick();self.k.bIsUsing=False;self.tick();self.k.ActiveCharges=2;self.t.hp(.6);self.tick();self.next_use();self.assertEqual(len(self.calls),1)
+    def test_no_recovery_if_menu_open(self):
+        self.arm();self.t.closed=False;self.complete();self.t.closed=True;self.next_use();self.assertEqual(len(self.calls),1)
+    def test_timeout_no_retry(self):
+        self.arm();self.t.tick(60);self.assertIsNone(self.a.record);self.next_use();self.assertEqual(len(self.calls),1)
+    def test_join_during_witness(self):
+        self.arm();self.t.ok=False;self.tick();self.assertIsNone(self.a.record);self.assertEqual(len(self.calls),1)
+    def test_manual_stop_during_witness(self):
+        self.arm();self.a.stop('owner');self.complete();self.next_use();self.assertEqual(len(self.calls),1)
+    def test_extra_consumption(self):
+        self.arm();self.k.ActiveCharges=0;self.tick();self.assertIsNone(self.a.record)
+    def test_recharge_before_idle(self):
+        self.arm();self.k.bIsUsing=True;self.tick();self.k.ActiveCharges=2;self.tick();self.assertIsNone(self.a.record)
+    def test_second_use_during_recharge(self):
+        self.arm();self.k.bIsUsing=True;self.tick();self.k.bIsUsing=False;self.tick();self.k.bIsUsing=True;self.tick();self.assertIsNone(self.a.record)
+    def test_maximum_changes(self):
+        self.arm();self.k.MaxCharges._values['Value']=3;self.tick();self.assertIsNone(self.a.record)
+    def test_manual_use_after_rearm(self):
+        self.arm();self.complete();self.k.ActiveCharges=1;self.next_use();self.assertIsNone(self.a.record);self.assertEqual(len(self.calls),1)
+    def test_replacement_after_request(self):
+        self.arm();self.t.current=Node();self.tick();self.assertIsNone(self.a.record)
+    def test_rejected_native_request(self):
+        def ignored():self.calls.append('ignored')
+        ignored.func=self.t.fn;self.t.p.StartUsingRepairKit=ignored;self.arm();self.t.tick(60);self.assertIsNone(self.a.record);self.assertEqual(len(self.calls),1)
+    def test_fault_after_dispatch(self):
+        def bad():self.calls.append('bad');raise RuntimeError('native failure')
+        bad.func=self.t.fn;self.t.p.StartUsingRepairKit=bad;self.arm();self.assertTrue(self.a.fault);self.assertIsNone(self.a.record)
+    def test_f8_session_integration(self):
+        t=self.t;p=[objdesc('User','/Script/Engine.Actor'),objdesc('ReturnValue',t.KIT)]
+        cdo=Node();f=Node(Name='GetRepairKit',_path_name=lambda:t.GET,_properties=lambda:p,NumParams=2,Outer=Node(ClassDefaultObject=cdo))
+        def getter(p):return t.kit
+        getter.func=f;cdo.GetRepairKit=getter
+        sdk=t.h.b.f.sdk;old=sdk.find_all;sdk.find_all=lambda *a,**k:list(old(*a,**k))+[f,t.fn] if a[0]=='Function' else old(*a,**k)
+        t.m.activate_feature('repair_assist_continuous',1.);t.m.monitor_tick();self.assertTrue(t.m.health_active());t.m.close_menu()
+        for _ in range(2):t.h.now+=.25;t.m.monitor_tick()
+        self.assertEqual(len(self.calls),1);self.assertTrue(t.m.health_active());self.assertTrue(t.m._health_pulse.continuous)
+        t.m.request_stop('test',immediate=True);self.assertFalse(t.m.health_active())

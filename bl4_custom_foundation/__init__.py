@@ -536,7 +536,7 @@ def draw():
     if _native_overtime_used:
         ui.text_wrapped('Native timed recovery test attempted: stay offline, do not travel, and exit game after the test.')
     if health_active():
-        ui.text_wrapped('Native attribute trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
+        ui.text_wrapped('Native attribute trial active or restoring; wait for verified baseline before changing character, skill or session.' if hasattr(_health_pulse,'binding') and hasattr(_health_pulse,'phase') else ('Continuous vacuum active until stopped in this session. Completed relocations are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'categories') else 'Session repair kit armed; maximum three witnessed requests. Completed native actions are not reversed.' if getattr(_health_pulse,'continuous',False) and hasattr(_health_pulse,'cycle') else 'Experimental action armed; maximum 30 seconds. Completed native actions are not reversed.'))
     ui.separator()
     for i, (_, name, _) in enumerate(CATEGORIES):
         if i % 2:
@@ -657,7 +657,9 @@ def draw():
         if 'Recovery' in panels:
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm automatic repair kit (35% health; one request)'):
                 activate_feature('repair_assist', 1.0)
-            ui.text_wrapped('Automatic repair kit: existing charge only, one native request within 30 seconds after closing F8. Native acceptance unverified.')
+            if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Arm session automatic repair kit (experimental)'):
+                activate_feature('repair_assist_continuous', 1.0)
+            ui.text_wrapped('Automatic repair kit: existing charges only; one-shot or session-only (maximum 3 requests). Session mode requires observed use, charge spent, idle, charge restored and health recovered before a new low-health episode. No retry; native acceptance unverified.')
             ui.text_wrapped('Experimental health recovery: native flesh-only refill pulse, 30-second maximum, not a native regen-rate modifier. No FFYL. Actual game compatibility unverified.')
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Start experimental health recovery (30 sec)'):
                 activate_feature('health_pulse', 1.0)
@@ -1500,7 +1502,7 @@ def begin_loot_vacuum(selection,continuous=False):
     _health_pulse.begin()
 
 
-def begin_repair_assist():
+def begin_repair_assist(continuous=False):
     global _health_pulse
     from .repair_assist import RepairAssist, bind
     if health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)):
@@ -1508,7 +1510,7 @@ def begin_repair_assist():
     sdk=sys.modules['unrealsdk']
     functions=[f for f in sdk.find_all('Function',exact=False) if str(f.Name) in ('GetRepairKit','StartUsingRepairKit')]
     getter,fn=bind(functions,loot_bound);session=bound_session(sdk)
-    _health_pulse=RepairAssist(lambda:current_session(session),sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,getter,fn,time.monotonic,threading.get_ident,report_live,lambda:_backend is None)
+    _health_pulse=RepairAssist(lambda:current_session(session),sdk.unreal.WeakPointer,sdk.unreal.FGameDataHandle,getter,fn,time.monotonic,threading.get_ident,report_live,lambda:_backend is None,continuous=continuous)
     _health_pulse.begin()
 
 
@@ -1779,7 +1781,7 @@ def activate_feature(key, selection):
             raise ValueError('fault latched; exit game')
         if health_active():
             raise ValueError('stop isolated health recovery first')
-        if key in REWARD_KEYS | {GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY,'native_rate_gear_luck','native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','repair_assist','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
+        if key in REWARD_KEYS | {GUN_TRIAL_KEY,RELOAD_TRIAL_KEY,FIRE_RATE_TRIAL_KEY,'native_rate_gear_luck','native_rate_health','native_rate_cooldown','native_rate_duration','native_rate_missing_health','native_rate_shield_idle_rate','native_rate_shield_idle_delay','health_pulse','health_overtime','health_regen_native','shield_regen_native','shield_pulse','skill_cooldown','skill_duration','repair_assist','repair_assist_continuous','reload_assist','reload_continuous','loot_vacuum','loot_vacuum_continuous'} and _controller is not None and _controller.records:
             raise ValueError('restore active modifiers before isolated health recovery')
         if not mod.is_enabled:
             raise ValueError('mod disabled')
@@ -1820,9 +1822,9 @@ def execute_activation(key, selection):
     if key in ('loot_vacuum','loot_vacuum_continuous'):
         begin_loot_vacuum(selection,continuous=key=='loot_vacuum_continuous')
         return
-    if key == 'repair_assist':
+    if key in ('repair_assist','repair_assist_continuous'):
         if selection != 1.0:raise ValueError('invalid repair kit arm selection')
-        begin_repair_assist()
+        begin_repair_assist(continuous=key=='repair_assist_continuous')
         return
     if key in ('reload_assist','reload_continuous'):
         begin_reload_assist(key=='reload_continuous')

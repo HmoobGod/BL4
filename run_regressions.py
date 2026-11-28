@@ -298,10 +298,11 @@ from test_splash_radius import SplashRadius
 for name in SplashRadius.__dict__:
     if name.startswith('test_'):
         t=SplashRadius(name);unique[t.id()]=t
-from test_repair_assist import RepairTests
-for name in RepairTests.__dict__:
-    if name.startswith('test_'):
-        t=RepairTests(name);unique[t.id()]=t
+from test_repair_assist import RepairTests, RepairContinuousTests
+for cls in (RepairTests, RepairContinuousTests):
+    for name in cls.__dict__:
+        if name.startswith('test_'):
+            t=cls(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
