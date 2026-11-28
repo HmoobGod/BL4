@@ -97,3 +97,23 @@ class CashGunIntegration(GunFormulaTests):
         cash,gun=self.both();self.advance();seen=[];orig=cash.scope
         cash.scope=lambda:seen.append(True) or orig()
         self.advance(.01);self.assertFalse(seen);self.assertEqual((cash.phase,gun.phase),('active','active'));self.assert_values(4.,2.)
+    def test_cash_formula_fault_drains_gun_before_cash(self):
+        cash,gun=self.both()
+        cash.binding.formula=lambda pawn:('invalid',)
+        self.advance()
+        self.assertEqual(cash.phase,'active');self.assertTrue(cash.stop_requested)
+        self.assertTrue(gun.stop_requested);self.assertIn('fault pending',self.m._auto_blocked)
+        self.assert_values(4.,2.)
+        self.advance();self.assertEqual(gun.phase,'verify');self.assert_values(4.,1.)
+        self.advance();self.assertTrue(cash.fault);self.assertEqual(gun.phase,'done');self.assert_values(2.,1.)
+        self.assertEqual([c[0] for c in self.calls],[self.primary,self.R.GUN_KEY,self.R.GUN_KEY,self.primary])
+    def test_generic_cash_transient_fault_retains_original_error(self):
+        cash,gun=self.both(False);original=cash.binding.formula
+        cash.binding.formula=lambda pawn:('invalid',)
+        self.advance();self.assertTrue(cash.stop_requested);self.assertEqual(self.values[self.generic][1],3.)
+        cash.binding.formula=original
+        self.advance();self.assertEqual(gun.phase,'verify');self.assertEqual(self.values[self.generic][1],3.)
+        self.advance();self.assertTrue(cash.fault);self.assertEqual(gun.phase,'done');self.assertEqual(self.values[self.generic][1],1.5)
+    def test_cash_unpaired_formula_fault_still_restores_immediately(self):
+        self.m.AUTO_OPTIONS['damage'].value=False;cash=self.add_cash();cash.binding.formula=lambda pawn:('invalid',)
+        self.advance();self.assertTrue(cash.fault);self.assert_values(2.,1.)

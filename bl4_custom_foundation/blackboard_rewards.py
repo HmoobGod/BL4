@@ -220,10 +220,14 @@ class Trial:
         now=self.stable()
         if not self.matches(now,self.base[2],self.base[3]) or now[6]!=self.base[5]:raise ValueError('original reward or peer restoration unverified')
         self.phase='verify';self.due=self.clock()+.2
+    def cleanup_blocked(self):return False
     def tick(self,permitted):
         if not self.record or self.busy:return
         self.busy=True
         try:
+            if self.phase=='active' and getattr(self,'deferred_error',None) is not None:
+                if self.cleanup_blocked():return
+                raise ValueError(self.deferred_error)
             if self.phase=='armed' and (not permitted or self.stop_requested or self.clock()>=self.record[3] or self.permission() is not True):self.record=None;self.phase='done';return
             if self.phase=='active' and permitted and not self.stop_requested and self.clock()<min(self.due,self.record[3]) and self.permission() is True:return
             if self.phase=='verify' and self.clock()<self.due:return
@@ -242,13 +246,23 @@ class Trial:
                 if self.stop_requested or self.permission() is not True:self.cleanup(s)
             elif self.phase=='active':
                 if not self.matches(s,self.target,self.target_fp) or s[6]!=self.base[5]:raise ValueError('reward or peer drift')
-                if not permitted or self.stop_requested or self.clock()>=self.record[3] or self.permission() is not True:self.cleanup(s)
+                if not permitted or self.stop_requested or self.clock()>=self.record[3] or self.permission() is not True:
+                    if self.cleanup_blocked():self.stop_requested=True;return
+                    self.cleanup(s)
                 else:self.due=self.clock()+.5
             elif self.phase=='verify':
                 if not self.matches(s,self.base[2],self.base[3]) or s[6]!=self.base[5]:raise ValueError('delayed reward restoration unverified')
                 self.record=None;self.phase='done';self.report('EXPERIMENT: native attribute baseline restored; '+self.outcome+'.')
         except Exception as e:
             if self.phase=='armed':self.record=None;self.phase='done';self.report('HOLD: '+str(e)[:120]);return
+            if self.phase=='active' and self.owned and self.cleanup_blocked():
+                # A dependent lease must restore its original peer witness
+                # before we can alter the cash entry. Retain the first fault
+                # even if its underlying cause disappears during cleanup.
+                self.deferred_error=getattr(self,'deferred_error',None) or str(e)[:120]
+                self.stop_requested=True
+                self.report('STOP PENDING: cash fault; restore dependent gun first')
+                return
             if self.owned:
                 try:self.cleanup(self.stable())
                 except Exception:pass
@@ -425,6 +439,9 @@ class SessionCashMixin:
         super().__init__(*args,**kwargs)
         self.selection=self.scale
         self.next_selection=None
+
+    def cleanup_blocked(self):
+        return getattr(self,'dependent_receipt_live',lambda:False)() is True
 
     def rearm_verified(self,original,selection):
         # A changed selection restores first. Explicit off/on is required to

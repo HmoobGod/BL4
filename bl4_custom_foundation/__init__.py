@@ -2808,6 +2808,8 @@ def automation_tick():
         # frame this replaces, rather than duplicates, cash's no-op tick.
         paired_cash_wait=False
         cash=_automation_leases.get(CASH_LANE)
+        if cash is not None:
+            cash.dependent_receipt_live=actor_gun_receipt_live
         if (permitted and actor_gun_receipt_live() and cash is not None
                 and not cash.fault and not cash.stop_requested and cash.phase=='active'
                 and native_rate_allowed(CASH_LANE,cash.selection)):
@@ -2912,6 +2914,11 @@ def automation_tick():
                         stop_automation_lane(kind,'adaptive mode changed; toggle lane to rearm');continue
                     lease.update_adaptive_rate(normalize(SKILL_RATES[kind],SKILL_RATES[kind].value))
                 lease.tick(True)
+                if kind==CASH_LANE and actor_gun_receipt_live() and lease.stop_requested:
+                    stop_automation_lane(ACTOR_GUN_LANE,'cash transition; restore gun first')
+                    if getattr(lease,'deferred_error',None) is not None:
+                        request_stop('automation native fault pending ordered cleanup',immediate=False)
+                    return  # no new automation after deferred failure/cleanup
                 if lease.fault:
                     _automation_leases[kind] = lease  # retain late fault even after reentrant stop
                     request_stop('automation native fault',immediate=False)
