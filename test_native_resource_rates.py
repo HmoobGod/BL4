@@ -171,7 +171,7 @@ class NativeRateTests(unittest.TestCase):
         self.resolve=self.local_health();lane=self.trial();self.assertTrue(lane.begin(),self.msg);self.tick(lane);self.assertEqual(self.pawn.HealthState.HealthTypeStates[0].SimpleCurrentHealth.Value,50.)
     def skill_local(self,mode):
         self.pawn.Class=t('OakCharacter','/Script/OakGame.OakCharacter');self.skill=Node();self.script=Node();self.maxima=[100.,100.]
-        rs=(Node(Name='cooldown'),Node(Name='duration'));self.scope=(self.pc,self.pawn,self.world,self.skill,self.script)
+        rs=(Node(Name='cooldown',_name='cooldown'),Node(Name='duration',_name='duration'));self.scope=(self.pc,self.pawn,self.world,self.skill,self.script)
         def resolve(initial=False,refresh=False):
             self.assertTrue(initial and refresh);return self.scope,('skill resource layout',),Node(),rs,(.2,.8),None
         def maxv(ref,h):return self.maxima[rs.index(h)]

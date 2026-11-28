@@ -264,6 +264,10 @@ from test_contagion_rate import ContagionRateTests
 for name in ContagionRateTests.__dict__:
     if name.startswith('test_'):
         t=ContagionRateTests(name);unique[t.id()]=t
+from test_forge_rate import ForgeRateTests
+for name in ForgeRateTests.__dict__:
+    if name.startswith('test_'):
+        t=ForgeRateTests(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

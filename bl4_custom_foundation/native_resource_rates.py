@@ -23,6 +23,8 @@ LUCK_CONTEXT='/Script/GbxGame.GbxPlayerControllerContextResolver'
 LUCK_VALUE='/Script/OakGame.LuckCategoryValueResolver'
 LUCK_MODE='gear_luck'
 WEAPON_MODE='weapon_damage'
+FORGE_MODE='forge_cooldown'
+FORGE_RESOURCE='Resource_Paladin_ActionSkill_Forgeskill_Cooldown'
 CONTAGION_MODE='contagion_cooldown'
 CONTAGION_RESOURCE='Resource_Corpohacker_ActionSkill_Contagion_Cooldown'
 CONTAGION_AUX='Resource_Corpohacker_ActionSkill_Contagion_ExecutableCooldown'
@@ -31,6 +33,7 @@ WEAPON_CONTEXT='/Script/GbxWeapon.WeaponAttributeContextResolver'
 WEAPON_FIRE='/Script/GbxWeapon.WeaponBehavior_Fire'
 # Name, native property, exact context, selector, modifier, bounded experiment.
 TARGETS={
+    FORGE_MODE: ('Att_PLD_ForgeSkill_Pool_Cooldown_Rate','ActiveRegenerationRate',HEALTH_CONTEXT,FORGE_RESOURCE,'ScaleMultiply',2.),
     CONTAGION_MODE: ('Att_Corpohacker_ActionSkill_Contagion_Contagion_CooldownRate','ActiveRegenerationRate',HEALTH_CONTEXT,CONTAGION_RESOURCE,'ScaleMultiply',2.),
     WEAPON_MODE: ('weapon_damage','Damage',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
@@ -73,7 +76,7 @@ def trial_amount(mode,selection=None):
         return selection if mode=='shield_idle_rate' else 1./selection
     if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<=selection<=5 or (mode not in HEALTH_MODES and selection==1):
         raise ValueError('select 1–5x health increment or above 1x skill factor')
-    return .001*selection if mode in HEALTH_MODES else selection if mode in ('cooldown',CONTAGION_MODE) else 1./selection
+    return .001*selection if mode in HEALTH_MODES else selection if mode in ('cooldown',CONTAGION_MODE,FORGE_MODE) else 1./selection
 
 
 def close(a,b):
@@ -141,7 +144,7 @@ class NativeBinding:
             mask=c.usemodebitmask
             if type(mask) is not int or not 0<=mask<=0xffffffff:raise ValueError('invalid weapon use-mode mask')
             context_key=(identity(cls),mask)
-        elif mode in RESOURCE_MODES | {CONTAGION_MODE}:
+        elif mode in RESOURCE_MODES | {CONTAGION_MODE,FORGE_MODE}:
             resource_prop=prop(c._type,'ResourceDef','ZGameDataHandleProperty')
             resource=c.ResourceDef
             if resource._name!=selector or type(resource._type_handle) is not int or resource._type_handle<=0 or resource._type_handle!=resource_prop.TypeHandle:
@@ -513,7 +516,27 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                     peer=numeric(binding.calls['GetValueOfAttribute'](CONTAGION_PEER,pawn,-123456.))
                     if not 0<peer<=1e4:raise ValueError('executable cooldown rate unavailable')
                     pool_key=(*pool_key,peer)
-            elif named is not None:
+            elif mode==FORGE_MODE:
+                from .skill_pulse import handle,direct_sample
+                # Only an independently witnessed actual main skill pool, never a
+                # trait or auxiliary pool. Unknown auxiliary/charge layouts HOLD.
+                if (named is not None or key[4][2] or skill_reader.direct_api is None
+                        or handle(resources[0],ht)!=handle(d.Context.ResourceDef,ht)
+                        or handle(resources[0],ht)[0]!=FORGE_RESOURCE):
+                    raise ValueError('exact ordinary ForgeSkill main resource required')
+                if include_peer:
+                    cur,ratio=direct_sample(skill_reader.direct_api,pawn,resources[0],ht)
+                    component_cur=numeric(skill_reader.api[1](ref,resources[0]))
+                    if (abs(cur-component_cur)>maxes[0]*.005 or abs(cur/maxes[0]-ratio)>.005
+                            or abs(ratio-numeric(skill_reader.api[0](ref,resources[0])))>.005):
+                        raise ValueError('ForgeSkill native and component pools disagree')
+                    # Native getters may change ownership/layout; re-observe before
+                    # returning the immutable original pool witness.
+                    again=skill_reader.resolve(initial=True,refresh=True,cleanup_only=cleanup_only and ok is False)
+                    if (again[1]!=key or tuple(identity(o) for o in again[0])!=tuple(identity(o) for o in objs)
+                            or handle(again[3][0],ht)!=handle(resources[0],ht)):
+                        raise ValueError('ForgeSkill layout changed during direct read')
+            elif named is not None or (mode=='cooldown' and resources[0]._name.casefold()==FORGE_RESOURCE.casefold()):
                 raise ValueError('named layout requires an exact resource-rate definition')
         fresh=context()
         if fresh[3] is False and not cleanup_only:
