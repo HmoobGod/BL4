@@ -43,20 +43,21 @@ def numeric(v):
         raise ValueError('nonfinite health value')
     return float(v)
 
-def select_health(pawn, handle_type, mode):
+def select_health(pawn, handle_type, mode, *, cleanup_only=False):
     if mode not in ('flesh', 'shield'):
         raise ValueError('unknown recovery mode')
     wanted = ('FleshRed', 'IsGeneric') if mode == 'flesh' else ('EnergyBlue', 'IsShield')
     condition=prop(pawn.Class,'HealthCondition','ZEnumProperty')
     if condition.Enum._path_name()!='/Script/OakGame.ECharacterHealthCondition':
         raise ValueError('health condition descriptor mismatch')
-    if enum_name(pawn.HealthCondition)!='Healthy':
+    condition_name=enum_name(pawn.HealthCondition)
+    if condition_name is None or (not cleanup_only and condition_name!='Healthy'):
         raise ValueError('healthy player required; no FFYL recovery')
     health=nested(pawn,'HealthState','OakCharacterHealthState')
-    if identity(health.owner)!=identity(pawn) or health.bCurrentlyDead is not False:
+    if identity(health.owner)!=identity(pawn) or type(health.bCurrentlyDead) is not bool or (not cleanup_only and health.bCurrentlyDead is not False):
         raise ValueError('health owner or living state unavailable')
     disabled=nested(health,'HealingDisabled','GbxAttributeInteger')
-    if type(disabled.Value) is not int or disabled.Value!=0:
+    if type(disabled.Value) is not int or (not cleanup_only and disabled.Value!=0):
         raise ValueError('native healing disabled or unknown')
     d=prop(health._type,'HealthTypeStates','ZArrayProperty')
     if type(d.Inner).__name__!='ZStructProperty' or str(d.Inner.Struct.Name)!='HealthTypeState':
@@ -89,7 +90,7 @@ def select_health(pawn, handle_type, mode):
     h,key,st=choices[0]
     cur=numeric(nested(st,'SimpleCurrentHealth','GbxAttributeFloat').Value)
     maximum=numeric(nested(st,'SimpleMaxHealth','GbxAttributeFloat').Value)
-    if not 0<=cur<=maximum<=1e9 or maximum<=0 or (mode=='flesh' and cur<=0):
+    if not 0<=cur<=maximum<=1e9 or maximum<=0 or (mode=='flesh' and cur<=0 and not cleanup_only):
         raise ValueError('positive living health ratio unavailable')
     return h,key,cur/maximum
 

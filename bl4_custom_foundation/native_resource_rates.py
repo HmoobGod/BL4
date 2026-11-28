@@ -357,11 +357,11 @@ def bind_health_readers(functions,existing):
     return (*readers,kind)
 
 
-def local_health_target(pawn,d,ht,readers):
-    from .health_pulse import select_flesh
+def local_health_target(pawn,d,ht,readers,cleanup_only=False):
+    from .health_pulse import select_health
     from .weapon_rates import nested
     from .skill_pulse import handle
-    h,key,ratio=select_flesh(pawn,ht)
+    h,key,ratio=select_health(pawn,ht,'flesh',cleanup_only=cleanup_only)
     health=nested(pawn,'HealthState','OakCharacterHealthState')
     matches=[st for st in health.HealthTypeStates if handle(st.HealthType,ht)==key]
     if len(matches)!=1:raise ValueError('flesh layer identity ambiguous')
@@ -370,19 +370,20 @@ def local_health_target(pawn,d,ht,readers):
     res=d.Context.ResourceDef
     if type(res) is not ht or handle(res,ht)[1]!=readers[2]:raise ValueError('native Health resource type mismatch')
     direct_current=numeric(readers[0](pawn,res));direct_ratio=numeric(readers[1](pawn,res))
-    if not (0<current<=maximum<=1e9 and 0<direct_ratio<=1 and close(current,direct_current) and abs(ratio-direct_ratio)<=.005):
+    if not (0<=current<=maximum<=1e9 and maximum>0 and 0<=direct_ratio<=1 and close(current,direct_current) and abs(ratio-direct_ratio)<=.005
+            and (current>0 and direct_ratio>0 or cleanup_only and current==direct_current==direct_ratio==0)):
         raise ValueError('native Health resource does not agree with original flesh layer')
-    return key,handle(res,ht),maximum
+    return (key,identity(health),identity(matches[0])),handle(res,ht),maximum
 
 
 
-def local_shield_target(pawn,d,ht,readers,getter,allow_empty=False):
+def local_shield_target(pawn,d,ht,readers,getter,allow_empty=False,cleanup_only=False):
     from .health_pulse import select_health
     from .weapon_rates import nested
     from .skill_pulse import handle
     from .shield_rates import owned
     shield=getter(pawn);owned(shield,pawn)
-    _,key,ratio=select_health(pawn,ht,'shield')
+    _,key,ratio=select_health(pawn,ht,'shield',cleanup_only=cleanup_only)
     health=nested(pawn,'HealthState','OakCharacterHealthState')
     matches=[st for st in health.HealthTypeStates if handle(st.HealthType,ht)==key]
     if len(matches)!=1:raise ValueError('energy shield layer identity ambiguous')
@@ -397,7 +398,7 @@ def local_shield_target(pawn,d,ht,readers,getter,allow_empty=False):
             and (current>0 and direct_ratio>0 or allow_empty is True and current==direct_current==direct_ratio==0)):
         raise ValueError('native Shield resource does not agree with original energy layer')
     if identity(getter(pawn))!=identity(shield):raise ValueError('equipped shield changed during observation')
-    return shield,(key,handle(res,ht),maximum)
+    return shield,((key,identity(health),identity(matches[0])),handle(res,ht),maximum)
 
 def handle_identity(h):
     return h._name,h._type_handle,identity(h)
@@ -411,6 +412,12 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
     parsed-path mapping; this does not assert actual timing or rate units.
     """
     shield_scope=None
+    def check_recovery_eligibility(pawn):
+        from .weapon_rates import nested
+        health=nested(pawn,'HealthState','OakCharacterHealthState')
+        disabled=nested(health,'HealingDisabled','GbxAttributeInteger').Value
+        if enum_name(pawn.HealthCondition) not in (None,'Healthy') or health.bCurrentlyDead is True or type(disabled) is int and disabled!=0:
+            raise EligibilityLost('native recovery state no longer eligible')
     def resolve(include_peer=True,cleanup_only=False):
         nonlocal shield_scope
         pc,pawn,state,ok=context()
@@ -436,7 +443,8 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                     raise ValueError('gear luck native getter disagrees with local category')
                 pool_key=(*pool_key,row[4],tuple(r for r in rows if r[0]!=row[0]))
         elif mode in HEALTH_MODES:
-            objs=(pc,pawn,state);pool_key=local_health_target(pawn,d,ht,health_readers)
+            if not cleanup_only:check_recovery_eligibility(pawn)
+            objs=(pc,pawn,state);pool_key=local_health_target(pawn,d,ht,health_readers,cleanup_only=cleanup_only)
             if mode=='missing_health' and include_peer:
                 # Independent ordinary-rate witness; never edit this peer.
                 peer,peer_key=binding.definition('health')
@@ -444,7 +452,8 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
                     raise ValueError('missing-health and ordinary rate must be distinct on the same Health resource')
                 pool_key=(*pool_key,peer_key,binding.read('health',pawn))
         elif mode in SHIELD_MODES:
-            shield,pool_key=local_shield_target(pawn,d,ht,health_readers,shield_getter,allow_empty=shield_scope is not None)
+            if not cleanup_only:check_recovery_eligibility(pawn)
+            shield,pool_key=local_shield_target(pawn,d,ht,health_readers,shield_getter,allow_empty=shield_scope is not None,cleanup_only=cleanup_only)
             objs=(pc,pawn,state,shield)
             candidate=(tuple(identity(o) for o in objs),def_key,pool_key[:2])
             if shield_scope is not None and candidate!=shield_scope:
@@ -464,6 +473,8 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
             raise EligibilityLost('local native rate eligibility ended during observation')
         if (fresh[3] is not True and not (cleanup_only and fresh[3] is False)) or tuple(identity(o) for o in fresh[:3])!=tuple(identity(o) for o in objs[:3]):
             raise ValueError('local session changed during rate resolution')
+        if mode in RESOURCE_MODES and not cleanup_only:
+            check_recovery_eligibility(pawn)
         if mode in SHIELD_MODES and shield_scope is None and not cleanup_only:
             shield_scope=candidate
         return objs,(def_key,pool_key),d

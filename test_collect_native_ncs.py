@@ -168,5 +168,15 @@ class CollectionTests(unittest.TestCase):
             self.assertIsNone(c._target(s))
 
 
+    def test_reward_consumer_tables_collected_without_unrelated_data(self):
+        names=('Nexus-Data-itempool0.ncs','Nexus-Data-itempoollist1.ncs','Nexus-Data-gbx_ue_data_table0.ncs')
+        self.pak('pakchunk0-Windows.pak',{n:self.entry() for n in (*names,'Nexus-Data-mission0.ncs','Nexus-Data-itempool_preview0.ncs')})
+        newest=self.pak('pakchunk0-Windows_2_P.pak',{names[0]:self.entry()})
+        result=self.collect()
+        self.assertEqual(result['coverage'],{'itempool':1,'itempoollist':1,'gbx_ue_data_table':1})
+        self.assertEqual({r['name'] for r in result['files']},set(names))
+        self.assertEqual(next(r['pak'] for r in result['files'] if r['name']==names[0]),newest.name)
+
+
 if __name__ == '__main__':
     unittest.main()

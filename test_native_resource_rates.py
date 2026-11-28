@@ -562,3 +562,59 @@ class NativeRateTests(unittest.TestCase):
         lane=self.shield_pool_trial();self.assertTrue(lane.begin());self.tick(lane)
         self.set_shield_charge(0.);self.shield=ShieldRates.make_shield(self)
         lane.stop('swap');self.tick(lane);self.assertTrue(lane.fault);self.assertEqual(len(self.native),1)
+
+
+    def test_native_health_cleanup_during_ffyl(self):
+        self.resolve=self.local_health();lane=self.trial();lane.cleanup_key=lambda k:self.R.original_pool_identity('health',k)
+        self.assertTrue(lane.begin());self.tick(lane)
+        self.pawn.HealthCondition=Node(name='Injured')
+        self.pawn.HealthState.HealthTypeStates[0].SimpleCurrentHealth.Value=0.
+        self.native_cur=self.native_pct=0.
+        self.tick(lane,.3);self.tick(lane)
+        self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,0.)
+        self.assertEqual([v[0] for v in self.native],['add','remove'])
+
+    def test_native_health_cleanup_healing_disabled(self):
+        self.resolve=self.local_health();lane=self.trial();lane.cleanup_key=lambda k:self.R.original_pool_identity('health',k)
+        self.assertTrue(lane.begin());self.tick(lane)
+        self.pawn.HealthState.HealingDisabled.Value=1
+        self.tick(lane,.3);self.tick(lane)
+        self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,0.)
+
+    def test_native_health_initial_ineligible_never_adds(self):
+        self.resolve=self.local_health();lane=self.trial();self.pawn.HealthCondition=Node(name='Injured')
+        self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_health_injury_during_native_read_blocks_add(self):
+        self.resolve=self.local_health();lane=self.trial();self.assertTrue(lane.begin())
+        old=self.binding.calls['GetValueOfAttribute']
+        def injured(*a):
+            self.pawn.HealthCondition=Node(name='Injured');return old(*a)
+        self.binding.calls['GetValueOfAttribute']=injured
+        self.tick(lane);self.assertFalse(self.native)
+
+    def test_native_health_cleanup_rejects_replaced_layer(self):
+        self.resolve=self.local_health();lane=self.trial();lane.cleanup_key=lambda k:self.R.original_pool_identity('health',k)
+        self.assertTrue(lane.begin());self.tick(lane)
+        layer=self.pawn.HealthState.HealthTypeStates[0]
+        self.pawn.HealthState.HealthTypeStates[0]=Node(_type=layer._type,HealthType=layer.HealthType,SimpleCurrentHealth=layer.SimpleCurrentHealth,SimpleMaxHealth=layer.SimpleMaxHealth)
+        self.pawn.HealthCondition=Node(name='Injured');self.tick(lane,.3)
+        self.assertTrue(lane.fault);self.assertEqual(len(self.native),1)
+
+    def test_native_shield_cleanup_during_ffyl(self):
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin());self.tick(lane)
+        self.pawn.HealthCondition=Node(name='Injured');self.set_shield_charge(0.)
+        self.tick(lane,.3);self.tick(lane)
+        self.assertEqual(lane.phase,'done',self.msg);self.assertEqual(self.rate,10.)
+        self.assertEqual([v[0] for v in self.native],['add','remove'])
+
+    def test_native_shield_initial_healing_disabled_never_adds(self):
+        lane=self.shield_pool_trial();self.pawn.HealthState.HealingDisabled.Value=1
+        self.assertFalse(lane.begin());self.assertFalse(self.native)
+
+    def test_native_shield_same_handle_replacement_layer_refused(self):
+        lane=self.shield_pool_trial();self.assertTrue(lane.begin());self.tick(lane)
+        layer=self.pawn.HealthState.HealthTypeStates[0]
+        self.pawn.HealthState.HealthTypeStates[0]=Node(_type=layer._type,HealthType=layer.HealthType,SimpleCurrentHealth=layer.SimpleCurrentHealth,SimpleMaxHealth=layer.SimpleMaxHealth)
+        lane.stop('restore');self.tick(lane)
+        self.assertTrue(lane.fault);self.assertEqual(len(self.native),1)
