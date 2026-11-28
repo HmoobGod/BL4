@@ -29,6 +29,14 @@ HIGH_GEAR_COLORS = (PALETTE[8][1], PALETTE[13][1])
 # single stack uses a Lootables/Pile path, not a Pickups namespace.
 ERIDIUM_SINGLE_STACK_BODY = '/Game/World/Interactives/Lootables/Pile/Eridium/SM_Eridium_Bar_Single.SM_Eridium_Bar_Single'
 CASH_SINGLE_STACK_BODY = '/Game/World/Interactives/Pickups/Money/SM_Money_Stack_Single.SM_Money_Stack_Single'
+# Exact decoded base inventory records; preserve legacy classification for
+# other paths. These identify a body, not a native inventory identity.
+AMMO_BODIES = frozenset('/Game/World/Interactives/Pickups/Ammo/SM_ammo_'+n+'.SM_ammo_'+n
+                        for n in ('assault','pistol','shotgun','smg','sniper'))
+HEALTH_PICKUP_BODY = '/Game/Pickups/Health/Body_Health_Pickup.Body_Health_Pickup'
+EXACT_PICKUP_BODIES = {**dict.fromkeys(AMMO_BODIES,'ammo'), HEALTH_PICKUP_BODY:'health',
+                       ERIDIUM_SINGLE_STACK_BODY:'eridium', CASH_SINGLE_STACK_BODY:'cash'}
+
 PICKUP = '/Script/GbxGame.InventoryPickup'
 TELEPORT = '/Script/Engine.Actor:K2_TeleportTo'
 LOCATION = '/Script/Engine.Actor:K2_GetActorLocation'
@@ -49,8 +57,8 @@ def body_kind(path):
     words=set(re.findall(r'[a-z]+',re.sub(r'([a-z])([A-Z])',r'\1 \2',path).lower()))
     if words.intersection({'mission','quest','objective','vendor','vending','display','shop','showcase','preview','rewardpreview','missionreward'}):
         return None
-    if path == ERIDIUM_SINGLE_STACK_BODY:
-        return 'eridium'
+    if path in EXACT_PICKUP_BODIES:
+        return EXACT_PICKUP_BODIES[path]
     if path.startswith('/Game/Gear/'):
         return 'gear'
     if words.intersection({'booster','shield','armor','shard'}):
@@ -420,7 +428,14 @@ class Vacuum:
                 # Recheck the original weak object and category for ALL lanes.
                 try:
                     a = ref()
-                    if (a is None or identity(a)!=item_key[0] or a._path_name()!=item_key[1]
+                    if a is None:continue
+                    # A moving pickup can leave the configured radius or enter
+                    # an already observed vendor zone during the last scope read.
+                    final_pos=location(a)
+                    final_dist=distance(final_pos,final_origin)
+                    if (not 150**2<final_dist<=(100*self.radius)**2
+                            or any(distance(final_pos,v)<=500**2 or distance(final_origin,v)<=500**2 for v in latest_vendors[0])):continue
+                    if (identity(a)!=item_key[0] or a._path_name()!=item_key[1]
                             or a.Class._path_name()!=PICKUP or not active(a)
                             or level(a)!=key[-1] or a.HasAuthority() is not True or a.Owner is not None
                             or a.RootPrimitiveComponent is None

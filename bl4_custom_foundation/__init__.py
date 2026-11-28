@@ -1336,7 +1336,7 @@ def begin_blackboard_reward(key, selection):
     global _health_pulse
     if key == FAILED_XP_KEY:
         raise ValueError(FAILED_XP_REASON)
-    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, SPECS, DEF
+    from .blackboard_rewards import Binding, Trial, GunBinding, GunTrial, CashFormulaBinding, CashFormulaTrial, choose_cash_trial, SPECS, DEF
     if key not in REWARD_KEYS | {GUN_TRIAL_KEY} or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
@@ -1351,8 +1351,14 @@ def begin_blackboard_reward(key, selection):
                 and not _automation_leases and not conflicting_mods() and _monitor_registered
                 and _monitor_thread==threading.get_ident()
                 and hooks.has_hook(_MONITOR_PATH,hooks.Type.POST_UNCONDITIONAL,_MONITOR_ID) is True)
-    _health_pulse=(GunTrial if key==GUN_TRIAL_KEY else Trial)(key,selection,binding,lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
-    _health_pulse.begin()
+    args=(lambda:current_session(session),u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted)
+    _health_pulse=(GunTrial if key==GUN_TRIAL_KEY else Trial)(key,selection,binding,*args)
+    if key=='progress_money':
+        def alternative():
+            native=CashFormulaBinding(fs,loot_bound,sdk.make_struct,u.FGbxDefPtr,defs[0],u.WrappedStruct)
+            return CashFormulaTrial(key,selection,native,*args)
+        _health_pulse=choose_cash_trial(_health_pulse,alternative)
+    else:_health_pulse.begin()
 
 
 def make_native_resource_rate(mode,selection,*,persistent=False):

@@ -99,3 +99,17 @@ class PickupBody(Continuous):
     def test_existing_exact_cash_without_reflection_retained(self):
         self.actors=[self.exact_currency('cash',reflected=False)]
         self.start(('cash',));self.tick();self.assertEqual([c[0] for c in self.calls],['cash'])
+
+    def test_exact_ammo_and_health_bodies(self):
+        self.actors=[]
+        for i,path in enumerate(sorted(self.v.AMMO_BODIES)):
+            a=self.drop('ammo'+str(i),'ammo',(400+i,0,0));a.BodyData.path=path;self.reflected(a);self.actors.append(a)
+        a=self.drop('health','health',(450,0,0));a.BodyData.path=self.v.HEALTH_PICKUP_BODY;self.reflected(a);self.actors.append(a)
+        self.start(('ammo','health'));self.tick();self.tick();self.assertEqual(len(self.calls),6)
+    def test_exact_health_booster_still_excluded(self):
+        a=self.drop('booster','health',(400,0,0));a.BodyData.path='/Game/Pickups/ShieldBoosters/Body_HealthBooster.Body_HealthBooster';self.actors=[a]
+        self.start(('health',));self.tick();self.assertFalse(self.calls)
+    def test_late_pickup_outside_radius(self):
+        self.late(lambda:setattr(self.a,'pos',(10001,0,0)))
+    def test_late_pickup_already_in_contact(self):
+        self.late(lambda:setattr(self.a,'pos',(100,0,0)))

@@ -252,6 +252,10 @@ for cls in (GunTests,GearLuckTests):
     for name in cls.__dict__:
         if name.startswith('test_'):
             t=cls(name);unique[t.id()]=t
+from test_cash_formula import CashFormulaTests
+for name in CashFormulaTests.__dict__:
+    if name.startswith('test_'):
+        t=CashFormulaTests(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())
