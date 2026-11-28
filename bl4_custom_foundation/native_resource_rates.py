@@ -23,10 +23,15 @@ LUCK_CONTEXT='/Script/GbxGame.GbxPlayerControllerContextResolver'
 LUCK_VALUE='/Script/OakGame.LuckCategoryValueResolver'
 LUCK_MODE='gear_luck'
 WEAPON_MODE='weapon_damage'
+CONTAGION_MODE='contagion_cooldown'
+CONTAGION_RESOURCE='Resource_Corpohacker_ActionSkill_Contagion_Cooldown'
+CONTAGION_AUX='Resource_Corpohacker_ActionSkill_Contagion_ExecutableCooldown'
+CONTAGION_PEER='Att_Corpohacker_ActionSkill_Contagion_Executable_CooldownRate'
 WEAPON_CONTEXT='/Script/GbxWeapon.WeaponAttributeContextResolver'
 WEAPON_FIRE='/Script/GbxWeapon.WeaponBehavior_Fire'
 # Name, native property, exact context, selector, modifier, bounded experiment.
 TARGETS={
+    CONTAGION_MODE: ('Att_Corpohacker_ActionSkill_Contagion_Contagion_CooldownRate','ActiveRegenerationRate',HEALTH_CONTEXT,CONTAGION_RESOURCE,'ScaleMultiply',2.),
     WEAPON_MODE: ('weapon_damage','Damage',WEAPON_CONTEXT,WEAPON_FIRE,'ScaleMultiply',2.),
     LUCK_MODE: ('att_luck_gear','Category',LUCK_CONTEXT,'LuckCategory_Gear','ScaleMultiply',2.),
     'health': ('health_resource_passive_pct_regen','PassivePercentRegenerationRate',HEALTH_CONTEXT,'Health','PostAdd',.001),
@@ -68,7 +73,7 @@ def trial_amount(mode,selection=None):
         return selection if mode=='shield_idle_rate' else 1./selection
     if type(selection) not in (int,float) or not math.isfinite(selection) or not 1<=selection<=5 or (mode not in HEALTH_MODES and selection==1):
         raise ValueError('select 1–5x health increment or above 1x skill factor')
-    return .001*selection if mode in HEALTH_MODES else selection if mode=='cooldown' else 1./selection
+    return .001*selection if mode in HEALTH_MODES else selection if mode in ('cooldown',CONTAGION_MODE) else 1./selection
 
 
 def close(a,b):
@@ -136,7 +141,7 @@ class NativeBinding:
             mask=c.usemodebitmask
             if type(mask) is not int or not 0<=mask<=0xffffffff:raise ValueError('invalid weapon use-mode mask')
             context_key=(identity(cls),mask)
-        elif mode in RESOURCE_MODES:
+        elif mode in RESOURCE_MODES | {CONTAGION_MODE}:
             resource_prop=prop(c._type,'ResourceDef','ZGameDataHandleProperty')
             resource=c.ResourceDef
             if resource._name!=selector or type(resource._type_handle) is not int or resource._type_handle<=0 or resource._type_handle!=resource_prop.TypeHandle:
@@ -483,13 +488,33 @@ def make_local_resolver(mode,binding,context,ht,health_readers=None,skill_reader
         else:
             # The read-only reader can inspect the same authoritative local
             # actor during cleanup even if the player-count gate is now false.
-            objs,key,ref,resources,_,_=(skill_reader.resolve(initial=True,refresh=True,cleanup_only=True)
+            objs,key,ref,resources,_,named=(skill_reader.resolve(initial=True,refresh=True,cleanup_only=True)
                 if cleanup_only and ok is False else skill_reader.resolve(initial=True,refresh=True))
             if tuple(identity(o) for o in objs[:3])!=tuple(identity(o) for o in (pc,pawn,state)):
                 raise ValueError('action skill local session changed')
             maxes=tuple(numeric(skill_reader.api[2](ref,h)) for h in resources)
             if len(maxes)!=2 or any(not 0<m<=1e9 for m in maxes):raise ValueError('invalid native skill maximum')
             pool_key=(key,maxes)
+            if mode==CONTAGION_MODE:
+                from .skill_pulse import handle
+                # Exact named main pool, not the shared action-skill selector.
+                # Charge layouts are not admitted by this route. The one
+                # executable auxiliary is independently identified and read.
+                if named is None or len(key)!=5 or not key[4][2]:
+                    raise ValueError('exact Contagion main cooldown layout required')
+                charge,auxkeys,chargekeys=key[4][2]
+                if any(charge) or chargekeys or len(auxkeys)!=2 or auxkeys[1][0]!=CONTAGION_AUX:
+                    raise ValueError('distinct Contagion executable auxiliary required')
+                if (handle(resources[0],ht)!=handle(d.Context.ResourceDef,ht)
+                        or handle(resources[0],ht)[0]!=CONTAGION_RESOURCE
+                        or len(named[2])!=1 or not close(named[1],maxes[0])):
+                    raise ValueError('named native Contagion resource mismatch')
+                if include_peer:
+                    peer=numeric(binding.calls['GetValueOfAttribute'](CONTAGION_PEER,pawn,-123456.))
+                    if not 0<peer<=1e4:raise ValueError('executable cooldown rate unavailable')
+                    pool_key=(*pool_key,peer)
+            elif named is not None:
+                raise ValueError('named layout requires an exact resource-rate definition')
         fresh=context()
         if fresh[3] is False and not cleanup_only:
             raise EligibilityLost('local native rate eligibility ended during observation')

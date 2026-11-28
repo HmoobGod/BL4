@@ -666,7 +666,7 @@ def draw():
                 activate_feature('shield_pulse', 1.0)
         if 'Action skills' in panels:
             ui.text_wrapped('Action skill assist: experimental bounded native refill, not a multiplier; excludes charge and auxiliary skills.')
-            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or individual toggle; choose native OR matching refill assist. Saved rate edits restore and verify the old modifier before applying the new rate; unsupported changes stop the lane. Restore before skill changes.')
+            ui.text_wrapped('Native resource rates: selectable cooldown regeneration speed or inverse duration consumption (above 1x). Manual 10-second trials or individual toggle; choose native OR matching refill assist. Saved rate edits restore and verify the old modifier before applying the new rate; unsupported changes stop the lane. Restore before skill changes. Named Contagion main cooldown also has a distinct native resource route; Executable auxiliary is read-only.')
             for mode in ('cooldown','duration'):
                 rate=native_rate_selection(ui,mode)
                 if rate>1. and not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test native skill '+mode+' rate (10 sec)'):
@@ -1375,9 +1375,9 @@ def begin_blackboard_reward(key, selection):
 
 def make_native_resource_rate(mode,selection,*,persistent=False):
     from .native_resource_rates import (NativeBinding, NativeRateTrial, SPECS as RATE_SPECS,
-                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, LUCK_MODE, WEAPON_MODE, bind_health_readers, make_local_resolver, original_pool_identity)
-    from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent
-    if mode not in TARGETS or mode==WEAPON_MODE or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
+                                        TARGETS, RESOURCE_MODES, SHIELD_MODES, LUCK_MODE, WEAPON_MODE, CONTAGION_MODE, bind_health_readers, make_local_resolver, original_pool_identity)
+    from .skill_pulse import SkillPulse, bind, SPECS as POOL_SPECS, ACTION_NAMES, bind_action_percent, bind_direct_cooldown
+    if mode not in TARGETS or mode in (WEAPON_MODE,CONTAGION_MODE) or health_fault() or health_active() or (not persistent and (_automation_leases or (_controller is not None and (_controller.records or _controller.fault)))):
         raise ValueError('restore active features before native resource-rate trial')
     sdk=sys.modules['unrealsdk'];u=sdk.unreal
     names=set(RATE_SPECS)|set(POOL_SPECS)|set(ACTION_NAMES)|{'GetResourcePoolValue','GetResourcePoolPercent','GetShield'}
@@ -1405,11 +1405,21 @@ def make_native_resource_rate(mode,selection,*,persistent=False):
     elif mode!=LUCK_MODE:
         ref,api=bind(functions,loot_bound,read_only=True)
         adaptive=bind_action_percent(functions,loot_bound,mode,ref)
+        direct=None
+        if mode=='cooldown':
+            try:direct=bind_direct_cooldown(functions,loot_bound,read_only=True)
+            except (ValueError,AttributeError,TypeError):pass
         skill=SkillPulse(context,u.WeakPointer,u.FGameDataHandle,u.WrappedInlineStruct,u.WrappedStruct,ref,api,
                          lambda:sdk.find_all('GbxSkill',exact=True),time.monotonic,threading.get_ident,report_live,mode,
-                         adaptive_api=adaptive,read_only=True,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
-    resolve=make_local_resolver(mode,binding,context,u.FGameDataHandle,readers,skill,shield_getter)
-    trial=NativeRateTrial(mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(mode,key),selection=selection,continuous=persistent)
+                         adaptive_api=adaptive,read_only=True,direct_api=direct,soft_identifier=getattr(getattr(u,'ZSoftObjectProperty',None),'_get_identifier_from_array',None))
+    actual_mode=mode
+    if mode=='cooldown' and direct is not None:
+        # Resolve layout read-only before choosing the native definition.
+        # No fallback after dispatch, and no broad shared selector on named layouts.
+        _,_,_,_,_,named=skill.resolve(initial=True,refresh=True)
+        if named is not None:actual_mode=CONTAGION_MODE
+    resolve=make_local_resolver(actual_mode,binding,context,u.FGameDataHandle,readers,skill,shield_getter)
+    trial=NativeRateTrial(actual_mode,binding,resolve,u.WeakPointer,time.monotonic,threading.get_ident,report_live,permitted,lambda key:original_pool_identity(actual_mode,key),selection=selection,continuous=persistent)
     return trial
 
 

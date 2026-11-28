@@ -73,10 +73,10 @@ DIRECT_NAMES=('GetResourcePoolValue','GetResourcePoolPercent','AdjustResourcePoo
 DIRECT_INTERFACE='/Script/GbxGame.GameResourcePoolOwnerInterface'
 
 
-def bind_direct_cooldown(functions, existing):
+def bind_direct_cooldown(functions, existing, *, read_only=False):
     """Exact reflected pawn resource functions; no constructed/guessed handle."""
     out=[]; kind=None
-    for name in DIRECT_NAMES:
+    for name in DIRECT_NAMES[:2] if read_only else DIRECT_NAMES:
         matches=[f for f in functions if f._path_name()==DIRECT+name]
         if len(matches)!=1:raise ValueError('named cooldown API unavailable')
         f=matches[0];ps=tuple(f._properties())
@@ -90,7 +90,7 @@ def bind_direct_cooldown(functions, existing):
         if type(t) is not int or not 0<t<=0xffffffff or (kind is not None and kind!=t):
             raise ValueError('named cooldown resource type mismatch')
         kind=t;out.append(existing(functions,DIRECT+name,sig))
-    return (*out,kind)
+    return (*out,None,kind) if read_only else (*out,kind)
 
 
 def direct_sample(api,pawn,h,ht):
@@ -259,7 +259,7 @@ class SkillPulse:
         self.clock,self.thread,self.report,self.mode=clock,thread,report,mode
         if type(read_only) is not bool:raise ValueError('invalid skill reader mode')
         self.read_only=read_only
-        if read_only and (len(api)!=3 or adaptive_api is None or continuous or follow or native_refill is not None or event_class is not None or direct_api is not None):
+        if read_only and (len(api)!=3 or adaptive_api is None or continuous or follow or native_refill is not None or event_class is not None or (direct_api is not None and (mode!='cooldown' or len(direct_api)!=4 or direct_api[2] is not None))):
             raise ValueError('read-only skill reader requires three getters, two cross-checks and no refill lane')
         self.continuous=continuous is True
         self.follow=self.continuous and follow is True
@@ -268,7 +268,7 @@ class SkillPulse:
         if adaptive_api is not None and (not (self.continuous or self.read_only) or len(adaptive_api)!=2): raise ValueError('adaptive mode requires continuous and two getters')
         if native_refill is not None and (adaptive_api is None or not callable(native_refill)):raise ValueError('native refill requires adaptive cross-checks')
         self.native_refill=native_refill
-        if direct_api is not None and (mode!='cooldown' or native_refill is None or len(direct_api)!=4):
+        if direct_api is not None and (mode!='cooldown' or (native_refill is None and not read_only) or len(direct_api)!=4):
             raise ValueError('named main cooldown requires dedicated adaptive cooldown')
         self.direct_api=direct_api;self.named_max=None
         if event_class is not None and (mode!='duration' or native_refill is None or self.follow):
