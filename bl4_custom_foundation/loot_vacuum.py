@@ -244,6 +244,13 @@ def classify(actor, high_gear_only=False):
         k='eridium'
     else:k=body_kind(path)
     if k is None:return None
+    values=pickup_color(actor)
+    if values is None or color_kind(values)!=k:return None
+    if k=='gear' and high_gear_only and not any(max(abs(a-b) for a,b in zip(values,c))<=.00002 for c in HIGH_GEAR_COLORS):return None
+    return k
+
+
+def pickup_color(actor):
     effect=actor.AttractEffectComponent
     if effect is None:return None
     params=effect.OverrideParameters
@@ -254,9 +261,7 @@ def classify(actor, high_gear_only=False):
     data=bytes(raw[entries[0]:entries[0]+16])
     if len(data)!=16:return None
     values=struct.unpack('<4f',data)
-    if color_kind(values)!=k:return None
-    if k=='gear' and high_gear_only and not any(max(abs(a-b) for a,b in zip(values,c))<=.00002 for c in HIGH_GEAR_COLORS):return None
-    return k
+    return values
 
 
 def native_gear_identity(actor):

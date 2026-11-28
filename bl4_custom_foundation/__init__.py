@@ -89,7 +89,7 @@ AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
 AUTO_OPTIONS = {k: BoolOption('persistent_' + k, False, display_name='Enable ' + FEATURES[k][0])
                 for k in FEATURES if k not in DAMAGE_HOLD and k not in MANUAL_ONLY}
 AUTOMATION_OPTIONS = {k: BoolOption('persistent_automation_'+k, False, display_name='Enable '+label)
-                      for k,label in (('vacuum','continuous Loot Vacuum'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'),('repair','automatic repair kit (experimental)'))}
+                      for k,label in (('vacuum','continuous Loot Vacuum'),('gear_pickup','calibrated automatic equipment pickup (experimental)'),('reload','session automatic reload'),('health','continuous flesh recovery assist'),('shield','continuous shield recharge assist'),('skill_cooldown','continuous action skill cooldown assist'),('skill_duration','continuous action skill duration assist'),('double_jump','second-jump upward velocity (experimental)'),('repair','automatic repair kit (experimental)'))}
 DOUBLE_JUMP_RATE = SliderOption('double_jump_velocity_scale', 1., .5, 2., step=.1, is_integer=False, display_name='Double-jump upward velocity multiplier (experimental)')
 RELOAD_EVENT = BoolOption('persistent_reload_event_window',False,display_name='Experimental reload request timing (instead of persistent weapon values)')
 _reload_event = None
@@ -592,7 +592,7 @@ def draw():
         panels = visible_action_panels(ui, 5, ('Loot Vacuum', 'Automatic reload'))
         ui.text_wrapped('Automation: movement, elemental, rarity weights and selected recovery fields compatible. Vacuum settings save automatically and update the active lease. Reload waits for a supported loaded idle gun and reserve, including after weapon/mode swaps. Empty guns need a normal reload first; unsupported guns stop the lane. Toggle a stopped lane off/on to rearm.')
         for kind, option in AUTOMATION_OPTIONS.items():
-            if kind not in ('vacuum','reload') or ('Loot Vacuum' if kind == 'vacuum' else 'Automatic reload') not in panels: continue
+            if kind not in ('vacuum','gear_pickup','reload') or ('Loot Vacuum' if kind in ('vacuum','gear_pickup') else 'Automatic reload') not in panels: continue
             draw_feature_toggle(ui,option)
             ui.text(kind+': '+(_automation_status.get(kind, 'Waiting') if feature_enabled(option) else 'Off'))
         if 'Loot Vacuum' in panels:
@@ -2781,6 +2781,71 @@ def ensure_reload_observers(sdk):
     return reload_observers_live()
 
 
+_gear_pickup_observers_attempted = False
+_gear_pickup_observers_owned = False
+
+
+def gear_pickup_observers_live():
+    sdk = sys.modules.get('unrealsdk')
+    if sdk is None or not _gear_pickup_observers_owned:
+        return False
+    from .gear_pickup import USE_OBJECT_PATH
+    hooks = sdk.hooks
+    return (hooks.has_hook(USE_OBJECT_PATH, hooks.Type.PRE, 'bl4_custom_gear_pickup_pre') is True
+            and hooks.has_hook(USE_OBJECT_PATH, hooks.Type.POST, 'bl4_custom_gear_pickup_post') is True)
+
+
+def _gear_pickup_pre_observation(obj, args, _ret=None, _func=None):
+    if not gear_pickup_observers_live() or not automation_permitted() or _backend is not None:
+        return
+    lease = _automation_leases.get('gear_pickup')
+    if lease is not None and hasattr(lease, 'calibrator'):
+        lease.calibrator.on_pre(obj, args)
+
+
+def _gear_pickup_post_observation(obj, args, _ret=None, _func=None):
+    if not gear_pickup_observers_live() or not automation_permitted() or _backend is not None:
+        return
+    lease = _automation_leases.get('gear_pickup')
+    if lease is not None and hasattr(lease, 'calibrator'):
+        lease.calibrator.on_post(obj, args)
+
+
+def ensure_gear_pickup_observers(sdk):
+    global _gear_pickup_observers_attempted, _gear_pickup_observers_owned
+    if _gear_pickup_observers_attempted:
+        try:return gear_pickup_observers_live()
+        except Exception:return False
+    _gear_pickup_observers_attempted = True
+    added = []
+    try:
+        from .gear_pickup import USE_OBJECT_PATH, bind_use_object
+        fs = [f for f in sdk.find_all('Function', exact=False) if str(f.Name) == 'ServerUseObject']
+        bind_use_object(fs, loot_bound)
+        hooks = sdk.hooks
+        specs = (
+            (USE_OBJECT_PATH, hooks.Type.PRE, 'bl4_custom_gear_pickup_pre', _gear_pickup_pre_observation),
+            (USE_OBJECT_PATH, hooks.Type.POST, 'bl4_custom_gear_pickup_post', _gear_pickup_post_observation),
+        )
+        if any(hooks.has_hook(p, t, i) is not False for p, t, i, _ in specs):
+            return False
+        for p, t, i, cb in specs:
+            res = hooks.add_hook(p, t, i, cb)
+            if res is not True or hooks.has_hook(p, t, i) is not True:
+                for rp, rt, ri in added:
+                    try:hooks.remove_hook(rp, rt, ri)
+                    except Exception:pass
+                return False
+            added.append((p, t, i))
+        _gear_pickup_observers_owned = True
+    except Exception:
+        for rp, rt, ri in added:
+            try:sdk.hooks.remove_hook(rp, rt, ri)
+            except Exception:pass
+        return False
+    return gear_pickup_observers_live()
+
+
 def make_automation_lane(kind, session):
     if kind==MELEE_LANE:
         option=NATIVE_RATE_OPTIONS['melee']
@@ -2830,6 +2895,37 @@ def make_automation_lane(kind, session):
     if kind == 'double_jump':
         from .double_jump import DoubleJump
         return DoubleJump(context,sdk.unreal.WeakPointer,time.monotonic,threading.get_ident,report_live,jump_rate)
+    if kind == 'gear_pickup':
+        from .gear_pickup import GearPickupCollector, ManualPickupCalibrator, bind_use_object, EQUIPMENT_CATEGORIES, collection_witness
+        from .loot_vacuum import PICKUP, classify, pickup_color, distance, point, bound as vac_bound, LOCATION, LOC_SIG
+        fs = [f for f in sdk.find_all('Function', exact=False) if str(f.Name) == 'ServerUseObject']
+        _, use_fn = bind_use_object(fs, loot_bound)
+        if not ensure_gear_pickup_observers(sdk):
+            raise ValueError('ServerUseObject calibration hooks unavailable')
+        def category_of(actor):
+            try:
+                path = str(getattr(getattr(actor, 'BodyData', None), '_path_name', lambda: '')())
+                for cat in EQUIPMENT_CATEGORIES:
+                    if '/' + cat + '/' in path:
+                        return cat
+            except Exception:
+                pass
+            return None
+        def dist_fn(pawn, actor):
+            p1 = point(vac_bound(pawn, 'K2_GetActorLocation', LOCATION, LOC_SIG)())
+            p2 = point(vac_bound(actor, 'K2_GetActorLocation', LOCATION, LOC_SIG)())
+            return math.sqrt(distance(p1, p2))
+        cal = ManualPickupCalibrator(context, sdk.unreal.WeakPointer, classify, category_of, time.monotonic, threading.get_ident, report_live, witness=lambda pc,pawn,a: collection_witness(pc,pawn,a,sdk.find_all), distance_fn=dist_fn)
+        radius = normalize(VACUUM_RADIUS_PREF, VACUUM_RADIUS_PREF.value) * 100.0
+        return GearPickupCollector(
+            context, sdk.unreal.WeakPointer, use_fn, cal,
+            lambda: sdk.find_all(PICKUP, exact=True),
+            classify,
+            category_of, pickup_color, dist_fn, time.monotonic, threading.get_ident, report_live,
+            lambda: AUTOMATION_OPTIONS['gear_pickup'].value is True and automation_permitted() and gear_pickup_observers_live(),
+            vacuum_contending=lambda: 'vacuum' in _automation_leases and VACUUM_PREFS['gear'].value is True,
+            radius=radius, high_only=VACUUM_HIGH_PREF.value is True,
+        )
     if kind == 'vacuum':
         from .loot_vacuum import Vacuum, lazy_ammo_reader, flesh_need_reader
         categories = tuple(k for k,o in VACUUM_PREFS.items() if o.value is True)
@@ -2985,6 +3081,8 @@ def automation_tick():
                     args=(tuple(k for k,o in VACUUM_PREFS.items() if o.value is True), normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value))
                     if hasattr(lease,'high_gear_only'):lease.update_preferences(*args,high_gear_only=VACUUM_HIGH_PREF.value is True)
                     else:lease.update_preferences(*args)
+                if kind == 'gear_pickup' and callable(getattr(lease,'update_preferences',None)):
+                    lease.update_preferences(normalize(VACUUM_RADIUS_PREF,VACUUM_RADIUS_PREF.value)*100.0, VACUUM_HIGH_PREF.value is True)
                 if kind in RECOVERY_RATES and callable(getattr(lease,'update_rate',None)):
                     rate=RECOVERY_RATES[kind]
                     lease.update_rate(normalize(rate,rate.value))
@@ -2998,7 +3096,8 @@ def automation_tick():
                     if (lease.adaptive_api is not None)!=(SKILL_ADAPTIVE[kind].value is True):
                         stop_automation_lane(kind,'adaptive mode changed; toggle lane to rearm');continue
                     lease.update_adaptive_rate(normalize(SKILL_RATES[kind],SKILL_RATES[kind].value))
-                lease.tick(True)
+                if kind != 'gear_pickup' or _backend is None or lease.pending_receipt is not None:
+                    lease.tick(True)
                 if kind==CASH_LANE and actor_gun_receipt_live() and lease.stop_requested:
                     stop_automation_lane(ACTOR_GUN_LANE,'cash transition; restore gun first')
                     if getattr(lease,'deferred_error',None) is not None:
