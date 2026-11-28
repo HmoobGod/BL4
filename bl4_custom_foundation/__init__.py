@@ -14,6 +14,8 @@ from .weapon_rates import WEAPON_KEYS, AMMO_KEYS, validate_targets
 from .shield_rates import KEYS as SHIELD_KEYS, validate_readback as validate_shield_readback
 from .gadget_rates import KEY as GADGET_KEY
 REWARD_KEYS = frozenset(('progress_enemy_xp', 'progress_money', 'progress_eridium'))
+FAILED_XP_KEY = 'progress_enemy_xp'
+FAILED_XP_REASON = 'XP experiment failed; disabled pending a different mechanism.'
 NEW_MOVE_KEYS = frozenset(('ladder_ascend', 'ladder_descend', 'slam_height', 'ground_friction', 'braking_friction', 'slide_speed'))
 
 TITLE = 'BL4 Custom - Community Integration v0.7.61-experimental'
@@ -41,7 +43,7 @@ def rarity_slider(identifier, label):
 
 def progression_slider(identifier, label):
     return SliderOption(identifier, 1.0, 1.0, 10.0, step=0.1, is_integer=False,
-                        display_name=label, description=('Experimental native earned reward trial; actual reward unverified.' if identifier in REWARD_KEYS else 'Preview only - reward hook not verified.'))
+                        display_name=label, description=('Experimental native earned reward trial; actual reward unverified.' if identifier in REWARD_KEYS - {FAILED_XP_KEY} else 'Preview only - reward hook not verified.'))
 
 
 def toggle(identifier, label):
@@ -699,7 +701,7 @@ def draw():
         selected = o
         key = o.identifier
         if key in REWARD_KEYS:
-            if key == 'progress_enemy_xp':
+            if key == FAILED_XP_KEY:
                 ui.text_wrapped('Previous XP experiment did not increase earned XP; disabled pending a different mechanism.')
                 continue
             if not health_fault() and not health_active() and auto_master.value is not True and ui.button('Test earned '+selected.display_name+' (30 sec)##reward_'+key):
@@ -1317,6 +1319,8 @@ def begin_native_regen():
 
 def begin_blackboard_reward(key, selection):
     global _health_pulse
+    if key == FAILED_XP_KEY:
+        raise ValueError(FAILED_XP_REASON)
     from .blackboard_rewards import Binding, Trial, SPECS, DEF
     if key not in REWARD_KEYS or health_fault() or health_active() or (_controller is not None and (_controller.records or _controller.fault)) or _automation_leases:
         raise ValueError('restore existing features before isolated reward trial')
@@ -1663,6 +1667,9 @@ def monitor_tick(*_):
 
 def activate_feature(key, selection):
     global _activation_request
+    if key == FAILED_XP_KEY:
+        report_live('HOLD: ' + FAILED_XP_REASON)
+        return
     try:
         if health_fault() or automation_fault() or (_controller is not None and _controller.fault):
             raise ValueError('fault latched; exit game')
@@ -1701,6 +1708,8 @@ def activate_feature(key, selection):
 def execute_activation(key, selection):
     global _controller
     # Called exclusively by monitor_tick after the explicit queued F8 action.
+    if key == FAILED_XP_KEY:
+        raise ValueError(FAILED_XP_REASON)
     if key in REWARD_KEYS:
         begin_blackboard_reward(key, selection)
         return

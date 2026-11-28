@@ -93,3 +93,35 @@ class SimpleF8(unittest.TestCase):
     def test_legacy_on_with_no_flags_is_idle(self):
         self.m.apply({'persistent_master':True,'persistent_offline':True});self.m.enabled()
         self.assertFalse(self.m.auto_master.value);self.p.tick();self.assertEqual(self.f.writes,[])
+
+    def test_failed_xp_queue_rejected(self):
+        self.consent(); self.m.activate_feature('progress_enemy_xp',2.)
+        self.assertIsNone(self.m._activation_request)
+        self.assertIn('XP experiment failed',self.m._loot_test_status)
+
+    def test_failed_xp_dispatch_rejected(self):
+        seen=[];self.m.begin_blackboard_reward=lambda *args:seen.append(args)
+        with self.assertRaisesRegex(ValueError,'XP experiment failed'):
+            self.m.execute_activation('progress_enemy_xp',2.)
+        self.assertEqual(seen,[])
+
+    def test_failed_xp_begin_rejected_before_sdk_discovery(self):
+        import sys
+        from unittest.mock import patch
+        with patch.dict(sys.modules,{'unrealsdk':None}):
+            with self.assertRaisesRegex(ValueError,'XP experiment failed'):
+                self.m.begin_blackboard_reward('progress_enemy_xp',2.)
+        self.assertFalse(self.m.health_active())
+
+    def test_blocked_xp_does_not_stop_other_feature(self):
+        self.p.b.activate('jump',2.)
+        self.assertIn('jump',self.m._controller.records)
+        self.m.activate_feature('progress_enemy_xp',2.)
+        self.assertIsNone(self.m._controller.stop_pending)
+        self.assertIn('jump',self.m._controller.records)
+
+    def test_cash_and_eridium_dispatch_preserved(self):
+        seen=[];self.m.begin_blackboard_reward=lambda *args:seen.append(args)
+        for key in ('progress_money','progress_eridium'):
+            self.m.execute_activation(key,2.)
+        self.assertEqual(seen,[('progress_money',2.),('progress_eridium',2.)])
