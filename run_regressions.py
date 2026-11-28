@@ -303,6 +303,10 @@ for cls in (RepairTests, RepairContinuousTests):
     for name in cls.__dict__:
         if name.startswith('test_'):
             t=cls(name);unique[t.id()]=t
+from test_critical_chance import CriticalChance
+for name in CriticalChance.__dict__:
+    if name.startswith('test_'):
+        t=CriticalChance(name);unique[t.id()]=t
 assert all(not isinstance(t,unittest.loader._FailedTest) for t in unique.values())
 result=unittest.TextTestRunner(verbosity=2).run(unittest.TestSuite(unique.values()))
 raise SystemExit(not result.wasSuccessful())

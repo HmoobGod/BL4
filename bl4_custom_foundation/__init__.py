@@ -55,6 +55,7 @@ def toggle(identifier, label):
 
 CATEGORIES = [
     ('combat', 'Combat', [SliderOption('damage', 1., .5, 5., step=.1, is_integer=False, display_name='Damage multiplier', description='Experimental equipped ordinary gun damage; 1x restores. Not a global damage multiplier.'), SliderOption('fire_rate', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['fire_rate'][0], description='Experimental native weapon rate; enabled feature follows supported idle weapons.'), SliderOption('reload', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['reload'][0], description='Experimental stock reload duration; enabled feature follows supported idle weapons. 1x restores.'), SliderOption('swap_time', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['swap_time'][0], description='Local native time scale candidate; individual toggle; direction of gameplay effect unverified. 1x restores.'), *[SliderOption(k, 1., .1, 3., step=.1, is_integer=False, display_name=FEATURES[k][0], description='Experimental weapon field; enabled feature follows supported idle weapons. Lower scales the field down. Native effect unverified. 1x restores.') for k in ('weapon_spread', 'weapon_recoil')], slider('fire_damage', 'Fire damage multiplier'), SliderOption('critical_damage', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['critical_damage'][0], description='Existing pawn default critical-hit multiplier only; does not force critical hits. Manual experimental activation; 1x restores.'), SliderOption('splash_damage', 1., .5, 3., step=.1, is_integer=False, display_name=FEATURES['splash_damage'][0], description='Existing local causer splash damage only, not radius size or general damage. Isolated manual experiment; 1x restores.'),
+        SliderOption('critical_chance', 1., 1., 21., step=1., is_integer=True, display_name=FEATURES['critical_chance'][0], description='Stored 1 = original; 2–21 add 1–20 percentage points to native default chance, not guaranteed crits. Manual experiment.'),
         SliderOption('splash_radius', 1., .5, 2., step=.1, is_integer=False, display_name=FEATURES['splash_radius'][0], description='Local splash coverage only; no damage magnitude or attack changes. Manual experiment; 1x restores.'),
         SliderOption('melee_cooldown', 1., .5, 2., step=.1, is_integer=False, display_name=FEATURES['melee_cooldown'][0], description='Experimental local melee cooldown scale; higher speed shortens the scale. Manual activation only; 1x restores.'),
         slider('damage_taken', 'Damage taken multiplier', minimum=0.1), slider('shock_damage', 'Shock damage multiplier'),
@@ -80,7 +81,7 @@ _COMPACT_OPTIONS = tuple(tuple(o for o in items if o is probe or o.identifier ==
 # Explicit opt-in, separate from legacy saved preview values. Defaults stay vanilla.
 auto_master = BoolOption('persistent_master', False, display_name='Internal activation gate (legacy settings)')
 auto_consent = BoolOption('persistent_offline', False, display_name='I use Offline Local Only; tuning mods disabled')
-MANUAL_ONLY = frozenset(('sprint', 'overshield_duration', 'critical_damage', 'splash_damage', 'splash_radius', 'melee_cooldown'))
+MANUAL_ONLY = frozenset(('sprint', 'overshield_duration', 'critical_damage', 'critical_chance', 'splash_damage', 'splash_radius', 'melee_cooldown'))
 LIFE_KEYS = frozenset(('lifesteal_rate', 'lifesteal_fraction'))
 PLAYER_AMMO_KEY = 'player_ammo_regen'
 AMMO_GROUP = AMMO_KEYS | {PLAYER_AMMO_KEY}
@@ -211,7 +212,7 @@ def normalize(option, value):
     if type(value) not in (int, float) or not math.isfinite(value):
         return option.default_value
     bounded = max(option.min_value, min(option.max_value, value))
-    return round(bounded) if option.identifier in CAPACITY_KEYS else round(bounded, 1)
+    return round(bounded) if option.identifier in CAPACITY_KEYS or option.identifier == 'critical_chance' else round(bounded, 1)
 
 
 def apply(values):
@@ -528,7 +529,7 @@ def draw():
     if health_fault() or automation_fault() or (_controller is not None and _controller.fault):
         ui.text_wrapped('FAULT LATCHED: exit game immediately; do not play.')
     if _controller is not None:
-        ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' ' + str(r.get('selection', '?')) + (' slots' if k in CAPACITY_KEYS else 'x') for k, r in _controller.records.items()) or 'None / vanilla'))
+        ui.text_wrapped('Active fields (gameplay unverified): ' + (', '.join(k + ' +' + str(r['selection']-1) + ' pp' if k == 'critical_chance' else k + ' ' + str(r.get('selection', '?')) + (' slots' if k in CAPACITY_KEYS else 'x') for k, r in _controller.records.items()) or 'None / vanilla'))
         if any(r.get('overfull_warning') for r in _controller.records.values()):
             ui.text_wrapped('CAPACITY RESTORE HOLD: remove excess items in this offline session, then restore. Do not travel, buy SDUs or exit while over capacity.')
     if any(l.record is not None for l in _automation_leases.values()) or (RELOAD_EVENT.value is True and AUTO_OPTIONS['reload'].value is True and auto_allowed()):
@@ -710,6 +711,9 @@ def draw():
             ui.text_wrapped(o.display_name + ' — HOLD / preview only')
         if isinstance(o, BoolOption):
             edited, value = ui.checkbox(label, value)
+        elif o.identifier == 'critical_chance':
+            edited, bonus = ui.slider_float(label, float(value)-1., 0., 20., '+%.0f pp')
+            value = round(bonus)+1. if edited else value
         else:
             edited, value = ui.slider_float(label, float(value), o.min_value, o.max_value, '%.0f slots' if o.identifier in CAPACITY_KEYS else '%.1fx')
             if o.identifier in RARITY_KEYS or o.identifier.startswith('progress_') or o.identifier == 'overall_loot_luck':
@@ -775,6 +779,8 @@ def draw():
             ui.text_wrapped('Existing positive duration and base required. Does not grant overshield or passively heal. Native timing unverified.')
         if key == 'lifesteal_fraction':
             ui.text_wrapped('Requires existing positive life-steal and unchanged rate/cap. Not passive healing. Restore the life-steal rate control first.')
+        if key == 'critical_chance':
+            ui.text_wrapped('Adds up to 20 percentage points to the local default critical chance field, capped at 75% total field value. Zero bonus restores. Actual chance unverified; no forced crits.')
         if key == 'melee_cooldown':
             ui.text_wrapped('Melee cooldown only; no attack, animation speed or damage change. Activate and restore between attacks. Restore other modifiers first.')
         if key == 'splash_radius':
@@ -782,7 +788,7 @@ def draw():
         if key == 'splash_damage':
             ui.text_wrapped('Splash damage only; not radius size, direct-hit damage or a guaranteed multiplier. Restore other modifiers first.')
         if key in MANUAL_ONLY - {'sprint'}:
-            ui.text_wrapped('Experimental local instance control; gameplay effect unverified. 1x restores. Restore before switching gear or travel.')
+            ui.text_wrapped('Experimental local instance control; gameplay effect unverified. Restore before switching gear or travel.' if key == 'critical_chance' else 'Experimental local instance control; gameplay effect unverified. 1x restores. Restore before switching gear or travel.')
             if auto_master.value is True:
                 ui.text('Restore All before using this isolated experiment.')
                 continue
@@ -1802,7 +1808,7 @@ def activate_feature(key, selection):
         expire_activation()
         if _activation_request is not None:
             raise ValueError('another activation is already queued')
-        if not report_live('QUEUED ' + key + ': ' + repr(selection) + (' slots; ' if key in CAPACITY_KEYS else 'x; ') + monitor_status()):
+        if not report_live('QUEUED ' + key + ': ' + (repr(selection-1) + ' pp; ' if key == 'critical_chance' else repr(selection) + (' slots; ' if key in CAPACITY_KEYS else 'x; ')) + monitor_status()):
             return
         _activation_request = (key, selection, threading.get_ident(), time.monotonic() + 3.0)
     except Exception as exc:

@@ -267,7 +267,7 @@ class Controller:
             self.log('HOLD: restore the other ground-speed mode first')
             return False
         # Isolate experimental local splash and melee state from other fields.
-        isolated = {'splash_damage', 'splash_radius', 'melee_cooldown'}
+        isolated = {'critical_chance', 'splash_damage', 'splash_radius', 'melee_cooldown'}
         if selection != 1 and ((key in isolated and (set(self.records) - {key})) or
                                ((isolated - {key}).intersection(self.records))):
             self.log('HOLD: restore isolated combat experiment or other active modifiers first')
@@ -286,7 +286,7 @@ class Controller:
                 raise ValueError('feature HOLD')
             _, lo, hi = FEATURES[key]
             # Validate input even when selecting vanilla.
-            target_values(key, (1.,), ((1, 'dummy', 'ZDoubleProperty'),), selection)
+            target_values(key, (0. if key == 'critical_chance' else 1.,), ((1, 'dummy', 'ZDoubleProperty'),), selection)
             if selection == 1:
                 result = self.restore(key, '1x selected')
                 if not result and self.fault:

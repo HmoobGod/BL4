@@ -35,6 +35,7 @@ FEATURES = {
     'fire_damage': ('Fire damage multiplier', .5, 5.),
     'repair_cooldown': ('Repair-kit cooldown duration multiplier', .1, 5.),
     'damage': ('Damage multiplier', .5, 5.),
+    'critical_chance': ('Default critical-hit chance bonus (experimental)', 1., 21.),
     'critical_damage': ('Default critical-hit damage multiplier (experimental)', .5, 3.),
     'melee_cooldown': ('Melee cooldown speed (experimental)', .5, 2.),
     'splash_damage': ('Local splash damage multiplier (experimental)', .5, 3.),
@@ -326,6 +327,26 @@ def critical_damage(pawn, state):
     return fields
 
 
+def critical_chance(pawn, state):
+    # The inline pawn-owned causer data is distinct from a shared crit definition
+    # or the grenade causer. No forced critical hits or duplicate damage calls.
+    from .weapon_rates import nested
+    if pawn.Class._path_name() != '/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+        raise ValueError('exact live local character required')
+    causer = nested(pawn, 'DamageCauserData', 'OakDamageCauserData')
+    if causer._type._path_name() != '/Script/OakGame.OakDamageCauserData':
+        raise ValueError('unexpected damage causer type')
+    multiplier = nested(causer, 'DefaultCriticalHitChance', 'GbxAttributeFloat')
+    if multiplier._type._path_name() != '/Script/GbxCore.GbxAttributeFloat':
+        raise ValueError('unexpected critical chance type')
+    fields = pair(multiplier, allow_zero=True)
+    if any(f[2] != 'ZFloatProperty' for f in fields):
+        raise ValueError('unexpected critical scalar type')
+    if any(not 0 <= f[3] <= .75 for f in fields):
+        raise ValueError('critical chance outside conservative bounds')
+    return fields
+
+
 def melee_cooldown(pawn, state):
     # Local inline melee cadence only; never invoke an attack or change PlayRate.
     from .weapon_rates import nested
@@ -479,7 +500,7 @@ def pearlescent(pawn, state):
     return (next(iter(candidates.values())),)
 
 
-RESOLVE = {'splash_radius': splash_radius, 'melee_cooldown': melee_cooldown, 'splash_damage': splash_damage, 'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
+RESOLVE = {'critical_chance': critical_chance, 'splash_radius': splash_radius, 'melee_cooldown': melee_cooldown, 'splash_damage': splash_damage, 'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
@@ -542,6 +563,16 @@ def target_values(key, baseline, tokens, selection):
         if selection != int(selection):
             raise ValueError('capacity requires whole slots')
         return tuple(int(selection) for _ in baseline)
+    if key == 'critical_chance':
+        if selection != int(selection):
+            raise ValueError('critical chance uses whole percentage points')
+        values = []
+        for base, (_, _, kind) in zip(baseline, tokens, strict=True):
+            target = base + (selection - 1) / 100
+            if not math.isfinite(target) or not 0 <= base <= target <= .75:
+                raise ValueError('critical chance outside conservative bounds')
+            values.append(struct.unpack('<f', struct.pack('<f', target))[0] if kind == 'ZFloatProperty' else target)
+        return tuple(values)
     # Exact representable native targets, not fuzzy comparisons with foreign writes.
     if key in RARITY_KEYS and selection != round(selection, 1):
         raise ValueError('rarity weight uses 0.1 increments')
