@@ -38,6 +38,7 @@ FEATURES = {
     'critical_damage': ('Default critical-hit damage multiplier (experimental)', .5, 3.),
     'melee_cooldown': ('Melee cooldown speed (experimental)', .5, 2.),
     'splash_damage': ('Local splash damage multiplier (experimental)', .5, 3.),
+    'splash_radius': ('Local splash radius multiplier (experimental)', .5, 2.),
     'weapon_spread': ('Weapon spread scale (experimental)', .1, 3.),
     'weapon_recoil': ('Weapon recoil scale (experimental)', .1, 3.),
     'fire_rate': ('Weapon fire rate multiplier (experimental)', .5, 3.),
@@ -360,6 +361,24 @@ def splash_damage(pawn, state):
     return fields
 
 
+def splash_radius(pawn, state):
+    # The inline pawn-owned causer data is distinct from the weapon damage
+    # and damage magnitude fields. No attack or damage receiver writes.
+    from .weapon_rates import nested
+    if pawn.Class._path_name() != '/Script/OakGame.OakCharacter' or 'Default__' in pawn._path_name():
+        raise ValueError('exact live local character required')
+    causer = nested(pawn, 'DamageCauserData', 'OakDamageCauserData')
+    if causer._type._path_name() != '/Script/OakGame.OakDamageCauserData':
+        raise ValueError('unexpected damage causer type')
+    multiplier = nested(causer, 'RadiusDamage_RadiusMultiplier', 'GbxAttributeFloat')
+    if multiplier._type._path_name() != '/Script/GbxCore.GbxAttributeFloat':
+        raise ValueError('unexpected splash radius multiplier type')
+    fields = pair(multiplier)
+    if any(f[2] != 'ZFloatProperty' for f in fields):
+        raise ValueError('unexpected splash radius scalar type')
+    return fields
+
+
 def lifesteal_rate(pawn, state):
     # Only the existing local rate; do not turn on life-steal, change its cap,
     # or touch any health pool value. Historical OakDamageState declaration.
@@ -460,7 +479,7 @@ def pearlescent(pawn, state):
     return (next(iter(candidates.values())),)
 
 
-RESOLVE = {'melee_cooldown': melee_cooldown, 'splash_damage': splash_damage, 'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
+RESOLVE = {'splash_radius': splash_radius, 'melee_cooldown': melee_cooldown, 'splash_damage': splash_damage, 'critical_damage': critical_damage, 'legendary_weight': loot, 'jump': movement, 'fire_damage': combat,
            'common_weight': lambda p, s: (scalar(s.RarityState.CommonModifier, 'Value', allow_zero=True),),
            'uncommon_weight': lambda p, s: (scalar(s.RarityState.UncommonModifier, 'Value', allow_zero=True),),
            'repair_cooldown': recovery,
@@ -535,6 +554,8 @@ def target_values(key, baseline, tokens, selection):
             raise ValueError('target outside verified scalar bounds')
         if key in ('critical_damage', 'splash_damage') and (base > 10 or v > 10):
             raise ValueError('damage multiplier outside conservative bounds')
+        if key == 'splash_radius' and not all(.125 <= x <= 4 for x in (base, v)):
+            raise ValueError('splash radius outside conservative bounds')
         if key == 'melee_cooldown' and not all(.125 <= x <= 4 for x in (base, v)):
             raise ValueError('melee cooldown outside conservative bounds')
         result.append(v)
